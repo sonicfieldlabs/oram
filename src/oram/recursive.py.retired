@@ -1,0 +1,108 @@
+"""oram.recursive — recursive listening mode.
+
+implements Lucier-like iterative listening chains where each generation
+becomes the source for the next listening → generation cycle.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+
+
+@dataclass
+class RecursiveStep:
+    """a single step in a recursive listening chain."""
+
+    layer_id: str
+    depth: int
+    route: str
+    engine: str
+    prompt: str
+    timestamp: str = ""
+
+
+@dataclass
+class RecursiveSession:
+    """manages an iterative listening chain.
+
+    the recursive session tracks a source layer and its chain of
+    derivations, allowing the performer to explicitly iterate
+    the listen → generate → listen cycle.
+    """
+
+    source_layer_id: str
+    chain: list[RecursiveStep] = field(default_factory=list)
+    max_depth: int = 8
+    auto_advance: bool = False
+    current_depth: int = 0
+
+    def add_step(
+        self,
+        layer_id: str,
+        route: str,
+        engine: str,
+        prompt: str,
+    ) -> RecursiveStep:
+        """record a new step in the chain."""
+        step = RecursiveStep(
+            layer_id=layer_id,
+            depth=self.current_depth,
+            route=route,
+            engine=engine,
+            prompt=prompt,
+            timestamp=datetime.now().isoformat(),
+        )
+        self.chain.append(step)
+        self.current_depth += 1
+        return step
+
+    @property
+    def is_complete(self) -> bool:
+        return self.current_depth >= self.max_depth
+
+    @property
+    def latest_layer_id(self) -> str:
+        if self.chain:
+            return self.chain[-1].layer_id
+        return self.source_layer_id
+
+    def get_summary(self) -> str:
+        """human-readable summary of the chain."""
+        parts = [f"recursive session: {len(self.chain)} steps, depth {self.current_depth}/{self.max_depth}"]
+        for step in self.chain:
+            parts.append(f"  d{step.depth}: {step.route}→{step.engine} [{step.layer_id[-6:]}]")
+        return "\n".join(parts)
+
+    def compare_depths(self, depth_a: int, depth_b: int) -> dict:
+        """compare two steps in the chain."""
+        step_a = next((s for s in self.chain if s.depth == depth_a), None)
+        step_b = next((s for s in self.chain if s.depth == depth_b), None)
+
+        if not step_a or not step_b:
+            return {"error": "depth not found"}
+
+        return {
+            "depth_a": depth_a,
+            "depth_b": depth_b,
+            "route_a": step_a.route,
+            "route_b": step_b.route,
+            "engine_a": step_a.engine,
+            "engine_b": step_b.engine,
+            "prompt_a": step_a.prompt[:80],
+            "prompt_b": step_b.prompt[:80],
+        }
+
+    def export_chain(self) -> list[dict]:
+        """export the chain for serialization."""
+        return [
+            {
+                "layer_id": step.layer_id,
+                "depth": step.depth,
+                "route": step.route,
+                "engine": step.engine,
+                "prompt": step.prompt,
+                "timestamp": step.timestamp,
+            }
+            for step in self.chain
+        ]

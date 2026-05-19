@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>oram — recursive listening instrument</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- header — minimal: title (clickable → about), mode cycle, settings, theme icon -->
+  <header>
+    <div class="header-left">
+      <button id="oram-title" class="oram-title" type="button" data-hint="about · quick guide" aria-label="About oram">oram</button>
+    </div>
+    <div class="header-right">
+      <button id="btn-mode-cycle" class="mode-toggle mode-cycle" data-hint="cycle input mode: prompt · audio · listen" aria-label="Cycle input mode">prompt</button>
+      <button id="btn-settings" class="mode-toggle" data-hint="audio settings" aria-label="Audio settings">⚙</button>
+      <button id="btn-theme-toggle" class="mode-toggle theme-icon" data-hint="toggle theme (light / dark)" aria-label="Toggle theme" aria-pressed="false">☾</button>
+    </div>
+  </header>
+
+  <!-- settings panel (collapsible) -->
+  <section id="settings-panel" class="hidden">
+    <div class="settings-header">
+      <span class="settings-title">audio · engine settings</span>
+      <button id="settings-close" class="palette-close-btn" aria-label="Close settings">×</button>
+    </div>
+    <div class="settings-grid">
+      <div class="setting-group">
+        <label class="setting-label" for="sel-input-device">input device</label>
+        <select id="sel-input-device" class="setting-select">
+          <option value="">loading…</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label class="setting-label" for="sel-sample-rate">sample rate</label>
+        <select id="sel-sample-rate" class="setting-select">
+          <option value="22050">22050 Hz</option>
+          <option value="44100">44100 Hz</option>
+          <option value="48000" selected>48000 Hz</option>
+          <option value="96000">96000 Hz</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label class="setting-label" for="sel-bit-depth">bit depth</label>
+        <select id="sel-bit-depth" class="setting-select">
+          <option value="16">16-bit</option>
+          <option value="24">24-bit</option>
+          <option value="32" selected>32-bit float</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label class="setting-label" for="sel-format">format</label>
+        <select id="sel-format" class="setting-select">
+          <option value="wav" selected>WAV</option>
+          <option value="aiff">AIFF</option>
+          <option value="flac">FLAC</option>
+        </select>
+      </div>
+      <div class="setting-group setting-engine-group">
+        <label class="setting-label" for="engine-selector">generation engine</label>
+        <select id="engine-selector" class="setting-select" aria-label="Generation engine" data-hint="which engine generates audio">
+          <option value="auto">⚡ auto</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <button id="btn-apply-settings" class="setting-apply">apply</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ TRANSPORT MODULE ═══ -->
+  <section id="transport-module">
+    <div class="transport-group">
+      <span class="transport-label">record</span>
+      <button class="transport-btn record" id="btn-record" data-hint="record / stop — toggle recording from microphone (r)" aria-label="Record / Stop">⏺</button>
+      <button class="transport-btn" id="btn-overdub" data-hint="overdub: layer new audio over existing (o)" aria-label="Overdub">⊕</button>
+    </div>
+    <div class="transport-sep-v"></div>
+    <div class="transport-group">
+      <span class="transport-label">dsp</span>
+      <button class="transport-btn small fx-chip" id="btn-fx" data-hint="dsp effects — open the texture transforms" aria-label="DSP effects" aria-haspopup="true" aria-expanded="false">fx<span class="fx-chevron">▾</span></button>
+    </div>
+    <div class="transport-sep-v"></div>
+    <div class="transport-group">
+      <span class="transport-label">agent</span>
+      <button class="transport-btn small summon" id="btn-summon" data-hint="summon — open the texture palette for prompt generation" aria-label="Summon texture">✦</button>
+      <button class="transport-btn small" id="btn-listen" data-hint="listen — agent analyzes current layer texture" aria-label="Listen">♉</button>
+    </div>
+    <div class="transport-sep-v"></div>
+    <div class="transport-group">
+      <span class="transport-label">master</span>
+      <button class="transport-btn small master-rec" id="btn-master-rec" data-hint="export current mix — bounce all layers to a single WAV" aria-label="Export current mix">◉</button>
+      <button class="transport-btn small" id="btn-master-export" data-hint="save session — archive all layers and metadata" aria-label="Save session">⬡</button>
+    </div>
+    <div class="transport-sep-v"></div>
+    <div class="transport-group">
+      <button class="transport-btn kill" id="btn-kill" data-hint="kill all sound — mute every layer and stop recording (k)" aria-label="Kill all sound">⊘</button>
+    </div>
+    <!-- hint bar inline — fixed-height, multiline, right-side -->
+    <div id="hint-bar">
+      <span id="hint-text">hover over a button for details</span>
+    </div>
+  </section>
+
+  <!-- fx popover — drops directly below transport -->
+  <section id="fx-palette" class="hidden">
+    <div class="palette-header">
+      <span>dsp effects</span>
+      <button id="fx-palette-close" class="palette-close-btn" aria-label="Close fx palette">×</button>
+    </div>
+    <div class="fx-grid">
+      <button class="fx-chip-btn" data-cmd="reverse" data-hint="reverse the selected layer's audio"><span class="fx-glyph">↺</span><span class="fx-name">reverse</span></button>
+      <button class="fx-chip-btn" data-cmd="make it slower" data-hint="half speed — pitch drops, time stretches"><span class="fx-glyph">½</span><span class="fx-name">slower</span></button>
+      <button class="fx-chip-btn" data-cmd="make it faster" data-hint="double speed — time compresses, pitch rises"><span class="fx-glyph">2×</span><span class="fx-name">faster</span></button>
+      <button class="fx-chip-btn" data-cmd="make it darker" data-hint="low-pass filter — darken the texture"><span class="fx-glyph">◐</span><span class="fx-name">darker</span></button>
+      <button class="fx-chip-btn" data-cmd="granulate softly" data-hint="granular synthesis — fragment into particles"><span class="fx-glyph">░</span><span class="fx-name">granulate</span></button>
+      <button class="fx-chip-btn" data-cmd="wash it in reverb" data-hint="reverb wash — push into deep space"><span class="fx-glyph">≋</span><span class="fx-name">reverb</span></button>
+      <button class="fx-chip-btn" data-cmd="make it far away" data-hint="distance — make it sound far away"><span class="fx-glyph">↠</span><span class="fx-name">far</span></button>
+      <button class="fx-chip-btn" data-cmd="stretch until it breathes" data-hint="time stretch — slow and breathe"><span class="fx-glyph">≈</span><span class="fx-name">stretch</span></button>
+    </div>
+  </section>
+
+  <!-- meters — moved up, below transport -->
+  <section id="meters">
+    <div class="meter-row">
+      <span class="meter-label">in</span>
+      <div class="meter-track"><div class="meter-fill" id="meter-in"></div></div>
+      <span class="meter-db" id="meter-in-db">-∞</span>
+    </div>
+    <div class="meter-row">
+      <span class="meter-label">out</span>
+      <div class="meter-track"><div class="meter-fill" id="meter-out"></div></div>
+      <span class="meter-db" id="meter-out-db">-∞</span>
+    </div>
+  </section>
+
+  <!-- summon palette -->
+  <section id="summon-palette" class="hidden">
+    <div class="palette-header">
+      <span>summon a texture</span>
+      <button id="palette-close" class="palette-close-btn" aria-label="Close summon palette">×</button>
+    </div>
+    <div class="palette-grid">
+      <button class="summon-chip" data-prompt="distant metallic rain">metallic rain</button>
+      <button class="summon-chip" data-prompt="room tone">room tone</button>
+      <button class="summon-chip" data-prompt="low drone">low drone</button>
+      <button class="summon-chip" data-prompt="synthetic forest">synthetic forest</button>
+      <button class="summon-chip" data-prompt="quiet machine">quiet machine</button>
+      <button class="summon-chip" data-prompt="fake field recording">field recording</button>
+    </div>
+  </section>
+
+  <!-- ═══ LAYERS ═══ -->
+  <section id="layers" class="layers-panel">
+    <div class="layer-row" data-layer="0" id="layer-0">
+      <button class="corner corner-tl" data-action="select" data-target="1" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 1 — select / mute / right-click solo"><span class="corner-glyph">1</span></button>
+      <button class="corner corner-tr" data-action="export" data-target="1" data-hint="export / bounce layer to WAV" aria-label="Export layer 1"><span class="corner-glyph">↓</span></button>
+      <button class="corner corner-bl" data-action="auto-gen" data-target="1" data-hint="auto-generate from what's sounding" aria-label="Generate layer 1"><span class="corner-glyph">✦</span></button>
+      <button class="corner corner-br" data-action="clear" data-target="1" data-hint="clear / delete layer audio" aria-label="Clear layer 1"><span class="corner-glyph">⌫</span></button>
+      <div class="waveform-shell" data-target="1">
+        <canvas class="waveform-canvas"></canvas>
+        <div class="loop-selection" aria-hidden="true"></div>
+        <div class="playhead" aria-hidden="true"></div>
+        <div class="loop-readout" aria-live="polite"></div>
+      </div>
+      <div class="layer-meta">
+        <span class="layer-dur">—</span>
+        <span class="layer-state-tag"></span>
+        <span class="loop-readout-inline"></span>
+        <span class="effect-chips"></span>
+      </div>
+      <div class="layer-controls">
+        <div class="vol-strip" data-target="1" data-value="100" role="slider" aria-label="Volume layer 1" aria-valuemin="0" aria-valuemax="200" aria-valuenow="100" tabindex="0" data-hint="layer volume — drag, scroll, dbl-click for unity"><div class="vol-strip-fill"></div><div class="vol-strip-unity"></div></div>
+      </div>
+    </div>
+    <div class="layer-row" data-layer="1" id="layer-1">
+      <button class="corner corner-tl" data-action="select" data-target="2" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 2 — select / mute / right-click solo"><span class="corner-glyph">2</span></button>
+      <button class="corner corner-tr" data-action="export" data-target="2" data-hint="export / bounce layer to WAV" aria-label="Export layer 2"><span class="corner-glyph">↓</span></button>
+      <button class="corner corner-bl" data-action="auto-gen" data-target="2" data-hint="auto-generate from what's sounding" aria-label="Generate layer 2"><span class="corner-glyph">✦</span></button>
+      <button class="corner corner-br" data-action="clear" data-target="2" data-hint="clear / delete layer audio" aria-label="Clear layer 2"><span class="corner-glyph">⌫</span></button>
+      <div class="waveform-shell" data-target="2">
+        <canvas class="waveform-canvas"></canvas>
+        <div class="loop-selection" aria-hidden="true"></div>
+        <div class="playhead" aria-hidden="true"></div>
+        <div class="loop-readout" aria-live="polite"></div>
+      </div>
+      <div class="layer-meta">
+        <span class="layer-dur">—</span>
+        <span class="layer-state-tag"></span>
+        <span class="loop-readout-inline"></span>
+        <span class="effect-chips"></span>
+      </div>
+      <div class="layer-controls">
+        <div class="vol-strip" data-target="2" data-value="100" role="slider" aria-label="Volume layer 2" aria-valuemin="0" aria-valuemax="200" aria-valuenow="100" tabindex="0" data-hint="layer volume — drag, scroll, dbl-click for unity"><div class="vol-strip-fill"></div><div class="vol-strip-unity"></div></div>
+      </div>
+    </div>
+    <div class="layer-row" data-layer="2" id="layer-2">
+      <button class="corner corner-tl" data-action="select" data-target="3" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 3 — select / mute / right-click solo"><span class="corner-glyph">3</span></button>
+      <button class="corner corner-tr" data-action="export" data-target="3" data-hint="export / bounce layer to WAV" aria-label="Export layer 3"><span class="corner-glyph">↓</span></button>
+      <button class="corner corner-bl" data-action="auto-gen" data-target="3" data-hint="auto-generate from what's sounding" aria-label="Generate layer 3"><span class="corner-glyph">✦</span></button>
+      <button class="corner corner-br" data-action="clear" data-target="3" data-hint="clear / delete layer audio" aria-label="Clear layer 3"><span class="corner-glyph">⌫</span></button>
+      <div class="waveform-shell" data-target="3">
+        <canvas class="waveform-canvas"></canvas>
+        <div class="loop-selection" aria-hidden="true"></div>
+        <div class="playhead" aria-hidden="true"></div>
+        <div class="loop-readout" aria-live="polite"></div>
+      </div>
+      <div class="layer-meta">
+        <span class="layer-dur">—</span>
+        <span class="layer-state-tag"></span>
+        <span class="loop-readout-inline"></span>
+        <span class="effect-chips"></span>
+      </div>
+      <div class="layer-controls">
+        <div class="vol-strip" data-target="3" data-value="100" role="slider" aria-label="Volume layer 3" aria-valuemin="0" aria-valuemax="200" aria-valuenow="100" tabindex="0" data-hint="layer volume — drag, scroll, dbl-click for unity"><div class="vol-strip-fill"></div><div class="vol-strip-unity"></div></div>
+      </div>
+    </div>
+    <div class="layer-row" data-layer="3" id="layer-3">
+      <button class="corner corner-tl" data-action="select" data-target="4" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 4 — select / mute / right-click solo"><span class="corner-glyph">4</span></button>
+      <button class="corner corner-tr" data-action="export" data-target="4" data-hint="export / bounce layer to WAV" aria-label="Export layer 4"><span class="corner-glyph">↓</span></button>
+      <button class="corner corner-bl" data-action="auto-gen" data-target="4" data-hint="auto-generate from what's sounding" aria-label="Generate layer 4"><span class="corner-glyph">✦</span></button>
+      <button class="corner corner-br" data-action="clear" data-target="4" data-hint="clear / delete layer audio" aria-label="Clear layer 4"><span class="corner-glyph">⌫</span></button>
+      <div class="waveform-shell" data-target="4">
+        <canvas class="waveform-canvas"></canvas>
+        <div class="loop-selection" aria-hidden="true"></div>
+        <div class="playhead" aria-hidden="true"></div>
+        <div class="loop-readout" aria-live="polite"></div>
+      </div>
+      <div class="layer-meta">
+        <span class="layer-dur">—</span>
+        <span class="layer-state-tag"></span>
+        <span class="loop-readout-inline"></span>
+        <span class="effect-chips"></span>
+      </div>
+      <div class="layer-controls">
+        <div class="vol-strip" data-target="4" data-value="100" role="slider" aria-label="Volume layer 4" aria-valuemin="0" aria-valuemax="200" aria-valuenow="100" tabindex="0" data-hint="layer volume — drag, scroll, dbl-click for unity"><div class="vol-strip-fill"></div><div class="vol-strip-unity"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ PROMPT MODULE — moved below layers, cleaned up ═══ -->
+  <section id="prompt-module">
+    <div class="prompt-frame" id="prompt-frame">
+      <span class="prompt-mode" id="prompt-mode-label">prompt</span>
+      <input type="text" id="cmd-input" name="oram-command" aria-label="Command prompt" placeholder="describe a sound or type a command…" autocomplete="off" spellcheck="false">
+      <button id="btn-submit-command" class="prompt-submit" aria-label="Submit command">↵</button>
+    </div>
+    <div class="prompt-context">
+      <span class="prompt-chip" id="prompt-layer-chip">1</span>
+      <span class="prompt-chip" id="prompt-mode-chip">prompt</span>
+    </div>
+  </section>
+
+  <!-- agent log — collapsed by default, click status to unfold -->
+  <section id="log-panel" class="collapsed">
+    <button id="log-status" class="log-status" type="button" aria-expanded="false" aria-controls="log-body" data-hint="show / hide agent log">
+      <span class="log-status-time" id="log-status-time">—</span>
+      <span class="log-status-icon" id="log-status-icon">·</span>
+      <span class="log-status-text" id="log-status-text">ready</span>
+      <span class="log-status-chevron" aria-hidden="true">▸</span>
+    </button>
+    <div class="log-body" id="log-body">
+      <div class="log-header">
+        <span class="log-title">⧫ agent log</span>
+      </div>
+      <div id="log-lines"></div>
+    </div>
+  </section>
+
+</div>
+
+<!-- ═══ ABOUT MODAL (click on title) ═══ -->
+<div id="about-overlay" class="hidden" aria-hidden="true">
+  <div id="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
+    <button id="about-close" class="palette-close-btn" aria-label="Close about">×</button>
+    <h2 id="about-title">oram</h2>
+    <p class="about-tagline">a speech-operated terminal looper for synthetic sound studies.</p>
+    <p>record sound into four layers. shape it with dsp transforms. summon textures from prompts. let the agent listen and react.</p>
+
+    <h3>workflow</h3>
+    <ol class="about-list">
+      <li>pick a layer (1–4) and press <kbd>⏺</kbd> to record from the mic.</li>
+      <li>type into the prompt below the layers to describe a texture; press <kbd>↵</kbd> to summon it into the selected layer.</li>
+      <li>drag across a waveform to set a loop region. click it to clear.</li>
+      <li>open <kbd>fx ▾</kbd> to transform the selected layer.</li>
+      <li>switch input mode in the header: <em>prompt</em> · <em>audio</em> · <em>listen</em>.</li>
+    </ol>
+
+    <h3>per-layer corners</h3>
+    <ul class="about-list">
+      <li><strong>top-left</strong> · select layer · click again = mute · right-click = solo</li>
+      <li><strong>top-right</strong> · export / bounce to WAV (green)</li>
+      <li><strong>bottom-left</strong> · auto-generate from what's sounding (purple)</li>
+      <li><strong>bottom-right</strong> · clear / delete layer audio (red)</li>
+      <li><strong>drag waveform</strong> · set a loop region · click waveform · clear loop</li>
+      <li><strong>vol strip</strong> · drag, scroll, dbl-click = unity</li>
+    </ul>
+
+    <h3>keyboard</h3>
+    <ul class="about-list about-keys">
+      <li><kbd>1</kbd>–<kbd>4</kbd> select layer</li>
+      <li><kbd>m</kbd> mute selected · <kbd>u</kbd> unmute all</li>
+      <li><kbd>g</kbd> generate · <kbd>l</kbd> listen</li>
+      <li><kbd>r</kbd> record · <kbd>o</kbd> overdub · <kbd>k</kbd> kill all</li>
+      <li><kbd>⌘K</kbd> or <kbd>?</kbd> command palette · <kbd>/</kbd> focus prompt · <kbd>esc</kbd> close</li>
+    </ul>
+
+    <h3>bring your own keys</h3>
+    <p class="byok-note">your keys stay on your machine. oram reads them locally and never uploads them.</p>
+    <ol class="about-list">
+      <li>copy <code>.env.example</code> to <code>.env</code> in the oram folder.</li>
+      <li>paste any provider keys you have — keep only the lines you use:
+<pre class="env-block">ELEVENLABS_API_KEY=sk_...
+FAL_KEY=...
+STABILITY_API_KEY=sk-...
+HF_TOKEN=hf_...
+REPLICATE_API_TOKEN=r8_...</pre></li>
+      <li>restart oram. open <kbd>⚙</kbd> in the header to pick a specific engine, or leave on <em>auto</em>.</li>
+    </ol>
+    <p>without keys, oram runs in <em>mock</em> mode — fine for learning the interface, but it won't generate real audio. add at least one provider key to summon textures from prompts.</p>
+    <p><strong>local providers</strong> (TangoFlux, Kokoro, Whisper.cpp, Essentia) run on your machine and need no key. <strong>custom HuggingFace endpoints</strong> are reached via <code>HF_TOKEN</code> — paste your token and use a hosted endpoint URL in your generator config.</p>
+  </div>
+</div>
+
+<!-- ═══ COMMAND PALETTE (⌘K) ═══ -->
+<div id="cmd-palette-overlay" class="hidden">
+  <div id="cmd-palette">
+    <div class="palette-search">
+      <span class="palette-search-icon">⌘</span>
+      <input type="text" id="palette-input" name="command-palette" aria-label="Command palette search" placeholder="type a command…" autocomplete="off" spellcheck="false">
+      <span class="palette-shortcut-hint">esc</span>
+    </div>
+    <div id="palette-results"></div>
+    <div class="palette-footer">
+      <span><kbd>↑↓</kbd> navigate  <kbd>↵</kbd> run  <kbd>esc</kbd> close</span>
+      <span id="palette-match-count"></span>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

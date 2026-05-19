@@ -1,0 +1,119 @@
+# ORAM Engine Catalog
+# declarative engine registry for future YAML-based loading
+# format: list of engine specs that can be auto-registered
+#
+# this file is NOT loaded in Sprint 1 — it's a reference for
+# the planned YAML loader in the EngineRegistry.
+
+engines:
+  # ── ElevenLabs (cloud, premium) ──
+  - id: elevenlabs-sfx
+    provider: elevenlabs
+    label: ElevenLabs Sound Effects
+    mode: cloud
+    capabilities:
+      - text_to_sound_effect
+    requiresApiKey: true
+    maxDurationSeconds: 22
+    costPerSecond: 40
+    latencyProfile: medium
+
+  - id: elevenlabs-tts
+    provider: elevenlabs
+    label: ElevenLabs Voice
+    mode: cloud
+    capabilities:
+      - text_to_speech
+      - speech_to_speech
+    requiresApiKey: true
+    supportsStreaming: true
+    supportsAudioInput: true
+    maxDurationSeconds: 300
+    costPerSecond: 30
+    latencyProfile: fast
+
+  - id: elevenlabs-music
+    provider: elevenlabs
+    label: ElevenLabs Music
+    mode: cloud
+    capabilities:
+      - text_to_music
+    requiresApiKey: true
+    supportsStreaming: true
+    maxDurationSeconds: 600
+    costPerSecond: 50
+    latencyProfile: slow
+
+  - id: elevenlabs-scribe
+    provider: elevenlabs
+    label: ElevenLabs Scribe
+    mode: cloud
+    capabilities:
+      - speech_to_text
+      - audio_analysis
+    requiresApiKey: true
+    supportsAudioInput: true
+    maxDurationSeconds: 3600
+    costPerSecond: 10
+    latencyProfile: medium
+
+  # ── Stable Audio (cloud via fal) ──
+  - id: stable-audio-25-fal
+    provider: fal
+    label: Stable Audio 2.5 via fal
+    mode: cloud
+    capabilities:
+      - text_to_music
+      - text_to_sound_effect
+      - audio_to_audio
+    requiresApiKey: true
+    supportsAudioInput: true
+    supportsSeed: true
+    maxDurationSeconds: 47
+    costPerSecond: 5
+    latencyProfile: medium
+
+  # ── Local Runners (no API key needed) ──
+  - id: tangoflux-local
+    provider: local
+    label: TangoFlux Local
+    mode: local
+    capabilities:
+      - text_to_sound_effect
+    requiresApiKey: false
+    maxDurationSeconds: 30
+    costPerSecond: 0
+    latencyProfile: slow
+
+  - id: kokoro-local
+    provider: local
+    label: Kokoro Local TTS
+    mode: local
+    capabilities:
+      - text_to_speech
+    requiresApiKey: false
+    maxDurationSeconds: 60
+    costPerSecond: 0
+    latencyProfile: medium
+
+  - id: whisper-local
+    provider: local
+    label: Whisper.cpp Local
+    mode: local
+    capabilities:
+      - speech_to_text
+    requiresApiKey: false
+    maxDurationSeconds: 3600
+    costPerSecond: 0
+    latencyProfile: slow
+
+  - id: essentia-local
+    provider: local
+    label: Essentia Audio Analysis
+    mode: local
+    capabilities:
+      - audio_analysis
+    requiresApiKey: false
+    maxDurationSeconds: 3600
+    costPerSecond: 0
+    latencyProfile: fast

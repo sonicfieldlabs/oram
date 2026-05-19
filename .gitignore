@@ -1,0 +1,42 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# ORAM runtime output
+oram_sessions/
+*.wav
+*.aiff
+*.aif
+*.flac
+*.mp3
+
+# Internal development notes (contain local paths, not for public repo)
+oram03.md
+oram_evol.md
+orammm.md
+dev_plan.md
+
+# Audit artifacts
+.audit/
+
+# Lock files (reproducibility via pyproject.toml)
+uv.lock
+
