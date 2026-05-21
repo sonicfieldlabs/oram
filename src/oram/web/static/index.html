@@ -9,17 +9,46 @@
 <body>
 <div id="app">
 
-  <!-- header — minimal: title (clickable → about), mode cycle, settings, theme icon -->
+  <!-- header — all controls in one condensed row -->
   <header>
     <div class="header-left">
       <button id="oram-title" class="oram-title" type="button" data-hint="about · quick guide" aria-label="About oram">oram</button>
     </div>
+    <div class="header-center">
+      <!-- transport controls — compact icon buttons -->
+      <div class="hdr-transport">
+        <span id="header-layer-indicator" class="hdr-layer-num" data-layer="0" data-hint="selected layer — click to cycle">1</span>
+        <span class="hdr-sep"></span>
+        <button class="hdr-btn hdr-rec" id="btn-record" data-hint="record / stop — toggle recording from microphone (r)" aria-label="Record / Stop">⏺</button>
+        <button class="hdr-btn" id="btn-overdub" data-hint="overdub: layer new audio over existing (o)" aria-label="Overdub">⊕</button>
+        <span class="hdr-sep"></span>
+        <button class="hdr-btn hdr-fx" id="btn-fx" data-hint="dsp effects — open the texture transforms" aria-label="DSP effects" aria-haspopup="true" aria-expanded="false">fx</button>
+        <span class="hdr-sep"></span>
+        <button class="hdr-btn" id="btn-summon" data-hint="summon — open the texture palette for prompt generation" aria-label="Summon texture">✦</button>
+        <button class="hdr-btn" id="btn-listen" data-hint="listen — agent analyzes current layer texture" aria-label="Listen">☊</button>
+        <span class="hdr-sep"></span>
+        <button class="hdr-btn" id="btn-master-rec" data-hint="export current mix — bounce all layers to a single WAV" aria-label="Export current mix">◉</button>
+        <button class="hdr-btn hdr-kill" id="btn-kill" data-hint="kill all sound — mute every layer and stop recording (k)" aria-label="Kill all sound">⊘</button>
+        <span class="hdr-sep"></span>
+        <button class="hdr-btn hdr-add-layer" id="btn-add-layer" data-hint="add another layer slot" aria-label="Add layer">+</button>
+      </div>
+    </div>
     <div class="header-right">
-      <button id="btn-mode-cycle" class="mode-toggle mode-cycle" data-hint="cycle input mode: prompt · audio · listen" aria-label="Cycle input mode">prompt</button>
-      <button id="btn-settings" class="mode-toggle" data-hint="audio settings" aria-label="Audio settings">⚙</button>
-      <button id="btn-theme-toggle" class="mode-toggle theme-icon" data-hint="toggle theme (light / dark)" aria-label="Toggle theme" aria-pressed="false">☾</button>
+      <!-- meters as dots -->
+      <div class="hdr-meters" data-hint="in / out level">
+        <span class="meter-dot meter-dot-in" id="meter-dot-in"></span>
+        <span class="meter-dot meter-dot-out" id="meter-dot-out"></span>
+      </div>
+      <button id="btn-mode-cycle" class="hdr-btn hdr-mode mode-cycle" data-hint="cycle input mode: prompt · audio · listen" aria-label="Cycle input mode">p</button>
+      <button id="btn-settings" class="hdr-btn" data-hint="audio settings" aria-label="Audio settings">⚙</button>
+      <button id="btn-theme-toggle" class="hdr-btn hdr-theme" data-hint="toggle theme (light / dark)" aria-label="Toggle theme" aria-pressed="false">☾</button>
     </div>
   </header>
+
+  <!-- hint bar — slim line below header -->
+  <div id="hint-bar">
+    <span id="hint-text">hover over a button for details</span>
+  </div>
 
   <!-- settings panel (collapsible) -->
   <section id="settings-panel" class="hidden">
@@ -71,41 +100,16 @@
     </div>
   </section>
 
-  <!-- ═══ TRANSPORT MODULE ═══ -->
-  <section id="transport-module">
-    <div class="transport-group">
-      <span class="transport-label">record</span>
-      <button class="transport-btn record" id="btn-record" data-hint="record / stop — toggle recording from microphone (r)" aria-label="Record / Stop">⏺</button>
-      <button class="transport-btn" id="btn-overdub" data-hint="overdub: layer new audio over existing (o)" aria-label="Overdub">⊕</button>
-    </div>
-    <div class="transport-sep-v"></div>
-    <div class="transport-group">
-      <span class="transport-label">dsp</span>
-      <button class="transport-btn small fx-chip" id="btn-fx" data-hint="dsp effects — open the texture transforms" aria-label="DSP effects" aria-haspopup="true" aria-expanded="false">fx<span class="fx-chevron">▾</span></button>
-    </div>
-    <div class="transport-sep-v"></div>
-    <div class="transport-group">
-      <span class="transport-label">agent</span>
-      <button class="transport-btn small summon" id="btn-summon" data-hint="summon — open the texture palette for prompt generation" aria-label="Summon texture">✦</button>
-      <button class="transport-btn small" id="btn-listen" data-hint="listen — agent analyzes current layer texture" aria-label="Listen">♉</button>
-    </div>
-    <div class="transport-sep-v"></div>
-    <div class="transport-group">
-      <span class="transport-label">master</span>
-      <button class="transport-btn small master-rec" id="btn-master-rec" data-hint="export current mix — bounce all layers to a single WAV" aria-label="Export current mix">◉</button>
-      <button class="transport-btn small" id="btn-master-export" data-hint="save session — archive all layers and metadata" aria-label="Save session">⬡</button>
-    </div>
-    <div class="transport-sep-v"></div>
-    <div class="transport-group">
-      <button class="transport-btn kill" id="btn-kill" data-hint="kill all sound — mute every layer and stop recording (k)" aria-label="Kill all sound">⊘</button>
-    </div>
-    <!-- hint bar inline — fixed-height, multiline, right-side -->
-    <div id="hint-bar">
-      <span id="hint-text">hover over a button for details</span>
+  <!-- ═══ PROMPT MODULE — bigger space ═══ -->
+  <section id="prompt-module">
+    <div class="prompt-frame prompt-frame-lg" id="prompt-frame">
+      <span class="prompt-mode" id="prompt-mode-label">prompt</span>
+      <input type="text" id="cmd-input" name="oram-command" aria-label="Command prompt" placeholder="describe a sound or type a command…" autocomplete="off" spellcheck="false">
+      <button id="btn-submit-command" class="prompt-submit" aria-label="Submit command">↵</button>
     </div>
   </section>
 
-  <!-- fx popover — drops directly below transport -->
+  <!-- fx popover — drops directly below header -->
   <section id="fx-palette" class="hidden">
     <div class="palette-header">
       <span>dsp effects</span>
@@ -123,19 +127,7 @@
     </div>
   </section>
 
-  <!-- meters — moved up, below transport -->
-  <section id="meters">
-    <div class="meter-row">
-      <span class="meter-label">in</span>
-      <div class="meter-track"><div class="meter-fill" id="meter-in"></div></div>
-      <span class="meter-db" id="meter-in-db">-∞</span>
-    </div>
-    <div class="meter-row">
-      <span class="meter-label">out</span>
-      <div class="meter-track"><div class="meter-fill" id="meter-out"></div></div>
-      <span class="meter-db" id="meter-out-db">-∞</span>
-    </div>
-  </section>
+
 
   <!-- summon palette -->
   <section id="summon-palette" class="hidden">
@@ -153,7 +145,7 @@
     </div>
   </section>
 
-  <!-- ═══ LAYERS ═══ -->
+  <!-- ═══ LAYERS (3 visible by default, 4th hidden until "+") ═══ -->
   <section id="layers" class="layers-panel">
     <div class="layer-row" data-layer="0" id="layer-0">
       <button class="corner corner-tl" data-action="select" data-target="1" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 1 — select / mute / right-click solo"><span class="corner-glyph">1</span></button>
@@ -218,7 +210,8 @@
         <div class="vol-strip" data-target="3" data-value="100" role="slider" aria-label="Volume layer 3" aria-valuemin="0" aria-valuemax="200" aria-valuenow="100" tabindex="0" data-hint="layer volume — drag, scroll, dbl-click for unity"><div class="vol-strip-fill"></div><div class="vol-strip-unity"></div></div>
       </div>
     </div>
-    <div class="layer-row" data-layer="3" id="layer-3">
+    <!-- layer 4: hidden by default, revealed by "+" button -->
+    <div class="layer-row layer-row-extra" data-layer="3" id="layer-3" style="display: none;">
       <button class="corner corner-tl" data-action="select" data-target="4" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 4 — select / mute / right-click solo"><span class="corner-glyph">4</span></button>
       <button class="corner corner-tr" data-action="export" data-target="4" data-hint="export / bounce layer to WAV" aria-label="Export layer 4"><span class="corner-glyph">↓</span></button>
       <button class="corner corner-bl" data-action="auto-gen" data-target="4" data-hint="auto-generate from what's sounding" aria-label="Generate layer 4"><span class="corner-glyph">✦</span></button>
@@ -241,18 +234,7 @@
     </div>
   </section>
 
-  <!-- ═══ PROMPT MODULE — moved below layers, cleaned up ═══ -->
-  <section id="prompt-module">
-    <div class="prompt-frame" id="prompt-frame">
-      <span class="prompt-mode" id="prompt-mode-label">prompt</span>
-      <input type="text" id="cmd-input" name="oram-command" aria-label="Command prompt" placeholder="describe a sound or type a command…" autocomplete="off" spellcheck="false">
-      <button id="btn-submit-command" class="prompt-submit" aria-label="Submit command">↵</button>
-    </div>
-    <div class="prompt-context">
-      <span class="prompt-chip" id="prompt-layer-chip">1</span>
-      <span class="prompt-chip" id="prompt-mode-chip">prompt</span>
-    </div>
-  </section>
+
 
   <!-- agent log — collapsed by default, click status to unfold -->
   <section id="log-panel" class="collapsed">
@@ -270,6 +252,7 @@
     </div>
   </section>
 
+
 </div>
 
 <!-- ═══ ABOUT MODAL (click on title) ═══ -->
@@ -277,51 +260,43 @@
   <div id="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
     <button id="about-close" class="palette-close-btn" aria-label="Close about">×</button>
     <h2 id="about-title">oram</h2>
-    <p class="about-tagline">a speech-operated terminal looper for synthetic sound studies.</p>
-    <p>record sound into four layers. shape it with dsp transforms. summon textures from prompts. let the agent listen and react.</p>
+    <p class="about-tagline">recursive listening instrument for synthetic sound.</p>
+    <blockquote class="about-epigraph">"We seem to have tuned circuits within us" <cite>— Daphne Oram</cite></blockquote>
+    <p>record, generate, transform, and layer sounds through a prompt-driven interface.</p>
 
-    <h3>workflow</h3>
-    <ol class="about-list">
-      <li>pick a layer (1–4) and press <kbd>⏺</kbd> to record from the mic.</li>
-      <li>type into the prompt below the layers to describe a texture; press <kbd>↵</kbd> to summon it into the selected layer.</li>
-      <li>drag across a waveform to set a loop region. click it to clear.</li>
-      <li>open <kbd>fx ▾</kbd> to transform the selected layer.</li>
-      <li>switch input mode in the header: <em>prompt</em> · <em>audio</em> · <em>listen</em>.</li>
-    </ol>
-
-    <h3>per-layer corners</h3>
+    <h3>top bar</h3>
     <ul class="about-list">
-      <li><strong>top-left</strong> · select layer · click again = mute · right-click = solo</li>
-      <li><strong>top-right</strong> · export / bounce to WAV (green)</li>
-      <li><strong>bottom-left</strong> · auto-generate from what's sounding (purple)</li>
-      <li><strong>bottom-right</strong> · clear / delete layer audio (red)</li>
-      <li><strong>drag waveform</strong> · set a loop region · click waveform · clear loop</li>
-      <li><strong>vol strip</strong> · drag, scroll, dbl-click = unity</li>
+      <li><strong>⏺</strong> record from mic into selected layer</li>
+      <li><strong>⊕</strong> overdub onto selected layer</li>
+      <li><strong>fx</strong> open DSP transforms (reverse, granulate, reverb…)</li>
+      <li><strong>✦</strong> summon — generate a texture from a prompt preset</li>
+      <li><strong>☊</strong> listen — agent analyzes current layer</li>
+      <li><strong>◉</strong> export mix · <strong>⊘</strong> kill all sound</li>
+      <li><strong>+</strong> add a 4th layer</li>
+      <li><strong>p / a / l</strong> input mode: <em>prompt</em> · <em>audio</em> · <em>listen</em></li>
     </ul>
 
-    <h3>keyboard</h3>
+    <h3>layers</h3>
+    <ul class="about-list">
+      <li><strong>corners</strong> — top-left: select/mute (right-click: solo) · top-right: export · bottom-left: auto-generate · bottom-right: clear</li>
+      <li><strong>waveform</strong> — drag to set loop region · click to clear</li>
+      <li><strong>vol strip</strong> — drag, scroll, double-click for unity</li>
+      <li><strong>prompt</strong> — type a description below the layers and press <kbd>↵</kbd></li>
+    </ul>
+
+    <h3>keys</h3>
     <ul class="about-list about-keys">
-      <li><kbd>1</kbd>–<kbd>4</kbd> select layer</li>
-      <li><kbd>m</kbd> mute selected · <kbd>u</kbd> unmute all</li>
-      <li><kbd>g</kbd> generate · <kbd>l</kbd> listen</li>
-      <li><kbd>r</kbd> record · <kbd>o</kbd> overdub · <kbd>k</kbd> kill all</li>
-      <li><kbd>⌘K</kbd> or <kbd>?</kbd> command palette · <kbd>/</kbd> focus prompt · <kbd>esc</kbd> close</li>
+      <li><kbd>1</kbd>–<kbd>4</kbd> select · <kbd>m</kbd> mute · <kbd>u</kbd> unmute all</li>
+      <li><kbd>r</kbd> record · <kbd>o</kbd> overdub · <kbd>k</kbd> kill · <kbd>g</kbd> generate · <kbd>l</kbd> listen</li>
+      <li><kbd>⌘K</kbd> command palette · <kbd>/</kbd> focus prompt · <kbd>esc</kbd> close</li>
     </ul>
 
-    <h3>bring your own keys</h3>
-    <p class="byok-note">your keys stay on your machine. oram reads them locally and never uploads them.</p>
-    <ol class="about-list">
-      <li>copy <code>.env.example</code> to <code>.env</code> in the oram folder.</li>
-      <li>paste any provider keys you have — keep only the lines you use:
-<pre class="env-block">ELEVENLABS_API_KEY=sk_...
-FAL_KEY=...
-STABILITY_API_KEY=sk-...
-HF_TOKEN=hf_...
-REPLICATE_API_TOKEN=r8_...</pre></li>
-      <li>restart oram. open <kbd>⚙</kbd> in the header to pick a specific engine, or leave on <em>auto</em>.</li>
-    </ol>
-    <p>without keys, oram runs in <em>mock</em> mode — fine for learning the interface, but it won't generate real audio. add at least one provider key to summon textures from prompts.</p>
-    <p><strong>local providers</strong> (TangoFlux, Kokoro, Whisper.cpp, Essentia) run on your machine and need no key. <strong>custom HuggingFace endpoints</strong> are reached via <code>HF_TOKEN</code> — paste your token and use a hosted endpoint URL in your generator config.</p>
+    <h3>engines</h3>
+    <p>use <code>oram credentials set elevenlabs</code> or the macOS app provider panel to store a key locally. without keys, oram runs in mock mode. open <kbd>⚙</kbd> to pick an engine.</p>
+    <pre class="env-block">oram credentials set elevenlabs
+oram credentials status
+oram credentials test elevenlabs</pre>
+    <p>local engines (TangoFlux, Kokoro, Whisper.cpp) need no key.</p>
   </div>
 </div>
 

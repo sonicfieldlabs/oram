@@ -44,6 +44,7 @@ oram --session-dir ./sessions     # choose archive directory
 oram --no-stt                     # keyboard only, no voice
 oram dashboard --mock-audio       # browser dashboard (localhost only)
 oram dashboard --allow-lan        # expose on LAN (requires token)
+oram daemon --mock-audio          # local app/plugin daemon on 127.0.0.1
 oram export ./oram_sessions/oram_0001
 ```
 
@@ -123,15 +124,67 @@ cloud credentials are never required for the core looper.
 
 see `.env.example` for a complete template.
 
+## macOS app
+
+ORAM now includes a native SwiftUI app shell in `apps/macos`. It wraps the local
+Python engine through `oram daemon`, stores provider keys in macOS Keychain, and
+writes generated material to `~/Music/ORAM Library`.
+
+The repository includes an unsigned development DMG:
+
+```text
+releases/macos/ORAM.dmg
+```
+
+```bash
+apps/macos/script/build_and_run.sh --no-open
+open apps/macos/dist/ORAM.app
+```
+
+To refresh the repository DMG:
+
+```bash
+apps/macos/script/package_unsigned.sh
+```
+
+The terminal instrument remains available for manual local runs.
+
+## BYOK provider setup
+
+Packaged app usage stores keys in Keychain:
+
+```text
+service: wtf.momoto.oram
+account: provider:elevenlabs
+account: provider:stability
+```
+
+Terminal setup:
+
+```bash
+oram credentials set elevenlabs
+oram credentials set stability
+oram credentials status
+oram credentials test elevenlabs
+oram credentials test stability
+```
+
+Mock mode remains the default; ElevenLabs and Stability AI are optional. See
+[docs/providers/elevenlabs.md](docs/providers/elevenlabs.md) and
+[docs/providers/stability.md](docs/providers/stability.md).
+
 ## security
 
-the dashboard binds to `127.0.0.1` by default (localhost only).
+ORAM is local-first: no Momoto server is required, no telemetry is enabled by
+default, and provider credentials are never exposed in local state responses.
+
+The dashboard and daemon bind to `127.0.0.1` by default (localhost only).
 
 to expose on the local network:
 
 ```bash
 # set a token first
-export ORAM_DASHBOARD_TOKEN=my-secret-token
+export ORAM_DASHBOARD_TOKEN=<local-token>
 
 # then allow LAN access
 oram dashboard --allow-lan --mock-audio
@@ -145,6 +198,9 @@ oram dashboard --allow-lan --mock-audio
 - **origin checking**: WebSocket connections from non-localhost origins are
   rejected unless `--allow-lan` is used.
 - **no secrets in state**: `/api/state` never exposes API keys or tokens.
+
+Run `oram doctor --privacy` for a local privacy diagnostic. See
+[docs/security/local-first-privacy.md](docs/security/local-first-privacy.md).
 
 ## manual smoke test
 

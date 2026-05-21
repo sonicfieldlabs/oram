@@ -64,9 +64,9 @@ class TestEnvParsing:
         assert cfg.dashboard_token == "secret123"
 
     def test_from_env_api_key(self, monkeypatch):
-        monkeypatch.setenv("ELEVENLABS_API_KEY", "el_key_xxx")
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "unit-test-provider-key")
         cfg = OramConfig.from_env()
-        assert cfg.elevenlabs_api_key == "el_key_xxx"
+        assert cfg.elevenlabs_api_key == "unit-test-provider-key"
 
 
 class TestBoolEnv:

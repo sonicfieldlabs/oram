@@ -50,6 +50,7 @@ from oram.engines.router import EngineRouter
 from oram.gateway.usage import UsageTracker
 from oram.summon.mock import MockSoundGenerator
 from oram.types import OramSession
+from oram_security import redact_text
 
 # ── state ──
 
@@ -63,6 +64,13 @@ _log_messages: list[str] = []
 _config: OramConfig | None = None
 _engine_registry: EngineRegistry | None = None
 _engine_router: EngineRouter | None = None
+
+
+def _append_log(message: str) -> None:
+    """append a bounded server log message for the dashboard."""
+    _log_messages.append(redact_text(message))
+    if len(_log_messages) > 50:
+        _log_messages.pop(0)
 
 
 def _get_state_snapshot() -> dict[str, Any]:
@@ -162,7 +170,9 @@ def _get_state_snapshot() -> dict[str, Any]:
         "selected_layer": _layer_manager.selected,
         "input_level": round(_engine.get_input_level(), 3),
         "output_level": round(_engine.get_output_level(), 3),
-        "recording": _engine._recording,
+        "recording": bool(getattr(_engine, "_recording", False)),
+        "input_available": bool(getattr(_engine, "has_input", lambda: True)()),
+        "audio_running": bool(_engine.is_running()),
         "auto_listen": _session.auto_listen,
         "gateway": gateway_status,
         "engines": engines_info,
@@ -225,6 +235,153 @@ def _build_gateway(config: OramConfig) -> dict | None:
     return gateway if gateway else None
 
 
+def _on_record_complete(layer):
+    """auto-listen → generate after a recording finishes."""
+    if _router is None or _session is None or _layer_manager is None:
+        return
+    if not _session.auto_listen:
+        _append_log(f"recorded layer {layer.slot + 1} ({layer.duration_seconds:.1f}s)")
+        return
+
+    _append_log(f"recorded layer {layer.slot + 1} — listening...")
+
+    try:
+        from oram.ears.prompt_compiler import compile_prompt
+        from oram.ears.routes import create_route
+        from oram.gateway.router import select_engine
+
+        route = create_route("hybrid", llm_adapter=_router.llm_adapter)
+        report = route.listen(layer.buffer, layer.sample_rate)
+        _router._listening_reports[layer.id] = report
+
+        tech = report.technical
+        parts = []
+        if tech.texture:
+            parts.append(tech.texture)
+        if tech.noise_balance:
+            parts.append(tech.noise_balance)
+        if report.descriptive.resembles:
+            parts.append(report.descriptive.resembles)
+        if report.speculative.imaginary_thing:
+            parts.append(report.speculative.imaginary_thing[:50])
+        _append_log(f"oram hears: {', '.join(parts)}")
+
+        analysis_data = {
+            "contains_speech": tech.contains_speech,
+            "contains_voice": tech.contains_voice,
+            "pitch_confidence": tech.pitch_confidence,
+            "rhythmic_regularity": tech.rhythmic_regularity,
+            "is_noisy": tech.is_noisy,
+            "is_gestural": tech.is_gestural,
+            "duration": tech.duration,
+        }
+        decision = select_engine(analysis_data, "auto")
+        _append_log(f"engine: {decision.engine} — {decision.reason}")
+
+        prompt = compile_prompt(report, decision.engine)
+        _append_log(f"prompt: {prompt[:80]}...")
+
+        gen_duration = min(layer.duration_seconds * 1.2, 30.0)
+        audio = _router._call_engine(decision.engine, prompt, gen_duration, layer)
+
+        if audio is None:
+            _append_log("generation: no audio returned (check API key)")
+            return
+
+        new_layer = _layer_manager.create_derived_layer(
+            parent=layer,
+            audio=audio,
+            route="hybrid",
+            engine=decision.engine,
+            prompt=prompt,
+        )
+
+        if new_layer is None:
+            _append_log("all layer slots full — clear a layer first")
+            return
+
+        _append_log(
+            f"generated → layer {new_layer.slot + 1} "
+            f"(from layer {layer.slot + 1}, depth {new_layer.generation_depth})"
+        )
+    except Exception as e:
+        _append_log(f"auto-generate error: {e}")
+
+
+def _build_audio_engine(config: OramConfig):
+    """build the active audio engine for the dashboard."""
+    use_mock = getattr(app.state, "mock_audio", False) or config.mock_audio
+    if not use_mock:
+        try:
+            from oram.audio.realtime import RealAudioEngine
+
+            return RealAudioEngine(
+                session=_session,
+                layer_manager=_layer_manager,
+                sample_rate=config.sample_rate,
+                block_size=config.block_size,
+                input_device=config.input_device,
+                output_device=config.output_device,
+                on_record_complete=_on_record_complete,
+            )
+        except Exception as e:
+            _append_log(f"audio: real failed ({e}), using mock")
+
+    _append_log("audio: mock (no hardware)")
+    return MockAudioEngine(
+        session=_session,
+        layer_manager=_layer_manager,
+        sample_rate=config.sample_rate,
+        block_size=config.block_size,
+        on_record_complete=_on_record_complete,
+    )
+
+
+def _start_audio_engine_or_fallback() -> None:
+    """start the current engine and fall back to mock if hardware startup fails."""
+    global _engine
+    if _engine is None or _config is None:
+        return
+
+    _engine.start()
+    if _engine.is_running():
+        if isinstance(_engine, MockAudioEngine):
+            return
+        if bool(getattr(_engine, "has_input", lambda: False)()):
+            _append_log("audio: real (input + speakers)")
+        else:
+            _append_log("audio: output only (no input device)")
+        return
+
+    _append_log("audio: hardware failed to start, using mock")
+    _engine = MockAudioEngine(
+        session=_session,
+        layer_manager=_layer_manager,
+        sample_rate=_config.sample_rate,
+        block_size=_config.block_size,
+        on_record_complete=_on_record_complete,
+    )
+    _engine.start()
+    _append_log("audio: mock (no hardware)")
+
+
+def _restart_audio_engine() -> str:
+    """restart the dashboard audio engine after device settings change."""
+    global _engine
+    if _config is None or _router is None:
+        return "not initialized"
+
+    if _engine is not None:
+        _engine.stop()
+
+    _engine = _build_audio_engine(_config)
+    _router.engine = _engine
+    _start_audio_engine_or_fallback()
+    if bool(getattr(_engine, "has_input", lambda: True)()):
+        return "audio engine restarted"
+    return "audio engine restarted without input"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """initialize ORAM v2 engine on startup, clean up on shutdown."""
@@ -251,9 +408,9 @@ async def lifespan(app: FastAPI):
     gateway = _build_gateway(_config)
     if gateway:
         engines_list = ", ".join(gateway.keys())
-        _log_messages.append(f"gateway: elevenlabs ({engines_list})")
+        _append_log(f"gateway: elevenlabs ({engines_list})")
     else:
-        _log_messages.append("gateway: mock")
+        _append_log("gateway: mock")
 
     # v3: engine registry + router
     _engine_registry = EngineRegistry.from_config(_config)
@@ -263,9 +420,9 @@ async def lifespan(app: FastAPI):
             registry=_engine_registry,
             default_provider=_config.preferred_provider,
         )
-        _log_messages.append(f"engines: {_engine_registry.summary()}")
+        _append_log(f"engines: {_engine_registry.summary()}")
     else:
-        _log_messages.append("engines: none registered (mock only)")
+        _append_log("engines: none registered (mock only)")
 
     # v2: usage tracker
     usage_tracker = UsageTracker()
@@ -276,14 +433,12 @@ async def lifespan(app: FastAPI):
         llm = LLMCliAdapter()
         if llm.is_available:
             llm_adapter = llm
-            _log_messages.append(f"llm: {llm._cli_tool} available")
+            _append_log(f"llm: {llm._cli_tool} available")
 
     _agent = AgentController(llm_adapter=llm_adapter)
 
     def on_status(msg: str):
-        _log_messages.append(msg)
-        if len(_log_messages) > 50:
-            _log_messages.pop(0)
+        _append_log(msg)
 
     # build router (engine set after creation)
     _router = ActionRouter(
@@ -301,110 +456,11 @@ async def lifespan(app: FastAPI):
         on_status=on_status,
     )
 
-    def on_record_complete(layer):
-        """auto-listen → ElevenLabs generate after recording."""
-        if _router is None or _session is None:
-            return
-        if not _session.auto_listen:
-            on_status(f"recorded layer {layer.slot + 1} ({layer.duration_seconds:.1f}s)")
-            return
-
-        on_status(f"recorded layer {layer.slot + 1} — listening...")
-
-        try:
-            from oram.ears.prompt_compiler import compile_prompt
-            from oram.ears.routes import create_route
-            from oram.gateway.router import select_engine
-
-            route = create_route("hybrid", llm_adapter=llm_adapter)
-            report = route.listen(layer.buffer, layer.sample_rate)
-            _router._listening_reports[layer.id] = report
-
-            tech = report.technical
-            parts = []
-            if tech.texture:
-                parts.append(tech.texture)
-            if tech.noise_balance:
-                parts.append(tech.noise_balance)
-            if report.descriptive.resembles:
-                parts.append(report.descriptive.resembles)
-            if report.speculative.imaginary_thing:
-                parts.append(report.speculative.imaginary_thing[:50])
-            on_status(f"oram hears: {', '.join(parts)}")
-
-            analysis_data = {
-                "contains_speech": tech.contains_speech,
-                "contains_voice": tech.contains_voice,
-                "pitch_confidence": tech.pitch_confidence,
-                "rhythmic_regularity": tech.rhythmic_regularity,
-                "is_noisy": tech.is_noisy,
-                "is_gestural": tech.is_gestural,
-                "duration": tech.duration,
-            }
-            decision = select_engine(analysis_data, "auto")
-            on_status(f"engine: {decision.engine} — {decision.reason}")
-
-            prompt = compile_prompt(report, decision.engine)
-            on_status(f"prompt: {prompt[:80]}...")
-
-            gen_duration = min(layer.duration_seconds * 1.2, 30.0)
-            audio = _router._call_engine(decision.engine, prompt, gen_duration, layer)
-
-            if audio is None:
-                on_status("generation: no audio returned (check API key)")
-                return
-
-            new_layer = _layer_manager.create_derived_layer(
-                parent=layer,
-                audio=audio,
-                route="hybrid",
-                engine=decision.engine,
-                prompt=prompt,
-            )
-
-            if new_layer is None:
-                on_status("all layer slots full — clear a layer first")
-                return
-
-            on_status(
-                f"generated → layer {new_layer.slot + 1} "
-                f"(from layer {layer.slot + 1}, depth {new_layer.generation_depth})"
-            )
-        except Exception as e:
-            on_status(f"auto-generate error: {e}")
-
-    # try real audio engine (microphone), fall back to mock
-    use_mock = getattr(app.state, "mock_audio", False)
-    if not use_mock:
-        try:
-            from oram.audio.realtime import RealAudioEngine
-
-            _engine = RealAudioEngine(
-                session=_session,
-                layer_manager=_layer_manager,
-                sample_rate=_config.sample_rate,
-                block_size=_config.block_size,
-                on_record_complete=on_record_complete,
-            )
-            _log_messages.append("audio: real (microphone + speakers)")
-        except Exception as e:
-            _log_messages.append(f"audio: real failed ({e}), using mock")
-            use_mock = True
-
-    if use_mock:
-        _engine = MockAudioEngine(
-            session=_session,
-            layer_manager=_layer_manager,
-            sample_rate=_config.sample_rate,
-            block_size=_config.block_size,
-            on_record_complete=on_record_complete,
-        )
-        _log_messages.append("audio: mock (no hardware)")
-
+    _engine = _build_audio_engine(_config)
     _router.engine = _engine
 
-    _engine.start()
-    _log_messages.append("oram v2 ready — record to begin")
+    _start_audio_engine_or_fallback()
+    _append_log("oram v2 ready — record to begin")
 
     task = asyncio.create_task(_state_broadcast_loop())
 
@@ -483,6 +539,11 @@ async def dashboard():
     bust = str(int(time.time()))
     html = html.replace('style.css"', f'style.css?v={bust}"')
     html = html.replace('app.js"', f'app.js?v={bust}"')
+    # inject dashboard token so JS can auth API calls without ?token= in URL
+    token = _get_dashboard_token()
+    if token:
+        meta_tag = f'<meta name="oram-token" content="{token}">'
+        html = html.replace('<head>', f'<head>\n{meta_tag}')
     return HTMLResponse(html)
 
 
@@ -877,7 +938,13 @@ async def start_recording(req: RecordRequest):
     from oram.command.schemas import RecordAction
     action = RecordAction(target=req.target, duration=req.duration)
     message = _router.route(action, raw_text="api:record")
-    return {"status": "ok", "message": message, "recording": True}
+    recording = bool(getattr(_engine, "_recording", False))
+    if message.startswith("error:") or not recording:
+        return JSONResponse(
+            {"status": "error", "message": message, "recording": recording},
+            status_code=400,
+        )
+    return {"status": "ok", "message": message, "recording": recording}
 
 
 @app.post("/api/stop")
@@ -889,7 +956,7 @@ async def stop_recording():
     from oram.command.schemas import StopRecordingAction
     action = StopRecordingAction()
     message = _router.route(action, raw_text="api:stop")
-    return {"status": "ok", "message": message, "recording": False}
+    return {"status": "ok", "message": message, "recording": bool(getattr(_engine, "_recording", False))}
 
 @app.post("/api/kill")
 async def kill_all():
@@ -909,7 +976,7 @@ async def kill_all():
                 results.append(f"muted layer {i + 1}")
 
     msg = "killed all" if results else "nothing to kill"
-    _log_messages.append(msg)
+    _append_log(msg)
     return {"status": "ok", "message": msg, "actions": results}
 
 
@@ -953,7 +1020,7 @@ async def export_layer(req: ExportLayerRequest):
 
         sf.write(str(filepath), layer.buffer, layer.sample_rate)
 
-        _log_messages.append(f"exported layer {req.target} → {filepath}")
+        _append_log(f"exported layer {req.target} → {filepath}")
         return {"status": "ok", "message": f"layer {req.target} exported", "path": str(filepath), "filename": filename}
     except Exception as e:
         return {"error": str(e), "message": f"export failed: {e}"}
@@ -977,11 +1044,11 @@ async def master_record(req: MasterRecordRequest):
     if req.action == "start":
         _master_recording = True
         _master_buffer = []
-        _log_messages.append("master recording started")
+        _append_log("master recording started")
         return {"status": "ok", "recording": True}
     elif req.action == "stop":
         _master_recording = False
-        _log_messages.append(f"master recording stopped ({len(_master_buffer)} blocks)")
+        _append_log(f"master recording stopped ({len(_master_buffer)} blocks)")
         return {"status": "ok", "recording": False, "blocks": len(_master_buffer)}
     else:
         return {"error": "invalid action"}
@@ -1004,7 +1071,7 @@ async def export_master():
 
         export_mix(_layer_manager, filepath, _config.sample_rate)
 
-        _log_messages.append(f"master mix exported → {filepath}")
+        _append_log(f"master mix exported → {filepath}")
         return {"status": "ok", "message": "master mix exported", "path": str(filepath)}
     except Exception as e:
         return {"error": str(e), "message": f"export failed: {e}"}
@@ -1081,10 +1148,26 @@ async def update_settings(req: SettingsRequest):
         return {"error": "not initialized"}
 
     changes = []
+    restart_audio = False
 
-    if req.sample_rate is not None and req.sample_rate in (22050, 44100, 48000, 96000):
-        _config.sample_rate = req.sample_rate
-        changes.append(f"sample rate → {req.sample_rate} Hz")
+    if (
+        req.sample_rate is not None
+        and req.sample_rate in (22050, 44100, 48000, 96000)
+        and req.sample_rate != _config.sample_rate
+    ):
+        has_audio = bool(_layer_manager and any(not layer.is_empty for layer in _layer_manager.layers))
+        if has_audio:
+            changes.append("sample rate unchanged — clear/export layers before changing it")
+        else:
+            _config.sample_rate = req.sample_rate
+            if _session is not None:
+                _session.sample_rate = req.sample_rate
+            if _layer_manager is not None:
+                _layer_manager.sample_rate = req.sample_rate
+                for layer in _layer_manager.layers:
+                    layer.sample_rate = req.sample_rate
+            changes.append(f"sample rate → {req.sample_rate} Hz")
+            restart_audio = True
 
     if req.bit_depth is not None and req.bit_depth in (16, 24, 32):
         changes.append(f"bit depth → {req.bit_depth}-bit")
@@ -1092,14 +1175,17 @@ async def update_settings(req: SettingsRequest):
     if req.rec_format is not None and req.rec_format in ("wav", "aiff", "flac"):
         changes.append(f"format → {req.rec_format}")
 
-    if req.input_device is not None:
+    if req.input_device is not None and req.input_device != _config.input_device:
         _config.input_device = req.input_device
         changes.append(f"input device → {req.input_device}")
+        restart_audio = True
 
     if changes:
+        if restart_audio:
+            restart_msg = _restart_audio_engine()
+            changes.append(restart_msg)
         msg = "settings: " + ", ".join(changes)
-        _log_messages.append(msg)
-        _log_messages.append("restart engine to apply device/sample-rate changes")
+        _append_log(msg)
         return {"status": "ok", "message": msg, "changes": changes}
     else:
         return {"status": "ok", "message": "no changes", "changes": []}

@@ -11,16 +11,16 @@
   --bg-settings: #101213;
 
   /* ── borders ── */
-  --border: #1e2224;
-  --border-active: #333a3d;
-  --border-focus: #5a8a9a;
+  --border: #262c2f;
+  --border-active: #3e4749;
+  --border-focus: #6a9aaa;
 
   /* ── text ── */
-  --text: #e8eaea;
-  --text-secondary: #9ea6a6;
-  --text-dim: #697172;
-  --text-muted: #464e50;
-  --text-ghost: #262a2b;
+  --text: #f0f2f2;
+  --text-secondary: #b8c0c0;
+  --text-dim: #8a9496;
+  --text-muted: #5c6668;
+  --text-ghost: #323838;
 
   /* ── accents (desaturated, sober) ── */
   --accent: #5a9ab5;
@@ -36,7 +36,7 @@
   --summon: #b07aad;
   --summon-glow: rgba(176, 122, 173, 0.10);
   --danger: #c45a55;
-  --kill: #b84a50;
+  --kill: #c05058;
 
   /* ── loop markers ── */
   --loop-start: #5aabb5;
@@ -119,7 +119,7 @@ header {
   padding: 4px 0 10px;
 }
 .header-left { display: flex; align-items: center; gap: 10px; }
-.header-right { display: flex; align-items: center; gap: 8px; }
+.header-right { display: flex; align-items: center; gap: 10px; }
 h1 {
   font-size: 18px;
   font-weight: 600;
@@ -608,61 +608,129 @@ h1 {
   z-index: 10;
 }
 
-/* ── meters ── */
-#meters {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-inset);
+/* ── edge meters (vertical bars on transport edges) ── */
+.edge-meter {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  background: var(--meter-bg);
+  border-radius: 2px;
+  overflow: hidden;
+  z-index: 5;
 }
+.edge-meter-left {
+  left: 4px;
+}
+.edge-meter-right {
+  right: 4px;
+}
+.edge-meter-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0%;
+  border-radius: 1px;
+  background: var(--meter-green);
+  transition: height 60ms linear, background 100ms;
+}
+.edge-meter-fill.hot { background: var(--meter-yellow); }
+.edge-meter-fill.clip { background: var(--meter-red); }
 .meter-row {
   display: flex;
   align-items: center;
-  gap: 5px;
-  flex: 1;
+  gap: 6px;
+  width: 100%;
 }
 .meter-label {
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 600;
   color: var(--text-dim);
-  letter-spacing: 1.5px;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
-  width: 22px;
+  width: 18px;
+  text-align: right;
 }
 .meter-track {
   flex: 1;
-  height: 7px;
+  height: 5px;
   background: var(--meter-bg);
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
   border: 1px solid var(--border);
 }
 .meter-fill {
   height: 100%;
   width: 0%;
-  border-radius: 2px;
+  border-radius: 1px;
   background: var(--meter-green);
   transition: width 60ms linear, background 100ms;
 }
 .meter-fill.hot { background: var(--meter-yellow); }
 .meter-fill.clip { background: var(--meter-red); }
 .meter-db {
-  font-size: 10px;
-  font-weight: 500;
+  font-size: 9px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
-  min-width: 36px;
+  min-width: 28px;
   text-align: right;
+}
+
+/* ── status group & badges (removed from transport — layer indicator moved to header) ── */
+.status-group,
+.status-badge-layer,
+.status-badge-mode,
+.status-indicator-container {
+  display: none !important;
+}
+
+/* ── header layer badge ── */
+.header-layer-badge {
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--accent);
+  border: 1px solid rgba(90, 154, 181, 0.42);
+  border-radius: 3px;
+  min-width: 26px;
+  padding: 4px 8px;
+  background: rgba(90, 154, 181, 0.06);
+  text-shadow: 0 0 6px var(--active-glow);
+  text-align: center;
+  white-space: nowrap;
+  transition: color 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+.header-layer-badge[data-layer="0"] {
+  color: var(--accent);
+  border-color: rgba(90, 154, 181, 0.46);
+  background: rgba(90, 154, 181, 0.07);
+}
+.header-layer-badge[data-layer="1"] {
+  color: var(--generated);
+  border-color: rgba(77, 168, 130, 0.46);
+  background: rgba(77, 168, 130, 0.07);
+}
+.header-layer-badge[data-layer="2"] {
+  color: var(--summon);
+  border-color: rgba(176, 122, 173, 0.46);
+  background: rgba(176, 122, 173, 0.07);
+}
+.header-layer-badge[data-layer="3"] {
+  color: var(--solo-color);
+  border-color: rgba(196, 165, 69, 0.46);
+  background: rgba(196, 165, 69, 0.07);
 }
 
 /* ── transport module — dedicated top bar ── */
 #transport-module {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 0;
-  padding: 24px 16px 12px;
+  padding: 24px 14px 12px;
   margin-bottom: 4px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
@@ -681,10 +749,10 @@ h1 {
   top: -18px;
   left: 10px;
   font-size: 8px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 1.2px;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--text-dim);
   pointer-events: none;
 }
 .transport-sep-v {
@@ -716,34 +784,35 @@ h1 {
   transform: translateY(-1px);
 }
 .transport-btn:active { transform: scale(0.96) translateY(0); }
-.transport-btn.small { font-size: 16px; width: 42px; height: 38px; }
-.transport-btn.record:hover {
+/* all transport buttons uniform size — no .small variant */
+.transport-btn.small { font-size: 16px; width: 46px; height: 42px; }
+.transport-btn.record:hover,
+#btn-record:hover {
   color: var(--record);
   border-color: var(--record);
   text-shadow: 0 0 8px var(--record-glow);
 }
-.transport-btn.record.active {
+.transport-btn.record.active,
+#btn-record.active {
   color: var(--record);
   border-color: var(--record);
   background: var(--record-glow);
   animation: pulse 1.2s infinite;
 }
-.transport-btn.kill { font-size: 20px; }
-.transport-btn.kill:hover {
+#btn-kill:hover {
   color: var(--kill);
   border-color: var(--border-active);
   background: var(--bg-hover);
 }
-.transport-btn.master-rec { color: var(--text-dim); }
-.transport-btn.master-rec:hover { color: var(--record); border-color: var(--record); }
-.transport-btn.master-rec.active {
+#btn-master-rec { color: var(--text-dim); }
+#btn-master-rec:hover { color: var(--record); border-color: var(--record); }
+#btn-master-rec.active {
   color: var(--record);
   border-color: var(--record);
   background: var(--record-glow);
   animation: pulse 1.2s infinite;
 }
-.transport-btn.summon { color: var(--text-muted); border-color: var(--border); }
-.transport-btn.summon:hover {
+#btn-summon:hover {
   color: var(--summon);
   border-color: var(--border-active);
   background: var(--bg-hover);
@@ -1270,7 +1339,9 @@ input:focus-visible {
   .ctrl-btn { width: 24px; height: 24px; font-size: 10px; }
   .ctrl-btn.mode-btn { width: 30px; }
   .transport-btn { width: 36px; height: 34px; font-size: 14px; }
-  .transport-btn.small { width: 32px; height: 30px; font-size: 12px; }
+  .transport-btn.small { width: 36px; height: 34px; font-size: 12px; }
+  .edge-meter { width: 2px; }
+  .header-layer-badge { font-size: 9px; padding: 3px 7px; }
   #hint-bar { display: none; }
   .log-line .log-time { display: none; }
 }
@@ -1281,53 +1352,53 @@ input:focus-visible {
 
 /* ── light ── */
 [data-theme="light"] {
-  --bg: #f6f7f8;
+  --bg: #f0f1f2;
   --bg-raised: #ffffff;
-  --bg-hover: #edf0f1;
-  --bg-inset: #e4e8ea;
-  --bg-settings: #f0f3f4;
-  --border: #d0d5d8;
-  --border-active: #a0aab0;
-  --border-focus: #5a7a88;
-  --text: #1a1d1e;
-  --text-secondary: #454d50;
-  --text-dim: #6e787c;
-  --text-muted: #95a0a5;
-  --text-ghost: #d8dde0;
-  --accent: #3d7a95;
-  --accent-bright: #2d6680;
-  --record: #9c3a38;
-  --record-glow: rgba(156, 58, 56, 0.10);
-  --active: #3d7a95;
-  --active-glow: rgba(61, 122, 149, 0.08);
-  --muted-color: #8b969a;
-  --solo-color: #8a7030;
-  --generated: #2a7a5a;
-  --generated-glow: rgba(42, 122, 90, 0.07);
-  --summon: #7a4a78;
-  --summon-glow: rgba(122, 74, 120, 0.08);
-  --danger: #9c3a38;
-  --kill: #8a3035;
-  --loop-start: #3a7a85;
-  --loop-end: #9a7040;
-  --loop-region: rgba(58, 122, 133, 0.08);
-  --loop-region-border: rgba(154, 112, 64, 0.40);
-  --meter-green: #2a7a5a;
-  --meter-yellow: #8a7030;
-  --meter-red: #9c3a38;
-  --meter-bg: #dce1e4;
-  --waveform: #7a8c95;
-  --waveform-active: #3d7a95;
-  --waveform-generated: #2a7a5a;
-  --waveform-muted: #c0c8cc;
-  --log-bg: #f0f3f4;
-  --log-border: #d8dde0;
-  --log-system: #6e787c;
-  --log-agent: #3d7a95;
-  --log-listen: #2a7a5a;
-  --log-error: #9c3a38;
-  --log-gen: #7a4a78;
-  --log-time: #a5aeb2;
+  --bg-hover: #e4e8ea;
+  --bg-inset: #d8dce0;
+  --bg-settings: #eaeeef;
+  --border: #b8c0c5;
+  --border-active: #8a9498;
+  --border-focus: #3a6070;
+  --text: #101314;
+  --text-secondary: #2e3538;
+  --text-dim: #556068;
+  --text-muted: #7a8890;
+  --text-ghost: #c0c8cc;
+  --accent: #2a6480;
+  --accent-bright: #1e5068;
+  --record: #8c2825;
+  --record-glow: rgba(140, 40, 37, 0.12);
+  --active: #2a6480;
+  --active-glow: rgba(42, 100, 128, 0.10);
+  --muted-color: #6e7a80;
+  --solo-color: #6e5820;
+  --generated: #1a6045;
+  --generated-glow: rgba(26, 96, 69, 0.09);
+  --summon: #603860;
+  --summon-glow: rgba(96, 56, 96, 0.10);
+  --danger: #8c2825;
+  --kill: #7a2228;
+  --loop-start: #2a6070;
+  --loop-end: #806030;
+  --loop-region: rgba(42, 96, 112, 0.10);
+  --loop-region-border: rgba(128, 96, 48, 0.45);
+  --meter-green: #1a6045;
+  --meter-yellow: #6e5820;
+  --meter-red: #8c2825;
+  --meter-bg: #d0d5d8;
+  --waveform: #5a6e78;
+  --waveform-active: #2a6480;
+  --waveform-generated: #1a6045;
+  --waveform-muted: #b0b8be;
+  --log-bg: #eaeeef;
+  --log-border: #c8cdd0;
+  --log-system: #4a5860;
+  --log-agent: #2a6480;
+  --log-listen: #1a6045;
+  --log-error: #8c2825;
+  --log-gen: #603860;
+  --log-time: #8a9498;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1889,13 +1960,7 @@ input:focus-visible {
 }
 #hint-text.active { color: var(--text-secondary); }
 
-/* ── meters as standalone panel above layers ── */
-#meters {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  border-top: 1px solid var(--border);
-}
+/* standalone meters panel removed in favor of integrated transport controls */
 
 /* ── layers panel — was inside a .panel wrapper, now standalone ── */
 .layers-panel {
@@ -2037,6 +2102,20 @@ input:focus-visible {
   margin: 18px 0 6px;
 }
 #about-modal p { margin: 0 0 8px; }
+.about-epigraph {
+  font-style: italic;
+  color: var(--text-dim);
+  border-left: 2px solid var(--accent);
+  padding: 4px 0 4px 14px;
+  margin: 6px 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+.about-epigraph cite {
+  font-style: normal;
+  color: var(--text-muted);
+  font-size: 11px;
+}
 .about-tagline { color: var(--text); }
 .about-list {
   list-style: none;
@@ -2604,3 +2683,381 @@ ol.about-list li::before {
 }
 #about-modal .env-block::-webkit-scrollbar { height: 4px; }
 #about-modal .env-block::-webkit-scrollbar-thumb { background: var(--border-active); border-radius: 2px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   v4.0 — condensed header: all controls in one row
+   transport-module removed, meters → dots, hint → slim bar
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── hide the old transport module (no longer in HTML, safety override) ── */
+#transport-module { display: none !important; }
+
+/* ── header: three-column layout ── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  gap: 6px;
+  height: 48px;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 36px;
+}
+.header-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  height: 36px;
+}
+
+/* ── oram title ── */
+.oram-title {
+  font-size: 18px;
+  letter-spacing: 5px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ── layer number: plain colored digit, no box ── */
+.hdr-layer-num {
+  font-family: var(--font);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+  min-width: 18px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  color: var(--accent);
+  cursor: default;
+  transition: color var(--dur-fast) var(--ease-smooth), text-shadow var(--dur-fast) var(--ease-smooth);
+  line-height: 1;
+}
+.hdr-layer-num[data-layer="0"] { color: var(--accent); text-shadow: 0 0 6px rgba(90, 154, 181, 0.3); }
+.hdr-layer-num[data-layer="1"] { color: var(--generated); text-shadow: 0 0 6px rgba(77, 168, 130, 0.3); }
+.hdr-layer-num[data-layer="2"] { color: var(--summon); text-shadow: 0 0 6px rgba(176, 122, 173, 0.3); }
+.hdr-layer-num[data-layer="3"] { color: var(--solo-color); text-shadow: 0 0 6px rgba(196, 165, 69, 0.3); }
+
+/* ── header transport group ── */
+.hdr-transport {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ── hdr-sep: tiny vertical divider ── */
+.hdr-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 5px;
+  opacity: 0.45;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* ── hdr-btn: compact, borderless icon buttons ── */
+.hdr-btn {
+  font-family: var(--font);
+  font-size: 17px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  line-height: 1;
+  transition:
+    color var(--dur-fast) var(--ease-smooth),
+    background var(--dur-fast) var(--ease-smooth),
+    transform 100ms ease,
+    text-shadow var(--dur-base) var(--ease-smooth);
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+.hdr-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.hdr-btn:active {
+  transform: scale(0.92);
+}
+.hdr-btn:focus-visible {
+  outline: 1px solid var(--accent-bright);
+  outline-offset: 1px;
+}
+
+/* record button — specific hover + active states */
+.hdr-btn.hdr-rec:hover {
+  color: var(--record);
+  text-shadow: 0 0 8px var(--record-glow);
+}
+.hdr-btn.hdr-rec.active,
+#btn-record.active {
+  color: var(--record);
+  background: var(--record-glow);
+  text-shadow: 0 0 10px var(--record-glow);
+  animation: pulse 1.6s var(--ease-in-out) infinite;
+}
+
+/* fx button — text label, slightly wider */
+.hdr-btn.hdr-fx {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  width: auto;
+  padding: 0 8px;
+}
+.hdr-btn.hdr-fx[aria-expanded="true"] {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
+/* kill button */
+.hdr-btn.hdr-kill:hover {
+  color: var(--kill);
+}
+
+/* summon button */
+#btn-summon:hover {
+  color: var(--summon);
+}
+
+/* listen button */
+#btn-listen:hover {
+  color: var(--generated);
+}
+
+/* master rec */
+#btn-master-rec:hover {
+  color: var(--record);
+}
+#btn-master-rec.active {
+  color: var(--record);
+  background: var(--record-glow);
+  animation: pulse 1.6s var(--ease-in-out) infinite;
+}
+
+/* overdub */
+#btn-overdub:hover {
+  color: var(--accent);
+}
+
+/* ── mode cycle button — shows first letter ── */
+.hdr-btn.hdr-mode {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: lowercase;
+  width: auto;
+  min-width: 26px;
+  height: 36px;
+  padding: 0 7px;
+}
+.hdr-btn.hdr-mode.is-prompt {
+  color: var(--text-secondary);
+}
+.hdr-btn.hdr-mode.is-audio {
+  color: var(--record);
+  background: var(--record-glow);
+}
+.hdr-btn.hdr-mode.is-listen {
+  color: var(--generated);
+  background: var(--generated-glow);
+}
+
+/* ── theme icon ── */
+.hdr-btn.hdr-theme {
+  font-size: 16px;
+}
+.hdr-btn.hdr-theme:hover {
+  transform: rotate(20deg);
+  color: var(--text);
+}
+
+/* ── meter dots ── */
+.hdr-meters {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  gap: 4px;
+  padding: 0 5px;
+  height: 36px;
+  flex-shrink: 0;
+}
+.meter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-ghost);
+  transition: background 100ms linear, box-shadow 100ms linear;
+}
+.meter-dot.level-low {
+  background: var(--meter-green);
+  box-shadow: 0 0 5px rgba(77, 168, 130, 0.5);
+}
+.meter-dot.level-mid {
+  background: var(--meter-yellow);
+  box-shadow: 0 0 6px rgba(196, 165, 69, 0.6);
+}
+.meter-dot.level-hot {
+  background: var(--meter-red);
+  box-shadow: 0 0 8px rgba(196, 90, 85, 0.7);
+}
+
+/* ── hint bar: slim line below header ── */
+#hint-bar {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  height: 18px;
+  min-height: 18px;
+  max-height: 18px;
+  margin: 0 0 2px;
+  width: auto;
+  max-width: none;
+  flex-shrink: 0;
+  align-self: auto;
+}
+#hint-text {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-ghost);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  line-height: 1;
+  transition: color var(--dur-fast) var(--ease-smooth);
+}
+#hint-text.active {
+  color: var(--text-muted);
+}
+
+/* ── override the old hint-bar styles from v3.x ── */
+@media (max-width: 680px) {
+  #hint-bar {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    height: 16px;
+    min-height: 16px;
+    max-height: 16px;
+  }
+  .hdr-transport { gap: 1px; }
+  .hdr-sep { margin: 0 2px; height: 12px; }
+  .hdr-btn { width: 30px; height: 30px; font-size: 14px; }
+  .hdr-btn.hdr-fx { font-size: 10px; padding: 0 6px; }
+  .hdr-btn.hdr-mode { font-size: 10px; min-width: 22px; padding: 0 5px; }
+  .oram-title { font-size: 15px; letter-spacing: 4px; }
+  .header-layer-badge { font-size: 9px; padding: 2px 5px; }
+  .meter-dot { width: 5px; height: 5px; }
+  .hdr-meters { gap: 3px; height: 30px; }
+  header { flex-wrap: wrap; gap: 4px; }
+  .header-center { order: 3; width: 100%; justify-content: flex-start; }
+}
+
+/* ── ensure old mode-toggle class doesn't fight with hdr-btn ── */
+.mode-toggle.mode-cycle.hdr-btn {
+  border: none;
+  padding: 0 5px;
+}
+
+/* ── light theme adjustments for dots ── */
+[data-theme="light"] .meter-dot {
+  background: var(--text-ghost);
+}
+[data-theme="light"] .meter-dot.level-low {
+  background: var(--meter-green);
+  box-shadow: 0 0 4px rgba(26, 96, 69, 0.45);
+}
+[data-theme="light"] .meter-dot.level-mid {
+  background: var(--meter-yellow);
+  box-shadow: 0 0 5px rgba(110, 88, 32, 0.5);
+}
+[data-theme="light"] .meter-dot.level-hot {
+  background: var(--meter-red);
+  box-shadow: 0 0 6px rgba(140, 40, 37, 0.6);
+}
+[data-theme="light"] #hint-text {
+  color: var(--text-muted);
+}
+[data-theme="light"] #hint-text.active {
+  color: var(--text-dim);
+}
+[data-theme="light"] .hdr-btn {
+  color: var(--text-dim);
+}
+[data-theme="light"] .hdr-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+[data-theme="light"] .hdr-sep {
+  background: var(--border-active);
+}
+[data-theme="light"] .hdr-layer-num[data-layer="0"] { color: var(--accent); text-shadow: none; }
+[data-theme="light"] .hdr-layer-num[data-layer="1"] { color: var(--generated); text-shadow: none; }
+[data-theme="light"] .hdr-layer-num[data-layer="2"] { color: var(--summon); text-shadow: none; }
+[data-theme="light"] .hdr-layer-num[data-layer="3"] { color: var(--solo-color); text-shadow: none; }
+
+/* ── prompt-frame-lg: taller prompt area ── */
+.prompt-frame-lg {
+  min-height: 44px;
+}
+.prompt-frame-lg #cmd-input,
+.prompt-frame-lg input[type="text"] {
+  font-size: 13px;
+  padding: 10px 12px;
+}
+
+/* ── add layer button (+) ── */
+.hdr-btn.hdr-add-layer {
+  font-size: 18px;
+  font-weight: 300;
+  color: var(--text-ghost);
+}
+.hdr-btn.hdr-add-layer:hover {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+.hdr-btn.hdr-add-layer.layer-added {
+  color: var(--text-dim);
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ── extra layer reveal animation ── */
+.layer-row-extra.layer-revealed {
+  display: flex !important;
+  animation: slideIn var(--dur-base) var(--ease-smooth);
+}

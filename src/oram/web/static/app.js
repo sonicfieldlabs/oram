@@ -8,7 +8,9 @@
   let state = {};
   let masterRecording = false;
   const _urlParams = new URLSearchParams(location.search);
-  const _authToken = _urlParams.get('token') || '';
+  const _authToken = _urlParams.get('token')
+    || (document.querySelector('meta[name="oram-token"]') || {}).content
+    || '';
 
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -109,10 +111,8 @@
   }
 
   // ── rendering ──
-  const meterIn = document.getElementById('meter-in');
-  const meterOut = document.getElementById('meter-out');
-  const meterInDb = document.getElementById('meter-in-db');
-  const meterOutDb = document.getElementById('meter-out-db');
+  const meterDotIn = document.getElementById('meter-dot-in');
+  const meterDotOut = document.getElementById('meter-dot-out');
   const btnRecord = document.getElementById('btn-record');
   const btnModeCycle = document.getElementById('btn-mode-cycle');
 
@@ -121,6 +121,14 @@
   const waveformCache = new Map();
   const waveformPending = new Map();
   const WAVEFORM_CACHE_CAP = 32;
+
+  function updateLayerBadge(layerIndex) {
+    const badge = document.getElementById('header-layer-indicator');
+    if (!badge) return;
+    const idx = Number.isFinite(layerIndex) ? Math.max(0, Math.min(3, layerIndex)) : 0;
+    badge.textContent = String(idx + 1);
+    badge.dataset.layer = String(idx);
+  }
 
   function linearToDb(linear) {
     if (linear <= 0.00001) return -Infinity;
@@ -135,9 +143,10 @@
   function render(s) {
     // single mode cycle button — combines input_mode + auto_listen into one indicator
     const modeKey = s.auto_listen ? 'listen' : (s.input_mode === 'audio' ? 'audio' : 'prompt');
+    const modeLetters = { prompt: 'p', audio: 'a', listen: 'l' };
     if (btnModeCycle) {
-      btnModeCycle.textContent = modeKey;
-      btnModeCycle.className = 'mode-toggle mode-cycle is-' + modeKey;
+      btnModeCycle.textContent = modeLetters[modeKey] || modeKey;
+      btnModeCycle.className = 'hdr-btn hdr-mode mode-cycle is-' + modeKey;
       btnModeCycle.dataset.mode = modeKey;
     }
 
@@ -149,13 +158,8 @@
     if (promptFrame) promptFrame.classList.toggle('recording', !!s.recording);
     const promptModeLabel = document.getElementById('prompt-mode-label');
     if (promptModeLabel) promptModeLabel.textContent = modeKey;
-    const promptLayerChip = document.getElementById('prompt-layer-chip');
-    if (promptLayerChip) {
-      promptLayerChip.textContent = String((s.selected_layer || 0) + 1);
-      promptLayerChip.classList.add('active');
-    }
-    const promptModeChip = document.getElementById('prompt-mode-chip');
-    if (promptModeChip) promptModeChip.textContent = modeKey;
+    const selIdx = s.selected_layer != null ? s.selected_layer : 0;
+    updateLayerBadge(selIdx);
 
     // meters — smoothed with pro ballistics
     const rawIn = s.input_level || 0;
@@ -170,19 +174,32 @@
     const inPct = Math.max(0, Math.min(100, ((inDb + 60) / 60) * 100));
     const outPct = Math.max(0, Math.min(100, ((outDb + 60) / 60) * 100));
 
-    meterIn.style.width = inPct + '%';
-    meterOut.style.width = outPct + '%';
-    meterIn.className = 'meter-fill' + (inDb > -3 ? ' clip' : inDb > -12 ? ' hot' : '');
-    meterOut.className = 'meter-fill' + (outDb > -3 ? ' clip' : outDb > -12 ? ' hot' : '');
-
-    meterInDb.textContent = formatDb(inDb);
-    meterOutDb.textContent = formatDb(outDb);
+    // meter dots — classify level into off/low/mid/hot
+    function dotClass(db) {
+      if (db <= -60) return 'meter-dot';
+      if (db > -3) return 'meter-dot level-hot';
+      if (db > -18) return 'meter-dot level-mid';
+      return 'meter-dot level-low';
+    }
+    if (meterDotIn) meterDotIn.className = dotClass(inDb) + ' meter-dot-in';
+    if (meterDotOut) meterDotOut.className = dotClass(outDb) + ' meter-dot-out';
 
     // layers
     if (s.layers) {
       s.layers.forEach((layer, i) => {
         renderLayer(i, layer, s.selected_layer);
       });
+
+      // auto-reveal layer 4 if it has content
+      if (s.layers.length > 3 && s.layers[3].state !== 'empty') {
+        const extraLayer = document.getElementById('layer-3');
+        const addBtn = document.getElementById('btn-add-layer');
+        if (extraLayer && !extraLayer.classList.contains('layer-revealed')) {
+          extraLayer.style.display = '';
+          extraLayer.classList.add('layer-revealed');
+          if (addBtn) addBtn.classList.add('layer-added');
+        }
+      }
     }
 
     // server log sync
@@ -301,14 +318,43 @@
     if (shell) {
       const isEmpty = layer.state === 'empty';
       shell.classList.toggle('empty', isEmpty);
-      shell.classList.toggle('loop-active', !!layer.loop_enabled && !isEmpty);
+
+      // Check optimistic loop state
+      let loopEnabled = !!layer.loop_enabled && !isEmpty;
+      let startPct = layer.loop_start_pct || 0;
+      let endPct = layer.loop_end_pct || 100;
+
+      if (shell._optimisticLoop) {
+        if (Date.now() - shell._optimisticLoop.timestamp < 1000) {
+          // If the server state has updated and now matches the optimistic state, clear the lock
+          const matches = (!!layer.loop_enabled === shell._optimisticLoop.enabled) &&
+            (!shell._optimisticLoop.enabled || (
+              Math.abs((layer.loop_start_pct || 0) - shell._optimisticLoop.startPct) < 1 &&
+              Math.abs((layer.loop_end_pct || 100) - shell._optimisticLoop.endPct) < 1
+            ));
+          if (matches) {
+            delete shell._optimisticLoop;
+          } else {
+            // Use optimistic state
+            loopEnabled = shell._optimisticLoop.enabled && !isEmpty;
+            startPct = shell._optimisticLoop.startPct;
+            endPct = shell._optimisticLoop.endPct;
+          }
+        } else {
+          // Timeout reached, discard optimistic lock
+          delete shell._optimisticLoop;
+        }
+      }
+
+      shell.classList.toggle('loop-active', loopEnabled);
+
       // skip while user is dragging — UI handles its own overlay
       if (!shell._selecting) {
         const overlay = shell.querySelector('.loop-selection');
         if (overlay) {
-          if (!isEmpty && layer.loop_enabled) {
-            const left = Math.max(0, Math.min(100, layer.loop_start_pct || 0));
-            const right = Math.max(0, Math.min(100, layer.loop_end_pct || 100));
+          if (!isEmpty && loopEnabled) {
+            const left = Math.max(0, Math.min(100, startPct));
+            const right = Math.max(0, Math.min(100, endPct));
             overlay.style.left = left + '%';
             overlay.style.width = Math.max(0, right - left) + '%';
           } else {
@@ -318,8 +364,11 @@
       }
       const readout = shell.querySelector('.loop-readout');
       if (readout) {
-        if (!isEmpty && layer.loop_enabled) {
-          readout.textContent = (layer.loop_start_seconds || 0).toFixed(2) + '–' + (layer.loop_end_seconds || 0).toFixed(2);
+        if (!isEmpty && loopEnabled) {
+          const dur = layer.duration || 0;
+          const sSec = (startPct / 100) * dur;
+          const eSec = (endPct / 100) * dur;
+          readout.textContent = sSec.toFixed(2) + '–' + eSec.toFixed(2);
         } else {
           readout.textContent = '';
         }
@@ -585,6 +634,14 @@
     btnModeCycle.addEventListener('click', async () => {
       const cur = btnModeCycle.dataset.mode || 'prompt';
       const next = cur === 'prompt' ? 'audio' : (cur === 'audio' ? 'listen' : 'prompt');
+      const modeLetters2 = { prompt: 'p', audio: 'a', listen: 'l' };
+
+      // optimistic UI update — don't wait for server round-trip
+      btnModeCycle.textContent = modeLetters2[next] || next;
+      btnModeCycle.className = 'hdr-btn hdr-mode mode-cycle is-' + next;
+      btnModeCycle.dataset.mode = next;
+      const promptModeLabel2 = document.getElementById('prompt-mode-label');
+      if (promptModeLabel2) promptModeLabel2.textContent = next;
 
       // set input_mode (prompt | audio); listen reuses prompt input mode
       const desiredInputMode = next === 'audio' ? 'audio' : 'prompt';
@@ -710,44 +767,73 @@
     });
   }
 
+  // optimistic layer selection — update UI instantly before server confirms
+  function _optimisticSelectLayer(layerIndex) {
+    // update header badge
+    updateLayerBadge(layerIndex);
+
+    // update row highlights
+    document.querySelectorAll('.layer-row').forEach((row, i) => {
+      row.classList.toggle('selected', i === layerIndex);
+    });
+
+    // update local state so subsequent clicks reference the right layer
+    if (state) state.selected_layer = layerIndex;
+  }
+
   // layer controls (delegation)
   document.getElementById('layers').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
-    if (!btn) return;
+    if (btn) {
+      const action = btn.dataset.action;
+      const target = parseInt(btn.dataset.target);
 
-    const action = btn.dataset.action;
-    const target = parseInt(btn.dataset.target);
-
-    switch (action) {
-      case 'select': {
-        // shift+click solos (alt-path to right-click)
-        if (e.shiftKey) {
-          apiPost('/api/command', { text: 'solo layer ' + target });
+      switch (action) {
+        case 'select': {
+          // shift+click solos (alt-path to right-click)
+          if (e.shiftKey) {
+            apiPost('/api/command', { text: 'solo layer ' + target });
+            break;
+          }
+          // click cycles: not-selected → select; already-selected → toggle mute
+          // (only mute once we've received initial state and the layer has audio)
+          const hasState = Array.isArray(state.layers);
+          const currentSelected = hasState ? (state.selected_layer || 0) + 1 : null;
+          const tgtLayer = hasState ? state.layers[target - 1] : null;
+          const isAlreadySelected = currentSelected === target;
+          const hasAudio = tgtLayer && tgtLayer.state !== 'empty';
+          if (isAlreadySelected && hasAudio) {
+            apiPost('/api/command', { text: 'mute layer ' + target });
+          } else {
+            // optimistic UI update for header badge
+            _optimisticSelectLayer(target - 1);
+            apiPost('/api/command', { text: 'select layer ' + target });
+          }
           break;
         }
-        // click cycles: not-selected → select; already-selected → toggle mute
-        // (only mute once we've received initial state and the layer has audio)
-        const hasState = Array.isArray(state.layers);
-        const currentSelected = hasState ? (state.selected_layer || 0) + 1 : null;
-        const tgtLayer = hasState ? state.layers[target - 1] : null;
-        const isAlreadySelected = currentSelected === target;
-        const hasAudio = tgtLayer && tgtLayer.state !== 'empty';
-        if (isAlreadySelected && hasAudio) {
-          apiPost('/api/command', { text: 'mute layer ' + target });
-        } else {
-          apiPost('/api/command', { text: 'select layer ' + target });
-        }
-        break;
+        case 'export':
+          exportLayer(target);
+          break;
+        case 'clear':
+          clearLayer(target);
+          break;
+        case 'auto-gen':
+          autoGenerate(target);
+          break;
       }
-      case 'export':
-        exportLayer(target);
-        break;
-      case 'clear':
-        clearLayer(target);
-        break;
-      case 'auto-gen':
-        autoGenerate(target);
-        break;
+      return;
+    }
+
+    // click on empty space of a layer row should select it
+    const row = e.target.closest('.layer-row');
+    const isVolStrip = e.target.closest('.vol-strip');
+    const isCorner = e.target.closest('.corner');
+    if (row && !isVolStrip && !isCorner) {
+      const layerIndex = parseInt(row.dataset.layer);
+      const targetNum = layerIndex + 1;
+      // optimistic UI update for header badge
+      _optimisticSelectLayer(layerIndex);
+      apiPost('/api/command', { text: 'select layer ' + targetNum });
     }
   });
 
@@ -931,12 +1017,24 @@
 
   // ── loop handle drag ──
   async function commitLoopRegion(target, startPct, endPct, enabled) {
+    const shell = document.querySelector(`.waveform-shell[data-target="${target}"]`);
+    if (shell) {
+      shell._optimisticLoop = {
+        startPct: startPct !== null ? startPct : 0,
+        endPct: endPct !== null ? endPct : 100,
+        enabled,
+        timestamp: Date.now()
+      };
+    }
     const body = { target: parseInt(target), enabled };
     if (startPct != null) body.start_pct = startPct;
     if (endPct != null) body.end_pct = endPct;
     const res = await apiPost('/api/loop-region', body);
     if (res && res.status === 'error') {
       addLog(res.message || 'loop region rejected', 'error', '✕');
+      if (shell) {
+        delete shell._optimisticLoop;
+      }
     }
     return res;
   }
@@ -983,22 +1081,25 @@
       }
 
       shell._selecting = true;
-      shell.classList.add('selecting');
-      row?.classList.add('dragging-loop');
       didDrag = false;
       startX = e.clientX;
       startPct = pctFromEvent(e);
       currentPct = startPct;
-      setOverlay(startPct, startPct);
       shell.setPointerCapture(e.pointerId);
     });
 
     shell.addEventListener('pointermove', (e) => {
       if (!shell._selecting) return;
       const dx = Math.abs(e.clientX - startX);
-      if (dx > DRAG_THRESHOLD_PX) didDrag = true;
-      currentPct = pctFromEvent(e);
-      setOverlay(startPct, currentPct);
+      if (!didDrag && dx > DRAG_THRESHOLD_PX) {
+        didDrag = true;
+        shell.classList.add('selecting');
+        row?.classList.add('dragging-loop');
+      }
+      if (didDrag) {
+        currentPct = pctFromEvent(e);
+        setOverlay(startPct, currentPct);
+      }
     });
 
     function finalize() {
@@ -1043,14 +1144,35 @@
     });
   });
 
+  async function startRecording() {
+    if (state.recording) return;
+    state.recording = true;
+    btnRecord?.classList.add('active');
+    const res = await apiPost('/api/record', { duration: null });
+    if (res && res.status === 'ok' && res.recording) {
+      addLog(res.message || 'recording started', 'record', '●');
+      return;
+    }
+    state.recording = false;
+    btnRecord?.classList.remove('active');
+    addLog('record failed: ' + (res?.message || 'unknown'), 'error', '✕');
+  }
+
+  async function stopRecording() {
+    const res = await apiPost('/api/stop');
+    state.recording = false;
+    btnRecord?.classList.remove('active');
+    if (res && res.status === 'ok') {
+      addLog(res.message || 'recording stopped', 'system', '⏹');
+    } else {
+      addLog('stop failed: ' + (res?.message || 'unknown'), 'error', '✕');
+    }
+  }
+
   // transport buttons
   document.getElementById('btn-record').addEventListener('click', async () => {
-    if (state.recording) {
-      await apiPost('/api/stop');
-    } else {
-      await apiPost('/api/record', { duration: null });
-      addLog('recording started', 'record', '●');
-    }
+    if (state.recording) await stopRecording();
+    else await startRecording();
   });
 
 
@@ -1075,15 +1197,32 @@
   });
 
   // master export
-  document.getElementById('btn-master-export').addEventListener('click', async () => {
-    addLog('exporting master mix…', 'export', '⬡');
-    const res = await apiPost('/api/export-master');
-    if (res && res.status === 'ok') {
-      addLog('master exported → ' + (res.path || 'mix.wav'), 'generated', '✦');
-    } else {
-      addLog('export failed: ' + (res?.message || 'unknown'), 'error', '✕');
-    }
-  });
+  const btnMasterExport = document.getElementById('btn-master-export');
+  if (btnMasterExport) {
+    btnMasterExport.addEventListener('click', async () => {
+      addLog('exporting master mix…', 'export', '⬡');
+      const res = await apiPost('/api/export-master');
+      if (res && res.status === 'ok') {
+        addLog('master exported → ' + (res.path || 'mix.wav'), 'generated', '✦');
+      } else {
+        addLog('export failed: ' + (res?.message || 'unknown'), 'error', '✕');
+      }
+    });
+  }
+
+  // add layer (+) — reveals the hidden 4th layer
+  const btnAddLayer = document.getElementById('btn-add-layer');
+  if (btnAddLayer) {
+    btnAddLayer.addEventListener('click', () => {
+      const extraLayer = document.getElementById('layer-3');
+      if (extraLayer && !extraLayer.classList.contains('layer-revealed')) {
+        extraLayer.style.display = '';
+        extraLayer.classList.add('layer-revealed');
+        btnAddLayer.classList.add('layer-added');
+        addLog('layer 4 added', 'system', '+');
+      }
+    });
+  }
 
   // other transport — DSP effects moved to fx-palette popover
   const transportCommands = {
@@ -1186,13 +1325,8 @@
 
     switch (e.key) {
       case 'r':
-        if (state.recording) {
-          apiPost('/api/stop');
-          addLog('stopped recording', 'system', '⏹');
-        } else {
-          apiPost('/api/record', { duration: null });
-          addLog('recording started', 'record', '●');
-        }
+        if (state.recording) stopRecording();
+        else startRecording();
         break;
       case 'R': sendCommand('reverse'); break; // shift-R = reverse
       case 'o': sendCommand('overdub'); break;
@@ -1237,7 +1371,7 @@
         openPalette();
         break;
       case 'Escape':
-        if (state.recording) apiPost('/api/stop');
+        if (state.recording) stopRecording();
         settingsPanel.classList.add('hidden');
         palette.classList.add('hidden');
         if (fxPalette) {
@@ -1338,8 +1472,8 @@
 
   const PALETTE_COMMANDS = [
     // transport
-    { group: 'transport', label: 'Record', icon: '⏺', shortcut: 'r', action: () => { apiPost('/api/record', { duration: null }); addLog('recording started', 'record', '●'); } },
-    { group: 'transport', label: 'Stop', icon: '⏹', action: () => apiPost('/api/stop') },
+    { group: 'transport', label: 'Record', icon: '⏺', shortcut: 'r', action: () => startRecording() },
+    { group: 'transport', label: 'Stop', icon: '⏹', action: () => stopRecording() },
     { group: 'transport', label: 'Overdub', icon: '⊕', shortcut: 'o', action: () => sendCommand('overdub') },
     { group: 'transport', label: 'Kill All Sound', icon: '⊘', shortcut: 'k', action: () => { apiPost('/api/kill'); addLog('killed all audio', 'error', '⊘'); } },
     // layers
@@ -1359,7 +1493,7 @@
     { group: 'dsp', label: 'Spatial Far', icon: '↠', action: () => sendCommand('make it far away') },
     { group: 'dsp', label: 'Stretch Breathe', icon: '≈', action: () => sendCommand('stretch until it breathes') },
     // agent
-    { group: 'agent', label: 'Listen to Texture', icon: '♉', shortcut: 'l', action: () => sendCommand('listen to the texture') },
+    { group: 'agent', label: 'Listen to Texture', icon: '☊', shortcut: 'l', action: () => sendCommand('listen to the texture') },
     { group: 'agent', label: 'Auto-Generate', icon: '✦', shortcut: 'g', action: () => { const sel = (state.selected_layer || 0) + 1; autoGenerate(sel); } },
     { group: 'agent', label: 'Summon Palette', icon: '✦', action: () => palette.classList.toggle('hidden') },
     // session
@@ -1370,8 +1504,8 @@
     { group: 'loop', label: 'Reset Loop Selected', icon: '⟲', action: () => commitLoopRegion((state.selected_layer || 0) + 1, 0, 100, false) },
     { group: 'loop', label: 'Set Looper Mode', icon: 'L', action: () => apiPost('/api/set-layer-mode', { mode: 'looper' }) },
     // themes
-    { group: 'theme', label: 'Theme: Dark', icon: '◆', action: () => setTheme('dark') },
-    { group: 'theme', label: 'Theme: Light', icon: '◇', action: () => setTheme('light') },
+    { group: 'theme', label: 'Theme: Dark', icon: '◆', action: () => applyTheme('dark') },
+    { group: 'theme', label: 'Theme: Light', icon: '◇', action: () => applyTheme('light') },
     // focus
     { group: 'nav', label: 'Focus Prompt', icon: '/', shortcut: '/', action: () => cmdInput.focus() },
   ];

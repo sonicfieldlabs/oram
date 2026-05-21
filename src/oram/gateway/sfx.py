@@ -7,7 +7,6 @@ abstract sound objects, environmental fragments, and loopable beds.
 from __future__ import annotations
 
 import io
-import os
 import struct
 import wave
 
@@ -15,6 +14,7 @@ import numpy as np
 
 from oram.gateway.base import EngineResult
 from oram.gateway.client import ElevenLabsHTTPClient
+from oram_security.credentials import resolve_provider_secret
 
 # ElevenLabs API base
 API_BASE = "https://api.elevenlabs.io/v1"
@@ -26,7 +26,7 @@ class SFXAdapter:
     engine_name = "sfx"
 
     def __init__(self, api_key: str | None = None):
-        self._api_key = api_key or os.environ.get("ELEVENLABS_API_KEY", "")
+        self._api_key = api_key or resolve_provider_secret("elevenlabs") or ""
 
     def is_available(self) -> bool:
         return bool(self._api_key)

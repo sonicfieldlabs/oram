@@ -20,6 +20,7 @@ class AudioEngine(Protocol):
     def start(self) -> None: ...
     def stop(self) -> None: ...
     def is_running(self) -> bool: ...
+    def has_input(self) -> bool: ...
     def get_input_level(self) -> float: ...
     def get_output_level(self) -> float: ...
     def start_command_capture(self, max_duration_seconds: float = 10.0) -> None: ...
@@ -81,6 +82,9 @@ class MockAudioEngine:
     def is_running(self) -> bool:
         return self._running
 
+    def has_input(self) -> bool:
+        return True
+
     def get_input_level(self) -> float:
         return self._input_level
 
@@ -95,7 +99,6 @@ class MockAudioEngine:
     ) -> None:
         """begin recording into a layer."""
         self._recording = True
-        self._record_target = target
         self._record_buffer = []
         self._record_samples = 0
         self._overdub_mode = overdub
@@ -108,6 +111,7 @@ class MockAudioEngine:
         layer = self.layers.get_layer(
             target if target is not None else "selected"
         )
+        self._record_target = layer.slot + 1
         layer.state = LayerState.RECORDING
 
     def start_command_capture(self, max_duration_seconds: float = 10.0) -> None:

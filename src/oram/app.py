@@ -126,6 +126,18 @@ def run(config: OramConfig) -> None:
             except ImportError:
                 console.print("stt: whisper not available, falling back to mock", style="oram.status")
                 stt = MockSTTAdapter()
+        elif config.stt_backend == "elevenlabs":
+            try:
+                from oram.stt.elevenlabs import ElevenLabsSTTAdapter
+                stt = ElevenLabsSTTAdapter(api_key=config.elevenlabs_api_key)
+                if stt.is_available():
+                    console.print("stt: elevenlabs scribe", style="oram.status")
+                else:
+                    console.print("stt: elevenlabs key missing, falling back to mock", style="oram.status")
+                    stt = MockSTTAdapter()
+            except Exception as e:
+                console.print(f"stt: elevenlabs unavailable ({e}), falling back to mock", style="oram.status")
+                stt = MockSTTAdapter()
         else:
             stt = MockSTTAdapter()
 
@@ -262,7 +274,13 @@ def _input_loop(live, tui, router, agent, ptt, stt, engine, session, config):
                     else:
                         # push-to-talk prompt toggle
                         was_active = ptt.is_active
-                        result = ptt.toggle(engine)
+                        try:
+                            result = ptt.toggle(engine)
+                        except RuntimeError as e:
+                            tui.set_ptt(False)
+                            session.listening = False
+                            tui.add_log(str(e))
+                            continue
                         if was_active:
                             tui.set_ptt(False)
                             session.listening = False

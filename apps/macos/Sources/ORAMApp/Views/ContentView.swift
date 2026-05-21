@@ -1,0 +1,1509 @@
+import SwiftUI
+
+struct ContentView: View {
+    @EnvironmentObject private var store: AppStore
+    @State private var prompt = ""
+    @State private var hint = "hover over a button for details"
+    @State private var showSettings = false
+    @State private var showFX = false
+    @State private var showSummon = false
+    @State private var showLog = false
+    @State private var showLibrary = false
+    @State private var showProvider = false
+    @State private var showPrivacy = false
+    @State private var showAbout = false
+    @State private var showCommandPalette = false
+    @State private var showFourthLayer = false
+    @State private var lightTheme = false
+    @State private var commandSearch = ""
+    @State private var sampleRateDraft = 48000
+    @State private var blockSizeDraft = 512
+    @State private var selectedModel = "local-mock"
+
+    private let fxCommands: [(glyph: String, name: String, command: String, hint: String)] = [
+        ("↺", "reverse", "reverse", "reverse the selected layer's audio"),
+        ("½", "slower", "make it slower", "half speed — pitch drops, time stretches"),
+        ("2×", "faster", "make it faster", "double speed — time compresses, pitch rises"),
+        ("◐", "darker", "make it darker", "low-pass filter — darken the texture"),
+        ("░", "granulate", "granulate softly", "granular synthesis — fragment into particles"),
+        ("≋", "reverb", "wash it in reverb", "reverb wash — push into deep space"),
+        ("↠", "far", "make it far away", "distance — make it sound far away"),
+        ("≈", "stretch", "stretch until it breathes", "time stretch — slow and breathe")
+    ]
+
+    private let summonPrompts = [
+        "distant metallic rain",
+        "room tone",
+        "low drone",
+        "synthetic forest",
+        "quiet machine",
+        "fake field recording"
+    ]
+
+    var body: some View {
+        ZStack {
+            DashboardTheme.background(lightTheme)
+                .ignoresSafeArea()
+
+            VStack(spacing: 8) {
+                header
+                hintBar
+
+                if showSettings {
+                    settingsPanel
+                }
+
+                promptModule
+
+                if showFX {
+                    fxPalette
+                }
+
+                if showSummon {
+                    summonPalette
+                }
+
+                layersPanel
+
+                logPanel
+            }
+            .frame(maxWidth: 880)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+
+            if showAbout {
+                AboutOverlay(theme: lightTheme, close: { showAbout = false }, openPrivacy: {
+                    showAbout = false
+                    showPrivacy = true
+                })
+            }
+
+            if showCommandPalette {
+                CommandPaletteOverlay(
+                    theme: lightTheme,
+                    search: $commandSearch,
+                    close: { showCommandPalette = false },
+                    run: { text in
+                        prompt = text
+                        showCommandPalette = false
+                        Task { await store.sendCommand(text) }
+                    }
+                )
+            }
+
+            Button("") {
+                showCommandPalette = true
+            }
+            .keyboardShortcut("k", modifiers: [.command])
+            .opacity(0)
+            .frame(width: 0, height: 0)
+        }
+        .foregroundStyle(DashboardTheme.text(lightTheme))
+        .font(.system(size: 13, design: .monospaced))
+        .sheet(isPresented: $showLibrary) {
+            LibraryView()
+                .environmentObject(store)
+                .frame(minWidth: 760, minHeight: 520)
+        }
+        .sheet(isPresented: $showProvider) {
+            ProviderSetupView()
+                .environmentObject(store)
+                .frame(minWidth: 640, minHeight: 520)
+        }
+        .sheet(isPresented: $showPrivacy) {
+            PrivacyView()
+                .environmentObject(store)
+                .frame(minWidth: 640, minHeight: 480)
+        }
+        .task {
+            sampleRateDraft = store.state?.sampleRate ?? sampleRateDraft
+            blockSizeDraft = store.state?.blockSize ?? blockSizeDraft
+            ensureSelectedModel()
+        }
+        .onChange(of: store.state?.sampleRate) { newValue in
+            if let newValue {
+                sampleRateDraft = newValue
+            }
+        }
+        .onChange(of: store.state?.blockSize) { newValue in
+            if let newValue {
+                blockSizeDraft = newValue
+            }
+        }
+        .onChange(of: store.providers.map(\.id)) { _ in
+            ensureSelectedModel()
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Button {
+                showAbout = true
+            } label: {
+                HStack(spacing: 8) {
+                    OramLogoView(size: 26)
+                    Text("oram")
+                        .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(DashboardTheme.secondary(lightTheme))
+                }
+            }
+            .buttonStyle(.plain)
+            .onHoverHint("about · quick guide", $hint)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 7) {
+                Button {
+                    Task { await cycleSelectedLayer() }
+                } label: {
+                    Text("\(store.state?.selectedLayer ?? 1)")
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(HeaderButtonStyle(theme: lightTheme, active: true))
+                .onHoverHint("selected layer — click to cycle", $hint)
+
+                HeaderSeparator()
+
+                HeaderGlyph("⏺", active: store.state?.recording == true, role: .record, theme: lightTheme) {
+                    Task {
+                        if store.state?.recording == true {
+                            await store.stopRecording()
+                        } else {
+                            await store.startRecording()
+                        }
+                    }
+                }
+                .onHoverHint("record / stop — toggle recording from microphone (r)", $hint)
+
+                HeaderGlyph("⊕", theme: lightTheme) {
+                    Task { await store.sendCommand("overdub") }
+                }
+                .onHoverHint("overdub: layer new audio over existing (o)", $hint)
+
+                HeaderSeparator()
+
+                HeaderGlyph("fx", active: showFX, role: .fx, theme: lightTheme) {
+                    showFX.toggle()
+                    if showFX { showSummon = false }
+                }
+                .onHoverHint("dsp effects — open the texture transforms", $hint)
+
+                HeaderSeparator()
+
+                HeaderGlyph("✦", active: showSummon, role: .summon, theme: lightTheme) {
+                    showSummon.toggle()
+                    if showSummon { showFX = false }
+                }
+                .onHoverHint("summon — open the texture palette for prompt generation", $hint)
+
+                HeaderGlyph("☊", theme: lightTheme) {
+                    Task { await store.sendCommand("listen to the texture") }
+                }
+                .onHoverHint("listen — agent analyzes current layer texture", $hint)
+
+                HeaderSeparator()
+
+                HeaderGlyph("◉", theme: lightTheme) {
+                    Task { await store.sendCommand("export mix") }
+                }
+                .onHoverHint("export current mix — bounce all layers", $hint)
+
+                HeaderGlyph("⊘", role: .danger, theme: lightTheme) {
+                    Task { await store.killAll() }
+                }
+                .onHoverHint("kill all sound — mute every layer and stop recording", $hint)
+
+                HeaderSeparator()
+
+                HeaderGlyph("+", active: showFourthLayer, theme: lightTheme) {
+                    showFourthLayer = true
+                }
+                .onHoverHint("add another layer slot", $hint)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 10) {
+                MeterDots(
+                    theme: lightTheme,
+                    running: store.state?.audioRunning == true,
+                    inputLevel: store.state?.inputLevel ?? 0,
+                    outputLevel: store.state?.outputLevel ?? 0
+                )
+                    .onHoverHint("in / out level", $hint)
+
+                HeaderGlyph(modeLetter, active: store.modeKey != "prompt", role: store.modeKey == "listen" ? .summon : .normal, theme: lightTheme) {
+                    Task { await store.cycleInputMode() }
+                }
+                .onHoverHint("cycle input mode: prompt · audio · listen", $hint)
+
+                HeaderGlyph("⚙", active: showSettings, theme: lightTheme) {
+                    showSettings.toggle()
+                }
+                .onHoverHint("audio settings", $hint)
+
+                HeaderGlyph(lightTheme ? "☀" : "☾", theme: lightTheme) {
+                    lightTheme.toggle()
+                }
+                .onHoverHint("toggle theme", $hint)
+
+                HeaderGlyph("▤", active: showLibrary, theme: lightTheme) {
+                    showLibrary = true
+                }
+                .onHoverHint("open ORAM Library", $hint)
+
+                HeaderGlyph("⌘", active: showProvider, theme: lightTheme) {
+                    showProvider = true
+                }
+                .onHoverHint("provider setup / Keychain", $hint)
+
+                HeaderGlyph("⌕", active: showCommandPalette, theme: lightTheme) {
+                    showCommandPalette = true
+                }
+                .onHoverHint("command palette (⌘K)", $hint)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var modeLetter: String {
+        switch store.modeKey {
+        case "audio": return "a"
+        case "listen": return "l"
+        default: return "p"
+        }
+    }
+
+    private var hintBar: some View {
+        HStack {
+            Text(hint)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(hint == "hover over a button for details" ? DashboardTheme.dim(lightTheme) : DashboardTheme.accent(lightTheme))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer()
+        }
+        .frame(height: 18)
+        .padding(.horizontal, 2)
+    }
+
+    private var settingsPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("audio · engine settings")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .tracking(1.5)
+                    .textCase(.uppercase)
+                    .foregroundStyle(DashboardTheme.dim(lightTheme))
+                Spacer()
+                Button("×") {
+                    showSettings = false
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DashboardTheme.secondary(lightTheme))
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                SettingMenu(
+                    title: "sample rate",
+                    selection: $sampleRateDraft,
+                    values: [44100, 48000, 96000],
+                    label: { "\($0) Hz" },
+                    theme: lightTheme
+                )
+                SettingMenu(
+                    title: "block size",
+                    selection: $blockSizeDraft,
+                    values: [128, 256, 512, 1024],
+                    label: { "\($0)" },
+                    theme: lightTheme
+                )
+                EngineMenu(
+                    title: "generator",
+                    selection: $selectedModel,
+                    engines: generationEngines,
+                    theme: lightTheme
+                )
+                SettingBlock(title: "library", value: store.state?.libraryDir ?? "ORAM Library", theme: lightTheme)
+                Button("apply") {
+                    Task {
+                        await store.updateAudioSettings(sampleRate: sampleRateDraft, blockSize: blockSizeDraft)
+                    }
+                }
+                .buttonStyle(ApplyButtonStyle(theme: lightTheme))
+            }
+        }
+        .padding(12)
+        .background(DashboardTheme.settings(lightTheme), in: RoundedRectangle(cornerRadius: 5))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(DashboardTheme.borderActive(lightTheme), lineWidth: 1)
+        )
+    }
+
+    private var promptModule: some View {
+        HStack(spacing: 10) {
+            Text(store.state?.recording == true ? "audio" : store.modeKey)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .tracking(1.2)
+                .foregroundStyle(store.state?.recording == true ? DashboardTheme.record : DashboardTheme.accent(lightTheme))
+                .frame(width: 64, alignment: .leading)
+
+            TextField("describe a sound or type a command...", text: $prompt)
+                .textFieldStyle(.plain)
+                .font(.system(size: 18, design: .monospaced))
+                .foregroundStyle(DashboardTheme.text(lightTheme))
+                .onSubmit { submitPrompt() }
+
+            Button("↵") {
+                submitPrompt()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 20, weight: .semibold, design: .monospaced))
+            .foregroundStyle(DashboardTheme.accent(lightTheme))
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 72)
+        .background(DashboardTheme.inset(lightTheme), in: RoundedRectangle(cornerRadius: 5))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(store.state?.recording == true ? DashboardTheme.record : DashboardTheme.border(lightTheme), lineWidth: 1)
+        )
+    }
+
+    private var fxPalette: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PaletteHeader(title: "dsp effects", theme: lightTheme) {
+                showFX = false
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                ForEach(fxCommands, id: \.name) { item in
+                    Button {
+                        Task { await store.sendCommand(item.command) }
+                        showFX = false
+                    } label: {
+                        VStack(spacing: 4) {
+                            Text(item.glyph)
+                                .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                            Text(item.name)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                    }
+                    .buttonStyle(ChipButtonStyle(theme: lightTheme))
+                    .onHoverHint(item.hint, $hint)
+                }
+            }
+        }
+        .padding(12)
+        .dashboardPanel(theme: lightTheme)
+    }
+
+    private var summonPalette: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PaletteHeader(title: "summon a texture", theme: lightTheme) {
+                showSummon = false
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(summonPrompts, id: \.self) { item in
+                    Button {
+                        prompt = item
+                        showSummon = false
+                        Task {
+                            await store.generate(
+                                prompt: item,
+                                duration: 8,
+                                provider: selectedProvider,
+                                model: selectedModel,
+                                tags: []
+                            )
+                        }
+                    } label: {
+                        Text(item)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                    }
+                    .buttonStyle(ChipButtonStyle(theme: lightTheme, role: .summon))
+                    .onHoverHint("prompt: \(item)", $hint)
+                }
+            }
+        }
+        .padding(12)
+        .dashboardPanel(theme: lightTheme)
+    }
+
+    private var layersPanel: some View {
+        VStack(spacing: 0) {
+            ForEach(visibleLayers) { layer in
+                DashboardLayerRow(
+                    layer: layer,
+                    selected: layer.slot == store.state?.selectedLayer,
+                    theme: lightTheme,
+                    onHint: { hint = $0 },
+                    onClearHint: { hint = "hover over a button for details" },
+                    onCommand: { command in
+                        Task { await store.sendCommand(command) }
+                    },
+                    onGenerate: {
+                        Task { await store.generateFromLayer(layer.slot) }
+                    },
+                    onExport: {
+                        Task { await store.exportLayer(layer.slot) }
+                    },
+                    onClear: {
+                        Task { await store.clearLayer(layer.slot) }
+                    },
+                    onVolume: { value in
+                        Task { await store.setVolume(layer: layer.slot, volume: value) }
+                    }
+                )
+            }
+        }
+        .background(DashboardTheme.raised(lightTheme), in: RoundedRectangle(cornerRadius: 5))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(DashboardTheme.border(lightTheme), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+    }
+
+    private var visibleLayers: [LayerState] {
+        let layers = store.state?.layers ?? []
+        if showFourthLayer || layers.dropFirst(3).contains(where: { $0.state != "empty" }) {
+            return layers
+        }
+        return Array(layers.prefix(3))
+    }
+
+    private var logPanel: some View {
+        VStack(spacing: 0) {
+            Button {
+                showLog.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Text(Date.now.formatted(date: .omitted, time: .standard))
+                        .foregroundStyle(DashboardTheme.logTime(lightTheme))
+                    Text("·")
+                        .foregroundStyle(DashboardTheme.dim(lightTheme))
+                    Text(store.state?.log.last ?? store.errorMessage ?? "ready")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(DashboardTheme.secondary(lightTheme))
+                    Spacer()
+                    Text(showLog ? "▾" : "▸")
+                        .foregroundStyle(DashboardTheme.dim(lightTheme))
+                }
+                .font(.system(size: 11, design: .monospaced))
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+            }
+            .buttonStyle(.plain)
+            .onHoverHint("show / hide agent log", $hint)
+
+            if showLog {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("⧫ agent log")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .tracking(1.2)
+                        .foregroundStyle(DashboardTheme.dim(lightTheme))
+                    ForEach((store.state?.log ?? []).suffix(10), id: \.self) { line in
+                        Text(line)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(logColor(line))
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+            }
+        }
+        .background(DashboardTheme.logBackground(lightTheme), in: RoundedRectangle(cornerRadius: 5))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(DashboardTheme.logBorder(lightTheme), lineWidth: 1)
+        )
+    }
+
+    private func submitPrompt() {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        prompt = ""
+        if text.lowercased().contains("generate") || text.lowercased().contains("summon") || text.count > 40 {
+            Task {
+                await store.generate(
+                    prompt: text,
+                    duration: 8,
+                    provider: selectedProvider,
+                    model: selectedModel,
+                    tags: []
+                )
+            }
+        } else {
+            Task { await store.sendCommand(text) }
+        }
+    }
+
+    private func cycleSelectedLayer() async {
+        let current = store.state?.selectedLayer ?? 1
+        let next = current >= 4 ? 1 : current + 1
+        await store.sendCommand("select layer \(next)")
+    }
+
+    private var generationEngines: [ProviderEngine] {
+        let candidates = store.providers.filter { engine in
+            engine.capabilities.contains("text_to_sound_effect")
+                || engine.capabilities.contains("text_to_music")
+        }
+        guard !candidates.isEmpty else { return [] }
+        return candidates.sorted { lhs, rhs in
+            if lhs.available != rhs.available { return lhs.available && !rhs.available }
+            if lhs.provider != rhs.provider { return lhs.provider < rhs.provider }
+            return lhs.label < rhs.label
+        }
+    }
+
+    private var selectedProvider: String {
+        generationEngines.first { $0.id == selectedModel }?.provider ?? "auto"
+    }
+
+    private func ensureSelectedModel() {
+        let ids = Set(generationEngines.map(\.id))
+        if ids.contains(selectedModel) {
+            return
+        }
+        if ids.contains("local-mock") {
+            selectedModel = "local-mock"
+        } else if let first = generationEngines.first {
+            selectedModel = first.id
+        }
+    }
+
+    private func logColor(_ line: String) -> Color {
+        let lower = line.lowercased()
+        if lower.contains("error") || lower.contains("failed") { return DashboardTheme.error }
+        if lower.contains("generated") || lower.contains("prompt:") { return DashboardTheme.summon }
+        if lower.contains("hears") || lower.contains("listening") { return DashboardTheme.generated }
+        return DashboardTheme.secondary(lightTheme)
+    }
+}
+
+private struct DashboardLayerRow: View {
+    let layer: LayerState
+    let selected: Bool
+    let theme: Bool
+    let onHint: (String) -> Void
+    let onClearHint: () -> Void
+    let onCommand: (String) -> Void
+    let onGenerate: () -> Void
+    let onExport: () -> Void
+    let onClear: () -> Void
+    let onVolume: (Double) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(spacing: 8) {
+                corner("\(layer.slot)", hint: "click: select / toggle mute · right-click: solo") {
+                    if selected && layer.state != "empty" {
+                        onCommand("mute layer \(layer.slot)")
+                    } else {
+                        onCommand("select layer \(layer.slot)")
+                    }
+                }
+                .contextMenu {
+                    Button("Solo layer \(layer.slot)") {
+                        onCommand("solo layer \(layer.slot)")
+                    }
+                    Button(layer.muted ? "Unmute layer \(layer.slot)" : "Mute layer \(layer.slot)") {
+                        onCommand("mute layer \(layer.slot)")
+                    }
+                }
+                corner("✦", hint: "auto-generate from what's sounding") {
+                    onGenerate()
+                }
+            }
+
+            ZStack {
+                DashboardWaveformView(layer: layer, theme: theme)
+                    .frame(height: 74)
+                    .opacity(layer.muted ? 0.42 : 1)
+
+                if layer.state == "empty" {
+                    Text("—")
+                        .foregroundStyle(DashboardTheme.ghost(theme))
+                }
+
+                if layer.loopEnabled == true && layer.state != "empty" {
+                    LoopSelectionOverlay(layer: layer, theme: theme)
+                        .allowsHitTesting(false)
+                }
+
+                if layer.state != "empty" {
+                    GeometryReader { geo in
+                        Rectangle()
+                            .fill(DashboardTheme.accent(theme).opacity(0.72))
+                            .frame(width: 1.4)
+                            .offset(x: geo.size.width * CGFloat(min(max(layer.playheadPct ?? 0, 0), 100) / 100))
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+            .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DashboardTheme.border(theme), lineWidth: 1)
+            )
+
+            VStack(spacing: 8) {
+                corner("↓", hint: "export / bounce layer to WAV") {
+                    onExport()
+                }
+                corner("⌫", hint: "clear / delete layer audio") {
+                    onClear()
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    Text(layer.duration > 0 ? String(format: "%.1fs", layer.duration) : "")
+                        .foregroundStyle(DashboardTheme.secondary(theme))
+                    Text(stateTag)
+                        .foregroundStyle(tagColor)
+                    Spacer()
+                }
+                Text(metaText)
+                    .foregroundStyle(DashboardTheme.dim(theme))
+                    .lineLimit(1)
+                if let loopText {
+                    Text(loopText)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(DashboardTheme.accent(theme))
+                        .lineLimit(1)
+                }
+                EffectChips(effects: layer.effects ?? [], theme: theme)
+                VolumeStrip(value: layer.volume, theme: theme, onCommit: onVolume)
+                    .frame(height: 34)
+            }
+            .frame(width: 150)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(rowBackground)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(selected ? DashboardTheme.accent(theme) : (layer.state == "recording" ? DashboardTheme.record : .clear))
+                .frame(width: 2)
+        }
+    }
+
+    private var rowBackground: Color {
+        if layer.state == "recording" { return DashboardTheme.record.opacity(0.14) }
+        if selected { return DashboardTheme.selected(theme) }
+        return DashboardTheme.raised(theme)
+    }
+
+    private var stateTag: String {
+        if layer.state == "recording" { return "rec" }
+        if layer.isGenerated { return "gen d\(layer.generationDepth ?? 0)" }
+        if layer.muted { return "muted" }
+        if layer.solo { return "solo" }
+        return ""
+    }
+
+    private var tagColor: Color {
+        if layer.isGenerated { return DashboardTheme.generated }
+        if layer.state == "recording" { return DashboardTheme.record }
+        if layer.solo { return DashboardTheme.solo }
+        return DashboardTheme.dim(theme)
+    }
+
+    private var metaText: String {
+        if let prompt = layer.generationPrompt, !prompt.isEmpty {
+            return prompt
+        }
+        if layer.state == "empty" {
+            return "empty"
+        }
+        return layer.layerMode ?? layer.sourceType
+    }
+
+    private var loopText: String? {
+        guard layer.loopEnabled == true, layer.state != "empty" else { return nil }
+        let start = layer.loopStartSeconds ?? 0
+        let end = layer.loopEndSeconds ?? layer.duration
+        return String(format: "%.2f-%.2f", start, end)
+    }
+
+    private func corner(_ text: String, hint: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(HeaderButtonStyle(theme: theme, active: selected && text == "\(layer.slot)"))
+        .onHover { hovering in
+            hovering ? onHint(hint) : onClearHint()
+        }
+    }
+}
+
+private struct PaletteHeader: View {
+    let title: String
+    let theme: Bool
+    let close: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .tracking(1.5)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            Spacer()
+            Button("×", action: close)
+                .buttonStyle(.plain)
+                .foregroundStyle(DashboardTheme.secondary(theme))
+        }
+    }
+}
+
+private struct DashboardWaveformView: View {
+    let layer: LayerState
+    let theme: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            let values = layer.waveform.isEmpty ? Array(repeating: 0.0, count: 64) : layer.waveform
+            let midY = size.height / 2
+
+            var center = Path()
+            center.move(to: CGPoint(x: 0, y: midY))
+            center.addLine(to: CGPoint(x: size.width, y: midY))
+            context.stroke(center, with: .color(DashboardTheme.border(theme).opacity(0.55)), lineWidth: 1)
+
+            for index in 1..<4 {
+                var grid = Path()
+                let x = size.width * CGFloat(index) / 4
+                grid.move(to: CGPoint(x: x, y: 0))
+                grid.addLine(to: CGPoint(x: x, y: size.height))
+                context.stroke(grid, with: .color(DashboardTheme.border(theme).opacity(0.22)), lineWidth: 1)
+            }
+
+            if values.allSatisfy({ $0 == 0 }) {
+                var dash = Path()
+                dash.move(to: CGPoint(x: 0, y: midY))
+                dash.addLine(to: CGPoint(x: size.width, y: midY))
+                context.stroke(
+                    dash,
+                    with: .color(DashboardTheme.border(theme)),
+                    style: StrokeStyle(lineWidth: 1, dash: [4, 4])
+                )
+                return
+            }
+
+            let maxValue = max(values.max() ?? 0.001, 0.001)
+            let barWidth = size.width / CGFloat(max(values.count, 1))
+            let color = waveformColor
+            for index in values.indices {
+                let normalized = CGFloat(max(0, min(1, values[index] / maxValue)))
+                let height = max(1, normalized * (size.height - 6))
+                let rect = CGRect(
+                    x: CGFloat(index) * barWidth + 0.5,
+                    y: midY - height / 2,
+                    width: max(1, barWidth - 1),
+                    height: height
+                )
+                context.fill(Path(rect), with: .color(color.opacity(0.35 + Double(normalized) * 0.55)))
+            }
+        }
+    }
+
+    private var waveformColor: Color {
+        if layer.muted || layer.state == "muted" {
+            return DashboardTheme.dim(theme)
+        }
+        if layer.isGenerated {
+            return DashboardTheme.generated
+        }
+        if layer.state == "active" {
+            return DashboardTheme.accent(theme)
+        }
+        return DashboardTheme.secondary(theme)
+    }
+}
+
+private struct LoopSelectionOverlay: View {
+    let layer: LayerState
+    let theme: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            let start = CGFloat(min(max(layer.loopStartPct ?? 0, 0), 100)) / 100
+            let end = CGFloat(min(max(layer.loopEndPct ?? 100, 0), 100)) / 100
+            Rectangle()
+                .fill(DashboardTheme.accent(theme).opacity(0.14))
+                .frame(width: max(0, geo.size.width * (end - start)))
+                .offset(x: geo.size.width * start)
+        }
+    }
+}
+
+private struct EffectChips: View {
+    let effects: [String]
+    let theme: Bool
+
+    var body: some View {
+        if !effects.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(effects.prefix(3), id: \.self) { effect in
+                    Text(effect)
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundStyle(DashboardTheme.accent(theme))
+                        .lineLimit(1)
+                        .padding(.horizontal, 4)
+                        .frame(height: 14)
+                        .background(DashboardTheme.accent(theme).opacity(0.08), in: RoundedRectangle(cornerRadius: 2))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(DashboardTheme.accent(theme).opacity(0.22), lineWidth: 1)
+                        )
+                }
+            }
+        }
+    }
+}
+
+private struct SettingBlock: View {
+    let title: String
+    let value: String
+    let theme: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            Text(value)
+                .font(.system(size: 11, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 8)
+                .frame(height: 30)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(DashboardTheme.border(theme), lineWidth: 1)
+                )
+        }
+        .frame(minWidth: 110)
+    }
+}
+
+private struct SettingMenu: View {
+    let title: String
+    @Binding var selection: Int
+    let values: [Int]
+    let label: (Int) -> String
+    let theme: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            Picker(title, selection: $selection) {
+                ForEach(values, id: \.self) { value in
+                    Text(label(value)).tag(value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(height: 30)
+            .frame(maxWidth: .infinity)
+            .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DashboardTheme.border(theme), lineWidth: 1)
+            )
+        }
+        .frame(minWidth: 110)
+    }
+}
+
+private struct EngineMenu: View {
+    let title: String
+    @Binding var selection: String
+    let engines: [ProviderEngine]
+    let theme: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            Picker(title, selection: $selection) {
+                if engines.isEmpty {
+                    Text("Local Mock").tag("local-mock")
+                } else {
+                    ForEach(engines) { engine in
+                        Text(label(for: engine))
+                            .tag(engine.id)
+                    }
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(height: 30)
+            .frame(maxWidth: .infinity)
+            .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DashboardTheme.border(theme), lineWidth: 1)
+            )
+        }
+        .frame(minWidth: 150)
+    }
+
+    private func label(for engine: ProviderEngine) -> String {
+        let state = engine.available ? "" : " · key"
+        return "\(engine.label)\(state)"
+    }
+}
+
+private struct OramLogoView: View {
+    let size: CGFloat
+
+    var body: some View {
+        if let image = NSImage(named: NSImage.Name("logo-oram")) ?? bundleLogo {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        } else {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.primary.opacity(0.12))
+                .frame(width: size, height: size)
+                .overlay(
+                    Text("o")
+                        .font(.system(size: size * 0.55, weight: .semibold, design: .monospaced))
+                )
+        }
+    }
+
+    private var bundleLogo: NSImage? {
+        guard let url = Bundle.main.url(forResource: "logo-oram", withExtension: "png") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }
+}
+
+private struct HeaderSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.10))
+            .frame(width: 1, height: 22)
+    }
+}
+
+private enum HeaderRole {
+    case normal
+    case record
+    case fx
+    case summon
+    case danger
+}
+
+private struct HeaderGlyph: View {
+    let title: String
+    var active = false
+    var role: HeaderRole = .normal
+    let theme: Bool
+    let action: () -> Void
+
+    init(_ title: String, active: Bool = false, role: HeaderRole = .normal, theme: Bool, action: @escaping () -> Void) {
+        self.title = title
+        self.active = active
+        self.role = role
+        self.theme = theme
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: title.count > 1 ? 10 : 14, weight: .semibold, design: .monospaced))
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(HeaderButtonStyle(theme: theme, active: active, role: role))
+    }
+}
+
+private struct HeaderButtonStyle: ButtonStyle {
+    let theme: Bool
+    var active = false
+    var role: HeaderRole = .normal
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(foreground)
+            .background(background, in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(border, lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+    }
+
+    private var foreground: Color {
+        if active {
+            return roleColor
+        }
+        return DashboardTheme.secondary(theme)
+    }
+
+    private var background: Color {
+        active ? roleColor.opacity(0.10) : .clear
+    }
+
+    private var border: Color {
+        active ? roleColor : DashboardTheme.border(theme)
+    }
+
+    private var roleColor: Color {
+        switch role {
+        case .record, .danger: DashboardTheme.record
+        case .fx: DashboardTheme.accent(theme)
+        case .summon: DashboardTheme.summon
+        case .normal: DashboardTheme.accent(theme)
+        }
+    }
+}
+
+private struct ChipButtonStyle: ButtonStyle {
+    let theme: Bool
+    var role: HeaderRole = .normal
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(role == .summon ? DashboardTheme.summon : DashboardTheme.secondary(theme))
+            .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(role == .summon ? DashboardTheme.summon.opacity(0.5) : DashboardTheme.border(theme), lineWidth: 1)
+            )
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+private struct ApplyButtonStyle: ButtonStyle {
+    let theme: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .tracking(1)
+            .textCase(.uppercase)
+            .foregroundStyle(configuration.isPressed ? DashboardTheme.background(theme) : DashboardTheme.accent(theme))
+            .padding(.horizontal, 16)
+            .frame(height: 30)
+            .background(configuration.isPressed ? DashboardTheme.accent(theme) : DashboardTheme.accent(theme).opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DashboardTheme.accent(theme), lineWidth: 1)
+            )
+    }
+}
+
+private struct MeterDots: View {
+    let theme: Bool
+    let running: Bool
+    let inputLevel: Double
+    let outputLevel: Double
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(dotColor(inputLevel))
+                .frame(width: 8, height: 8)
+            Circle()
+                .fill(dotColor(outputLevel))
+                .frame(width: 8, height: 8)
+        }
+    }
+
+    private func dotColor(_ level: Double) -> Color {
+        guard running else { return DashboardTheme.meterBackground(theme) }
+        if level > 0.70 {
+            return DashboardTheme.record
+        }
+        if level > 0.12 {
+            return DashboardTheme.accent(theme)
+        }
+        if level > 0.01 {
+            return DashboardTheme.generated
+        }
+        return DashboardTheme.meterBackground(theme)
+    }
+}
+
+private struct VolumeStrip: View {
+    let value: Double
+    let theme: Bool
+    let onCommit: (Double) -> Void
+    @State private var draftValue: Double?
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .bottom) {
+                Rectangle()
+                    .fill(DashboardTheme.inset(theme))
+                Rectangle()
+                    .fill(fillColor.opacity(0.72))
+                    .frame(height: geo.size.height * min(max(currentValue, 0), 2) / 2)
+                Rectangle()
+                    .fill(DashboardTheme.secondary(theme).opacity(0.45))
+                    .frame(height: 1)
+                    .offset(y: -geo.size.height / 2)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 2))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        draftValue = valueFor(y: gesture.location.y, height: geo.size.height)
+                    }
+                    .onEnded { gesture in
+                        let next = valueFor(y: gesture.location.y, height: geo.size.height)
+                        draftValue = nil
+                        onCommit(next)
+                    }
+            )
+        }
+    }
+
+    private var currentValue: Double {
+        draftValue ?? value
+    }
+
+    private var fillColor: Color {
+        currentValue > 1.1 ? DashboardTheme.solo : DashboardTheme.accent(theme)
+    }
+
+    private func valueFor(y: CGFloat, height: CGFloat) -> Double {
+        let clamped = max(0, min(height, height - y))
+        let normalized = Double(clamped / max(height, 1))
+        return pow(normalized, 0.65) * 2
+    }
+}
+
+private struct AboutOverlay: View {
+    let theme: Bool
+    let close: () -> Void
+    let openPrivacy: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(theme ? 0.18 : 0.48)
+                .ignoresSafeArea()
+                .onTapGesture(perform: close)
+
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    HStack(spacing: 10) {
+                        OramLogoView(size: 42)
+                        Text("oram")
+                            .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(DashboardTheme.accent(theme))
+                    }
+                    Spacer()
+                    Button("×", action: close)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 16, weight: .medium, design: .monospaced))
+                        .foregroundStyle(DashboardTheme.secondary(theme))
+                }
+
+                Text("recorder · looper · summoner · listener · archive")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(DashboardTheme.secondary(theme))
+
+                Text("Local-first BYOK sound material system. The app launches a localhost daemon, stores provider keys in macOS Keychain, keeps mock mode available, and writes generated sounds into the local ORAM Library.")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(DashboardTheme.dim(theme))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    MiniFact("open source", theme: theme)
+                    MiniFact("no telemetry", theme: theme)
+                    MiniFact("no Momoto server", theme: theme)
+                    MiniFact("local archive", theme: theme)
+                }
+
+                HStack {
+                    Button("privacy") {
+                        openPrivacy()
+                    }
+                    .buttonStyle(ApplyButtonStyle(theme: theme))
+                    Spacer()
+                    Text("⌘K opens commands")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(DashboardTheme.dim(theme))
+                }
+            }
+            .padding(18)
+            .frame(width: 520)
+            .background(DashboardTheme.raised(theme), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(DashboardTheme.borderActive(theme), lineWidth: 1)
+            )
+        }
+    }
+}
+
+private struct MiniFact: View {
+    let text: String
+    let theme: Bool
+
+    init(_ text: String, theme: Bool) {
+        self.text = text
+        self.theme = theme
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 9, weight: .medium, design: .monospaced))
+            .foregroundStyle(DashboardTheme.accent(theme))
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .background(DashboardTheme.accent(theme).opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DashboardTheme.accent(theme).opacity(0.25), lineWidth: 1)
+            )
+    }
+}
+
+private struct CommandPaletteOverlay: View {
+    let theme: Bool
+    @Binding var search: String
+    let close: () -> Void
+    let run: (String) -> Void
+
+    private let commands = [
+        "record",
+        "stop recording",
+        "overdub",
+        "listen to the texture",
+        "export mix",
+        "reverse",
+        "make it slower",
+        "make it faster",
+        "make it darker",
+        "granulate softly",
+        "wash it in reverb",
+        "make it far away",
+        "stretch until it breathes",
+        "add distant metallic rain",
+        "add low drone",
+        "add synthetic forest",
+        "save session"
+    ]
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(theme ? 0.16 : 0.44)
+                .ignoresSafeArea()
+                .onTapGesture(perform: close)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("command")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .tracking(1.5)
+                        .textCase(.uppercase)
+                        .foregroundStyle(DashboardTheme.dim(theme))
+                    Spacer()
+                    Button("×", action: close)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(DashboardTheme.secondary(theme))
+                }
+
+                TextField("type a command...", text: $search)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 18, design: .monospaced))
+                    .foregroundStyle(DashboardTheme.text(theme))
+                    .padding(.horizontal, 12)
+                    .frame(height: 48)
+                    .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(DashboardTheme.border(theme), lineWidth: 1)
+                    )
+                    .onSubmit {
+                        let value = search.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !value.isEmpty {
+                            run(value)
+                            search = ""
+                        }
+                    }
+
+                VStack(spacing: 0) {
+                    ForEach(filteredCommands, id: \.self) { command in
+                        Button {
+                            run(command)
+                            search = ""
+                        } label: {
+                            HStack {
+                                Text(command)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(DashboardTheme.secondary(theme))
+                                Spacer()
+                                Text("↵")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(DashboardTheme.dim(theme))
+                            }
+                            .frame(height: 32)
+                            .padding(.horizontal, 10)
+                        }
+                        .buttonStyle(.plain)
+                        Divider()
+                            .background(DashboardTheme.border(theme))
+                    }
+                }
+                .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(DashboardTheme.border(theme), lineWidth: 1)
+                )
+            }
+            .padding(14)
+            .frame(width: 520)
+            .background(DashboardTheme.raised(theme), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(DashboardTheme.borderActive(theme), lineWidth: 1)
+            )
+        }
+    }
+
+    private var filteredCommands: [String] {
+        let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else {
+            return Array(commands.prefix(8))
+        }
+        return commands.filter { $0.lowercased().contains(needle) }.prefix(8).map { $0 }
+    }
+}
+
+private struct DashboardPanelModifier: ViewModifier {
+    let theme: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .background(DashboardTheme.raised(theme), in: RoundedRectangle(cornerRadius: 5))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(DashboardTheme.border(theme), lineWidth: 1)
+            )
+    }
+}
+
+private extension View {
+    func dashboardPanel(theme: Bool) -> some View {
+        modifier(DashboardPanelModifier(theme: theme))
+    }
+
+    func onHoverHint(_ value: String, _ hint: Binding<String>) -> some View {
+        onHover { hovering in
+            hint.wrappedValue = hovering ? value : "hover over a button for details"
+        }
+    }
+}
+
+private enum DashboardTheme {
+    static let record = Color(red: 0.77, green: 0.35, blue: 0.33)
+    static let generated = Color(red: 0.30, green: 0.66, blue: 0.51)
+    static let summon = Color(red: 0.69, green: 0.48, blue: 0.68)
+    static let solo = Color(red: 0.77, green: 0.65, blue: 0.27)
+    static let error = Color(red: 0.77, green: 0.44, blue: 0.38)
+
+    static func background(_ light: Bool) -> Color {
+        light ? Color(red: 0.92, green: 0.93, blue: 0.91) : Color(red: 0.031, green: 0.035, blue: 0.039)
+    }
+
+    static func raised(_ light: Bool) -> Color {
+        light ? Color(red: 0.97, green: 0.97, blue: 0.95) : Color(red: 0.055, green: 0.063, blue: 0.067)
+    }
+
+    static func hover(_ light: Bool) -> Color {
+        light ? Color(red: 0.90, green: 0.92, blue: 0.90) : Color(red: 0.082, green: 0.090, blue: 0.094)
+    }
+
+    static func inset(_ light: Bool) -> Color {
+        light ? Color(red: 0.88, green: 0.90, blue: 0.88) : Color(red: 0.024, green: 0.027, blue: 0.031)
+    }
+
+    static func settings(_ light: Bool) -> Color {
+        light ? Color(red: 0.94, green: 0.95, blue: 0.93) : Color(red: 0.063, green: 0.071, blue: 0.075)
+    }
+
+    static func selected(_ light: Bool) -> Color {
+        light ? Color.black.opacity(0.04) : Color.white.opacity(0.03)
+    }
+
+    static func text(_ light: Bool) -> Color {
+        light ? Color(red: 0.08, green: 0.09, blue: 0.09) : Color(red: 0.94, green: 0.95, blue: 0.95)
+    }
+
+    static func secondary(_ light: Bool) -> Color {
+        light ? Color(red: 0.26, green: 0.30, blue: 0.30) : Color(red: 0.72, green: 0.75, blue: 0.75)
+    }
+
+    static func dim(_ light: Bool) -> Color {
+        light ? Color(red: 0.42, green: 0.46, blue: 0.46) : Color(red: 0.54, green: 0.58, blue: 0.59)
+    }
+
+    static func ghost(_ light: Bool) -> Color {
+        light ? Color.black.opacity(0.15) : Color.white.opacity(0.18)
+    }
+
+    static func border(_ light: Bool) -> Color {
+        light ? Color.black.opacity(0.18) : Color(red: 0.15, green: 0.17, blue: 0.18)
+    }
+
+    static func borderActive(_ light: Bool) -> Color {
+        light ? Color.black.opacity(0.28) : Color(red: 0.24, green: 0.28, blue: 0.29)
+    }
+
+    static func accent(_ light: Bool) -> Color {
+        light ? Color(red: 0.20, green: 0.45, blue: 0.55) : Color(red: 0.35, green: 0.60, blue: 0.71)
+    }
+
+    static func meterBackground(_ light: Bool) -> Color {
+        light ? Color.black.opacity(0.18) : Color(red: 0.07, green: 0.08, blue: 0.08)
+    }
+
+    static func logBackground(_ light: Bool) -> Color {
+        light ? Color(red: 0.88, green: 0.89, blue: 0.87) : Color(red: 0.024, green: 0.027, blue: 0.031)
+    }
+
+    static func logBorder(_ light: Bool) -> Color {
+        light ? Color.black.opacity(0.12) : Color(red: 0.10, green: 0.12, blue: 0.13)
+    }
+
+    static func logTime(_ light: Bool) -> Color {
+        light ? Color.black.opacity(0.28) : Color(red: 0.24, green: 0.26, blue: 0.27)
+    }
+}

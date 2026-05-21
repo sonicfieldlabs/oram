@@ -14,6 +14,12 @@ cli = typer.Typer(
     add_completion=False,
     no_args_is_help=False,
 )
+credentials_cli = typer.Typer(
+    name="credentials",
+    help="manage local provider credentials",
+    add_completion=False,
+)
+cli.add_typer(credentials_cli)
 
 
 def _run_app(
@@ -182,6 +188,121 @@ def dashboard(
     from oram.web.server import run_server
 
     run_server(host=host, port=port, mock_audio=mock_audio, allow_lan=exposes_lan)
+
+
+@cli.command()
+def daemon(
+    host: str = typer.Option("127.0.0.1", "--host", help="server host"),
+    port: str = typer.Option("auto", "--port", help="server port or 'auto'"),
+    mock_audio: bool = typer.Option(False, "--mock-audio", help="use mock audio engine"),
+    session_dir: Path | None = typer.Option(None, "--session-dir", help="session archive directory"),
+    no_auth: bool = typer.Option(False, "--no-auth", help="disable local daemon bearer token"),
+) -> None:
+    """launch the local ORAM daemon for app/plugin control."""
+    if host not in ("127.0.0.1", "localhost"):
+        typer.echo("ERROR: oram daemon only supports localhost binding by default.", err=True)
+        raise typer.Exit(code=2)
+
+    from oram_daemon.server import run_daemon
+
+    run_daemon(
+        host="127.0.0.1" if host == "localhost" else host,
+        port=port,
+        mock_audio=mock_audio,
+        session_dir=session_dir,
+        auth_token="" if no_auth else None,
+    )
+
+
+@credentials_cli.command("set")
+def credentials_set(
+    provider: str = typer.Argument(..., help="provider id, e.g. elevenlabs"),
+) -> None:
+    """store a provider credential in the local credential vault."""
+    import getpass
+
+    from oram_security.credentials import default_credential_store
+
+    secret = getpass.getpass(f"{provider} API key: ")
+    store = default_credential_store()
+    try:
+        store.set_secret(provider, secret)
+    except Exception as exc:
+        typer.echo(f"credential write failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{provider}: stored in local credential vault")
+
+
+@credentials_cli.command("status")
+def credentials_status() -> None:
+    """show provider credential status without revealing secrets."""
+    from oram_security.credentials import default_credential_store
+
+    store = default_credential_store()
+    for provider in ("elevenlabs", "stability", "huggingface", "fal", "replicate"):
+        status = store.status(provider)
+        configured = "configured" if status.configured else "missing"
+        typer.echo(f"{provider}: {configured} ({status.source})")
+
+
+@credentials_cli.command("delete")
+def credentials_delete(provider: str = typer.Argument(..., help="provider id, e.g. elevenlabs")) -> None:
+    """delete a provider credential from the local credential vault."""
+    from oram_security.credentials import default_credential_store
+
+    store = default_credential_store()
+    try:
+        store.delete_secret(provider)
+    except Exception as exc:
+        typer.echo(f"credential delete failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{provider}: deleted from local credential vault")
+
+
+@credentials_cli.command("test")
+def credentials_test(provider: str = typer.Argument(..., help="provider id, e.g. elevenlabs")) -> None:
+    """test whether a provider credential is configured and usable."""
+    from oram.config import OramConfig
+    from oram_daemon.server import LocalOramService
+
+    load_dotenv()
+    service = LocalOramService(OramConfig.from_env(), mock_audio=True)
+    try:
+        result = service.test_credentials(provider)
+    finally:
+        service.shutdown()
+    typer.echo(f"{provider}: {result.get('status')}")
+
+
+@cli.command()
+def doctor(
+    privacy: bool = typer.Option(False, "--privacy", help="check local-first privacy configuration"),
+) -> None:
+    """run local ORAM diagnostics."""
+    if not privacy:
+        typer.echo("doctor checks: pass --privacy for privacy diagnostics")
+        raise typer.Exit()
+
+    import os
+
+    from oram_security.credentials import default_credential_store
+    from oram_security.network import allowed_hosts
+
+    load_dotenv()
+    cfg = OramConfig.from_env()
+    store = default_credential_store()
+    typer.echo("oram privacy doctor")
+    typer.echo(f"  generator backend: {cfg.generator_backend}")
+    typer.echo(f"  llm backend: {cfg.llm_backend}")
+    typer.echo("  telemetry: off by default")
+    typer.echo(f"  network allowlist: {', '.join(sorted(allowed_hosts()))}")
+    typer.echo(f"  dashboard token: {'configured' if cfg.dashboard_token else 'missing'}")
+    typer.echo(f"  ORAM_ALLOW_LAN: {'enabled' if os.environ.get('ORAM_ALLOW_LAN') else 'disabled'}")
+    if os.environ.get("ORAM_ALLOW_LAN"):
+        typer.echo("  WARNING: LAN mode can expose local control paths. Use a token.", err=True)
+    for provider in ("elevenlabs", "stability", "huggingface", "fal", "replicate"):
+        status = store.status(provider)
+        typer.echo(f"  {provider}: {'configured' if status.configured else 'missing'} ({status.source})")
 
 
 @cli.command()

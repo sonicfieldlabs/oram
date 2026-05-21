@@ -8,12 +8,12 @@ supports:
 from __future__ import annotations
 
 import io
-import os
 
 import numpy as np
 
 from oram.gateway.base import EngineResult
 from oram.gateway.client import ElevenLabsHTTPClient
+from oram_security.credentials import resolve_provider_secret
 
 API_BASE = "https://api.elevenlabs.io/v1"
 
@@ -24,7 +24,7 @@ class VoiceAdapter:
     engine_name = "voice"
 
     def __init__(self, api_key: str | None = None):
-        self._api_key = api_key or os.environ.get("ELEVENLABS_API_KEY", "")
+        self._api_key = api_key or resolve_provider_secret("elevenlabs") or ""
 
     def is_available(self) -> bool:
         return bool(self._api_key)

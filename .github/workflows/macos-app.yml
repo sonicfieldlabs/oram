@@ -1,0 +1,27 @@
+name: macOS App
+
+on:
+  push:
+    paths:
+      - "apps/macos/**"
+      - ".github/workflows/macos-app.yml"
+  pull_request:
+    paths:
+      - "apps/macos/**"
+      - ".github/workflows/macos-app.yml"
+
+jobs:
+  unsigned-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build SwiftPM app
+        working-directory: apps/macos
+        run: swift build
+      - name: Stage unsigned app
+        run: apps/macos/script/build_and_run.sh --no-open
+      - name: Upload ORAM.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ORAM-unsigned-app
+          path: apps/macos/dist/ORAM.app

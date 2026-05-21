@@ -28,6 +28,16 @@ oram_sessions/
 *.flac
 *.mp3
 
+# macOS app build artifacts
+apps/macos/.build/
+apps/macos/dist/
+*.dmg
+checksums.txt
+!releases/
+!releases/macos/
+!releases/macos/ORAM.dmg
+!releases/macos/checksums.txt
+
 # Internal development notes (contain local paths, not for public repo)
 oram03.md
 oram_evol.md
@@ -39,4 +49,3 @@ dev_plan.md
 
 # Lock files (reproducibility via pyproject.toml)
 uv.lock
-

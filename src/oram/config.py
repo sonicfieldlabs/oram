@@ -19,6 +19,9 @@ def load_dotenv() -> None:
     uses python-dotenv for robust parsing (quoted values, comments, export).
     must be called explicitly at CLI startup, not on import.
     """
+    if os.environ.get("ORAM_DISABLE_DOTENV") == "1" or os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+
     from dotenv import load_dotenv as _dotenv_load
 
     # try project root first (relative to this file)
@@ -91,6 +94,8 @@ class OramConfig:
     @classmethod
     def from_env(cls) -> OramConfig:
         """build config from environment variables, falling back to defaults."""
+        from oram_security.credentials import resolve_provider_secret
+
         cfg = cls()
         if v := os.environ.get("ORAM_SAMPLE_RATE"):
             cfg.sample_rate = int(v)
@@ -101,14 +106,14 @@ class OramConfig:
         if v := os.environ.get("ORAM_OUTPUT_DEVICE"):
             cfg.output_device = int(v) if v.isdigit() else v
         if v := os.environ.get("ORAM_SESSION_DIR"):
-            cfg.session_dir = Path(v)
+            cfg.session_dir = Path(v).expanduser()
         if v := os.environ.get("ORAM_STT_BACKEND"):
             cfg.stt_backend = v
         if v := os.environ.get("ORAM_GENERATOR_BACKEND"):
             cfg.generator_backend = v
         if v := os.environ.get("ORAM_LLM_BACKEND"):
             cfg.llm_backend = v
-        if v := os.environ.get("ELEVENLABS_API_KEY"):
+        if v := resolve_provider_secret("elevenlabs"):
             cfg.elevenlabs_api_key = v
         if v := os.environ.get("ORAM_DEFAULT_LISTENING_ROUTE"):
             cfg.default_listening_route = v
@@ -118,13 +123,13 @@ class OramConfig:
             cfg.dashboard_token = v
 
         # v3: multi-provider keys
-        if v := os.environ.get("STABILITY_API_KEY"):
+        if v := resolve_provider_secret("stability"):
             cfg.stability_api_key = v
-        if v := os.environ.get("HF_TOKEN"):
+        if v := resolve_provider_secret("huggingface"):
             cfg.hf_token = v
-        if v := os.environ.get("FAL_KEY"):
+        if v := resolve_provider_secret("fal"):
             cfg.fal_key = v
-        if v := os.environ.get("REPLICATE_API_TOKEN"):
+        if v := resolve_provider_secret("replicate"):
             cfg.replicate_api_token = v
         if v := os.environ.get("ORAM_ENGINE_ROUTER_MODE"):
             cfg.engine_router_mode = v

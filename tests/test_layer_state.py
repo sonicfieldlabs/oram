@@ -149,6 +149,23 @@ class TestLayerState:
         assert result is None
         assert mgr.layers[0].state == LayerState.EMPTY
 
+    def test_recording_stays_on_original_selected_layer(self):
+        mgr = LayerManager()
+        session = OramSession(id="test", scene="test")
+        session.layers = mgr.layers
+        engine = MockAudioEngine(session, mgr)
+
+        engine.start_recording(target=None)
+        mgr.select(2)
+        engine._record_buffer.append(np.ones((512, 2), dtype=np.float32) * 0.1)
+        result = engine.stop_recording()
+
+        assert result is not None
+        assert mgr.layers[0].state == LayerState.ACTIVE
+        assert not mgr.layers[0].is_empty
+        assert mgr.layers[1].state == LayerState.EMPTY
+        assert mgr.layers[1].is_empty
+
     def test_waveform_revision_increments_on_assign(self):
         mgr = LayerManager()
         layer = mgr.layers[0]

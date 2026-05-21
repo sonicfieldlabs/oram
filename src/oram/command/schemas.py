@@ -40,7 +40,7 @@ VALID_ENGINES = frozenset({
     "auto", "sfx", "voice", "music",
     # provider-specific engine IDs
     "elevenlabs-sfx", "elevenlabs-tts", "elevenlabs-music", "elevenlabs-scribe",
-    "stable-audio-25",
+    "stability-stable-audio-2", "stable-audio-2", "stable-audio-25",
     "local",
 })
 

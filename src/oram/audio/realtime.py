@@ -53,6 +53,8 @@ class RealAudioEngine:
 
         self._running = False
         self._stream: sd.Stream | None = None
+        self._has_input = False
+        self._input_channels = 0
         self._input_level: float = 0.0
         self._output_level: float = 0.0
 
@@ -65,6 +67,7 @@ class RealAudioEngine:
         # flag + the (always-valid) buffer reference — no lock needed.
         self._recording = False
         self._record_target: int | None = None
+        self._record_max_samples = int(_MAX_RECORD_SECONDS * sample_rate)
         self._record_ring = RingBuffer(
             int(_MAX_RECORD_SECONDS * sample_rate), channels=2,
         )
@@ -87,35 +90,42 @@ class RealAudioEngine:
         """start the audio stream."""
         self._running = True
         self._has_input = False
+        self._input_channels = 0
 
         # detect if we have an input device
-        has_input_device = False
-        if self.input_device is not None:
-            has_input_device = True
-        else:
+        input_device = self.input_device
+        input_channels = 0
+        if input_device is None:
             try:
                 default_in = sd.default.device[0]
-                if default_in >= 0:
-                    info = sd.query_devices(default_in)
-                    if info["max_input_channels"] > 0:
-                        has_input_device = True
+                if default_in is not None and int(default_in) >= 0:
+                    input_device = int(default_in)
             except Exception:
-                pass
+                input_device = None
 
-        if has_input_device:
+        if input_device is not None:
+            try:
+                info = sd.query_devices(input_device)
+                input_channels = min(2, int(info["max_input_channels"]))
+            except Exception:
+                input_channels = 0
+
+        if input_channels > 0:
             try:
                 self._stream = sd.Stream(
                     samplerate=self.sample_rate,
                     blocksize=self.block_size,
-                    device=(self.input_device, self.output_device),
-                    channels=2,
+                    device=(input_device, self.output_device),
+                    channels=(input_channels, 2),
                     dtype="float32",
                     callback=self._audio_callback,
                     finished_callback=self._stream_finished,
                 )
                 self._stream.start()
                 self._has_input = True
-                print("audio: duplex (input + output)")
+                self._input_channels = input_channels
+                self.input_device = input_device
+                print(f"audio: duplex ({input_channels} input ch + output)")
 
                 # start auto-stop polling thread
                 self._start_auto_stop_poller()
@@ -170,6 +180,10 @@ class RealAudioEngine:
     def get_output_level(self) -> float:
         return self._output_level
 
+    def has_input(self) -> bool:
+        """return True when the running stream has a live input side."""
+        return self._has_input
+
     def start_recording(
         self,
         target: int | None = None,
@@ -177,15 +191,22 @@ class RealAudioEngine:
         overdub: bool = False,
     ) -> None:
         with self._control_lock:
-            # reset the pre-allocated ring buffer (no allocation)
-            self._record_ring.reset()
-            self._record_target = target
-            self._overdub_mode = overdub
-
-            # mark layer as recording
+            if not self._has_input:
+                raise RuntimeError(
+                    "audio input is unavailable; choose an input device in settings"
+                )
             layer = self.layers.get_layer(
                 target if target is not None else "selected"
             )
+            # reset the pre-allocated ring buffer (no allocation)
+            self._record_ring.reset()
+            self._record_target = layer.slot + 1
+            self._overdub_mode = overdub
+            max_duration = duration_seconds if duration_seconds is not None else _MAX_RECORD_SECONDS
+            max_duration = max(0.001, min(float(max_duration), _MAX_RECORD_SECONDS))
+            self._record_max_samples = int(max_duration * self.sample_rate)
+
+            # mark layer as recording
             layer.state = LayerState.RECORDING
 
             # flip the flag last — this is the atomic transition
@@ -195,6 +216,10 @@ class RealAudioEngine:
     def start_command_capture(self, max_duration_seconds: float = 10.0) -> None:
         """capture microphone audio for push-to-talk command transcription."""
         with self._control_lock:
+            if not self._has_input:
+                raise RuntimeError(
+                    "audio input is unavailable; choose an input device in settings"
+                )
             self._command_ring.reset()
             # flip flag last
             self._command_capture = True
@@ -220,6 +245,8 @@ class RealAudioEngine:
                 return None
 
             buffer = self._record_ring.read()
+            if self._record_max_samples and buffer.shape[0] > self._record_max_samples:
+                buffer = buffer[: self._record_max_samples]
 
         if self._overdub_mode:
             self.layers.overdub(layer, buffer)
@@ -249,17 +276,19 @@ class RealAudioEngine:
         # reject oversized frames (don't raise — would crash sounddevice)
         if frames > self.block_size:
             outdata[:] = 0.0
-            print(f"audio: frames ({frames}) > block_size ({self.block_size}), dropped")
             return
 
         # input: capture for recording and level metering
         if indata is not None:
-            self._input_level = float(max(np.max(indata), -np.min(indata)))
+            self._input_level = float(np.max(np.abs(indata[:frames])))
 
             if self._recording:
                 self._record_ring.write(indata)
                 # signal auto-stop via flag (no thread spawn!)
-                if self._record_ring.is_full:
+                if (
+                    self._record_ring.samples_written >= self._record_max_samples
+                    or self._record_ring.is_full
+                ):
                     self._auto_stop_pending = True
 
             if self._command_capture:

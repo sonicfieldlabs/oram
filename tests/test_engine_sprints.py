@@ -114,6 +114,16 @@ class TestElevenLabsPack:
 # ── Sprint 3: Stable Audio ──
 
 class TestStableAudio:
+    def test_stability_stable_audio_spec(self):
+        from oram.engines.stable_audio import StabilityStableAudioEngine
+        engine = StabilityStableAudioEngine(api_key="test-stability-key")
+        assert engine.spec.id == "stability-stable-audio-2"
+        assert engine.spec.provider == EngineProvider.STABILITY
+        assert AudioCapability.TEXT_TO_MUSIC in engine.spec.capabilities
+        assert AudioCapability.TEXT_TO_SOUND_EFFECT in engine.spec.capabilities
+        assert engine.spec.supports_seed is True
+        assert engine.is_available()
+
     def test_stable_audio_spec(self):
         from oram.engines.stable_audio import StableAudioEngine
         engine = StableAudioEngine(api_key="test-fal-key")
@@ -138,6 +148,15 @@ class TestStableAudio:
         engine = reg.get("stable-audio-25")
         assert engine is not None
         assert engine.spec.provider == EngineProvider.FAL
+
+    def test_stability_stable_audio_registered_from_config(self):
+        from oram.config import OramConfig
+        config = OramConfig()
+        config.stability_api_key = "test-stability-key"
+        reg = EngineRegistry.from_config(config)
+        engine = reg.get("stability-stable-audio-2")
+        assert engine is not None
+        assert engine.spec.provider == EngineProvider.STABILITY
 
     def test_stable_audio_intent_support(self):
         from oram.engines.stable_audio import StableAudioEngine

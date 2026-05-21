@@ -43,6 +43,7 @@ from oram.command.schemas import (
     UnknownAction,
 )
 from oram.types import CommandLogEntry, LayerMode, Mode, SourceType
+from oram_security import redact_mapping, redact_text
 
 if TYPE_CHECKING:
     from oram.audio.engine import MockAudioEngine
@@ -104,18 +105,19 @@ class ActionRouter:
         """route an action to the appropriate handler. returns status message."""
         entry = CommandLogEntry(
             timestamp=datetime.now(timezone.utc),
-            raw_text=raw_text,
-            action_json=action.model_dump(),
+            raw_text=redact_text(raw_text),
+            action_json=redact_mapping(action.model_dump()),
             status="ok",
             message="",
         )
 
         try:
             message = self._dispatch(action)
+            message = redact_text(message)
             entry.message = message
             entry.status = "ok"
         except Exception as e:
-            message = f"error: {e}"
+            message = redact_text(f"error: {e}")
             entry.status = "error"
             entry.message = message
 
@@ -519,8 +521,15 @@ class ActionRouter:
             self.session.mode = Mode.RECORD
             self._on_status(f"generation error: {e}")
 
-    def _call_engine(self, engine: str, prompt: str, duration: float,
-                     source_layer=None, intent: str = "auto") -> np.ndarray | None:
+    def _call_engine(
+        self,
+        engine: str,
+        prompt: str,
+        duration: float,
+        source_layer=None,
+        intent: str = "auto",
+        provider: str = "",
+    ) -> np.ndarray | None:
         """call the appropriate engine adapter via the EngineRouter.
 
         priority:
@@ -533,9 +542,16 @@ class ActionRouter:
         if self.engine_router is not None:
             try:
                 from oram.engines.adapter import GenerationRequest
-                from oram.engines.capabilities import SonicIntent
+                from oram.engines.capabilities import EngineProvider, SonicIntent
                 from oram.engines.normalizer import AudioNormalizer
                 from oram.engines.router import resolve_intent
+
+                engine_aliases = {
+                    "stable-audio-2": "stability-stable-audio-2",
+                    "stable-audio-2.5": "stability-stable-audio-2",
+                    "local": "local-mock",
+                }
+                engine_id = engine_aliases.get(engine, engine)
 
                 # resolve intent
                 if intent != "auto" and intent != "":
@@ -545,14 +561,21 @@ class ActionRouter:
                 else:
                     sonic_intent = SonicIntent.SOUND_EFFECT
 
+                provider_enum = None
+                if provider and provider != "auto":
+                    try:
+                        provider_enum = EngineProvider(provider)
+                    except ValueError:
+                        provider_enum = None
+
                 # build request
-                from oram.engines.capabilities import EngineProvider
                 request = GenerationRequest(
                     prompt=prompt,
                     intent=sonic_intent,
                     duration_seconds=duration,
                     # if engine contains "-" it's a provider-specific ID
-                    engine_id=engine if "-" in engine else None,
+                    engine_id=engine_id if "-" in engine_id else None,
+                    provider=provider_enum,
                 )
 
                 # route and execute
@@ -720,7 +743,13 @@ class ActionRouter:
         try:
             engine = action.engine if action.engine != "auto" else "sfx"
             duration = self._clamp_duration(action.duration, kind="generated") or action.duration
-            audio = self._call_engine(engine, action.prompt, duration)
+            audio = self._call_engine(
+                engine,
+                action.prompt,
+                duration,
+                intent=action.intent,
+                provider=action.provider,
+            )
 
             if audio is None and self.generator:
                 audio = self.generator.generate(
@@ -823,4 +852,3 @@ class ActionRouter:
             layer = int(target)
             return layer if 1 <= layer <= len(self.layers.layers) else None
         return None
-

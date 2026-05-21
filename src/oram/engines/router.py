@@ -112,6 +112,7 @@ class EngineRouter:
         """
         if decision is None:
             decision = self.route(request)
+        self._record_decision(decision)
 
         adapter = self._registry.get(decision.engine_id)
         if adapter is None:
@@ -146,7 +147,7 @@ class EngineRouter:
             elapsed = (time.monotonic() - t0) * 1000
             self._record_success(decision.engine_id, elapsed)
             return result
-        except Exception as e:
+        except Exception:
             self._record_error(decision.engine_id)
             raise
 

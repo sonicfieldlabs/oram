@@ -16,6 +16,7 @@ from oram.audio.layer import LayerManager
 from oram.ears.analyzer import analyze_session
 from oram.ears.report import save_report
 from oram.types import OramSession, SourceType
+from oram_security import redact_text
 
 
 def _next_session_id(session_dir: Path) -> str:
@@ -104,7 +105,7 @@ def create_session_folder(
                     ),
                     "parent_layer_id": layer.parent_layer_id,
                     "generation_depth": layer.generation_depth,
-                    "generation_prompt": layer.generation_prompt,
+                    "generation_prompt": redact_text(layer.generation_prompt),
                     "name": layer.name,
                     "duration_seconds": layer.duration_seconds,
                     "muted": layer.muted,
@@ -114,7 +115,7 @@ def create_session_folder(
                 if not layer.is_empty
             ],
             "commands": [
-                cmd.raw_text for cmd in session.commands if cmd.raw_text
+                redact_text(cmd.raw_text) for cmd in session.commands if cmd.raw_text
             ],
             "outputs": {
                 "mix": "mix.wav",

@@ -43,7 +43,7 @@ midi = [
 oram = "oram.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/oram"]
+packages = ["src/oram", "src/oram_daemon", "src/oram_security", "src/oram_library"]
 
 [tool.ruff]
 src = ["src"]

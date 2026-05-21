@@ -143,9 +143,14 @@ class EngineRegistry:
             except Exception as e:
                 log.warning("failed to register ElevenLabs engines: %s", e)
 
-        # stability — future sprint (direct API)
+        # stability — Stable Audio direct API
         if getattr(config, "stability_api_key", ""):
-            log.info("stability API key detected — direct adapter not yet implemented")
+            try:
+                from oram.engines.stable_audio import StabilityStableAudioEngine
+
+                registry.register(StabilityStableAudioEngine(api_key=config.stability_api_key))
+            except Exception as e:
+                log.warning("failed to register Stability engines: %s", e)
 
         # huggingface — future sprint
         if getattr(config, "hf_token", ""):
@@ -154,8 +159,8 @@ class EngineRegistry:
         # fal — Stable Audio via fal.ai
         if getattr(config, "fal_key", ""):
             try:
-                from oram.engines.stable_audio import StableAudioEngine
-                registry.register(StableAudioEngine(api_key=config.fal_key))
+                from oram.engines.stable_audio import FalStableAudioEngine
+                registry.register(FalStableAudioEngine(api_key=config.fal_key))
             except Exception as e:
                 log.warning("failed to register Stable Audio engine: %s", e)
 
