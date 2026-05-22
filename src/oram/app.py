@@ -323,7 +323,7 @@ def _input_loop(live, tui, router, agent, ptt, stt, engine, session, config):
 
                 elif key == "d":
                     # v2: cycle layer mode (recorder → looper → sampler)
-                    layer = session.layers[session.selected_layer]
+                    layer = layer_manager.selected_layer
                     modes = ["recorder", "looper", "sampler"]
                     current = layer.layer_mode.value
                     next_mode = modes[(modes.index(current) + 1) % len(modes)]

@@ -117,7 +117,7 @@ class TestStableAudio:
     def test_stability_stable_audio_spec(self):
         from oram.engines.stable_audio import StabilityStableAudioEngine
         engine = StabilityStableAudioEngine(api_key="test-stability-key")
-        assert engine.spec.id == "stability-stable-audio-2"
+        assert engine.spec.id == "stability-stable-audio-25"
         assert engine.spec.provider == EngineProvider.STABILITY
         assert AudioCapability.TEXT_TO_MUSIC in engine.spec.capabilities
         assert AudioCapability.TEXT_TO_SOUND_EFFECT in engine.spec.capabilities
@@ -154,7 +154,7 @@ class TestStableAudio:
         config = OramConfig()
         config.stability_api_key = "test-stability-key"
         reg = EngineRegistry.from_config(config)
-        engine = reg.get("stability-stable-audio-2")
+        engine = reg.get("stability-stable-audio-25")
         assert engine is not None
         assert engine.spec.provider == EngineProvider.STABILITY
 

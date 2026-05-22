@@ -56,6 +56,7 @@ class MockAudioEngine:
         self._output_level: float = 0.0
 
         # recording state
+        self._record_lock = threading.Lock()  # guards _recording and _record_buffer
         self._recording = False
         self._record_target: int | None = None
         self._record_buffer: list[np.ndarray] = []
@@ -132,19 +133,22 @@ class MockAudioEngine:
 
     def stop_recording(self) -> np.ndarray | None:
         """stop recording and return the captured buffer."""
-        if not self._recording:
-            return None
-        self._recording = False
+        with self._record_lock:
+            if not self._recording:
+                return None
+            self._recording = False
+            record_buffer = self._record_buffer
+            self._record_buffer = []
+
         layer = self.layers.get_layer(
             self._record_target if self._record_target is not None else "selected"
         )
-        if not self._record_buffer:
+        if not record_buffer:
             layer.state = LayerState.EMPTY if layer.is_empty else (
                 LayerState.MUTED if layer.muted else LayerState.ACTIVE
             )
             return None
-        buffer = np.concatenate(self._record_buffer, axis=0)
-        self._record_buffer = []
+        buffer = np.concatenate(record_buffer, axis=0)
 
         if self._overdub_mode:
             self.layers.overdub(layer, buffer)
@@ -185,14 +189,17 @@ class MockAudioEngine:
                 self._input_level = float(np.max(np.abs(block)))
 
             if self._recording:
-                self._record_buffer.append(block)
-                self._record_samples += self.block_size
+                with self._record_lock:
+                    if self._recording:  # double-check under lock
+                        self._record_buffer.append(block)
+                        self._record_samples += self.block_size
 
-                # check fixed-duration recording
-                if (
-                    self._record_max_samples is not None
-                    and self._record_samples >= self._record_max_samples
-                ):
+                        # check fixed-duration recording
+                        should_stop = (
+                            self._record_max_samples is not None
+                            and self._record_samples >= self._record_max_samples
+                        )
+                if should_stop:
                     self.stop_recording()
 
             if self._command_capture:
@@ -204,7 +211,9 @@ class MockAudioEngine:
                     and self._command_samples >= self._command_max_samples
                 ):
                     self._command_capture = False
-            else:
+
+            # decay input level when not recording and not capturing
+            if not self._recording and not self._command_capture:
                 self._input_level = max(0.0, self._input_level * 0.95)
 
             # simulate output mixing

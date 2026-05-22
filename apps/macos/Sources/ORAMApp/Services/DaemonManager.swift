@@ -1,7 +1,16 @@
 import Foundation
 
-final class DaemonManager {
+final class DaemonManager: @unchecked Sendable {
     private var process: Process?
+
+    deinit {
+        stop()
+    }
+
+    func stop() {
+        process?.terminate()
+        process = nil
+    }
 
     func launchIfNeeded(client: DaemonClient) async -> String {
         if (try? client.loadMetadata()) != nil, (try? await client.health()) != nil {
@@ -20,8 +29,8 @@ final class DaemonManager {
             : daemonArguments(root: root)
         process.currentDirectoryURL = root
         process.environment = daemonEnvironment()
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()

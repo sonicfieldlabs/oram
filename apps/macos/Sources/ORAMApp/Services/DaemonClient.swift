@@ -1,8 +1,9 @@
 import Foundation
 
+@MainActor
 final class DaemonClient {
     private let session: URLSession
-    private(set) var metadata: DaemonMetadata?
+    nonisolated(unsafe) private(set) var metadata: DaemonMetadata?
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -12,7 +13,7 @@ final class DaemonClient {
         metadata != nil
     }
 
-    func loadMetadata() throws -> DaemonMetadata {
+    nonisolated func loadMetadata() throws -> DaemonMetadata {
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/ORAM/oram-daemon.json")
         let data = try Data(contentsOf: url)
@@ -135,7 +136,10 @@ final class DaemonClient {
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
         if data.isEmpty {
-            return EmptyResponse() as! T
+            guard let result = EmptyResponse() as? T else {
+                throw DaemonError.invalidResponse("Expected EmptyResponse but got \(T.self)")
+            }
+            return result
         }
         return try JSONDecoder().decode(T.self, from: data)
     }
@@ -210,6 +214,7 @@ private struct SettingsPayload: Encodable {
 enum DaemonError: Error, LocalizedError {
     case missingMetadata
     case http(status: Int, body: String)
+    case invalidResponse(String)
 
     var errorDescription: String? {
         switch self {
@@ -217,6 +222,8 @@ enum DaemonError: Error, LocalizedError {
             return "Daemon metadata was not found."
         case let .http(status, body):
             return "HTTP \(status): \(body)"
+        case let .invalidResponse(message):
+            return "Invalid response: \(message)"
         }
     }
 }

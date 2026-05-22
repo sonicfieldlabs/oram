@@ -42,7 +42,13 @@ final class KeychainStore {
     }
 
     func hasSecret(provider: String) -> Bool {
-        (try? getSecret(provider: provider)) != nil
+        do {
+            return try getSecret(provider: provider) != nil
+        } catch {
+            // Log non-not-found keychain errors for debugging
+            print("[KeychainStore] hasSecret(\(provider)) error: \(error.localizedDescription)")
+            return false
+        }
     }
 
     private func baseQuery(provider: String) -> [String: Any] {

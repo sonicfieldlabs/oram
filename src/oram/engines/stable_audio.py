@@ -32,8 +32,11 @@ log = logging.getLogger(__name__)
 class StabilityStableAudioEngine:
     """Generate audio through the direct Stability AI Stable Audio API."""
 
+    # NOTE: The YAML catalog (engines.yaml) uses "stable-audio-25-fal" for the
+    # fal variant. This direct-API engine doesn't yet have a YAML entry;
+    # the ID below is planned to be added in a future catalog update.
     spec = EngineSpec(
-        id="stability-stable-audio-2",
+        id="stability-stable-audio-25",
         provider=EngineProvider.STABILITY,
         label="Stable Audio 2.5",
         mode=EngineMode.CLOUD,
@@ -68,7 +71,7 @@ class StabilityStableAudioEngine:
             raise RuntimeError(f"Stable Audio host is not in ORAM_NETWORK_ALLOWLIST: {host}")
 
         duration = min(max(float(request.duration_seconds), 1.0), self.spec.max_duration_seconds)
-        steps = int(request.parameters.get("steps", 8))
+        steps = int(request.parameters.get("steps", 50))
         cfg_scale = float(request.guidance_scale or request.parameters.get("cfg_scale", 7.0))
         model = request.model_id or request.parameters.get("model", self._model)
 
@@ -92,11 +95,12 @@ class StabilityStableAudioEngine:
 
         try:
             with httpx.Client(timeout=240.0) as client:
+                # Pass form fields via `data=` — httpx encodes as
+                # multipart/form-data automatically when `data` is a dict.
                 response = client.post(
                     self.API_URL,
                     headers=headers,
                     data=data,
-                    files={"none": ("", b"")},
                 )
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -132,13 +136,19 @@ class StabilityStableAudioEngine:
         )
 
     def _parse_response(self, response) -> tuple[np.ndarray, int]:
+        tried: list[str] = []
         content_type = response.headers.get("content-type", "").lower()
         if "audio" in content_type or response.content.startswith(b"RIFF"):
+            tried.append("raw-audio-bytes")
+            log.debug("_parse_response: matched raw audio bytes")
             return _decode_audio_bytes(response.content)
+
+        tried.append("raw-audio-bytes(no match)")
 
         try:
             data = response.json()
         except Exception as exc:
+            log.debug("_parse_response: tried paths %s before JSON parse failure", tried)
             raise RuntimeError("Stable Audio returned a non-audio response") from exc
 
         if isinstance(data, dict):
@@ -148,23 +158,33 @@ class StabilityStableAudioEngine:
                 or data.get("base64")
             )
             if isinstance(audio_b64, str) and audio_b64:
+                tried.append("json-base64-field")
+                log.debug("_parse_response: matched base64 audio field")
                 return _decode_audio_bytes(b64decode(audio_b64))
+            tried.append("json-base64-field(no match)")
 
             artifacts = data.get("artifacts")
             if isinstance(artifacts, list) and artifacts:
                 first = artifacts[0] if isinstance(artifacts[0], dict) else {}
                 artifact_b64 = first.get("base64") or first.get("audio")
                 if isinstance(artifact_b64, str) and artifact_b64:
+                    tried.append("json-artifacts[0]-base64")
+                    log.debug("_parse_response: matched artifacts[0] base64")
                     return _decode_audio_bytes(b64decode(artifact_b64))
+            tried.append("json-artifacts(no match)")
 
             url = data.get("url") or (data.get("audio_file") or {}).get("url")
             if isinstance(url, str) and url:
+                tried.append("json-url")
                 if not is_url_allowed(url):
                     host = urlparse(url).hostname or "unknown"
                     raise RuntimeError(f"Stable Audio returned an unallowlisted URL: {host}")
+                log.debug("_parse_response: matched url field -> downloading")
                 return _download_audio(url)
+            tried.append("json-url(no match)")
 
-        raise RuntimeError("Stable Audio returned no audio")
+        log.debug("_parse_response: all paths exhausted, tried: %s", tried)
+        raise RuntimeError(f"Stable Audio returned no audio (tried: {', '.join(tried)})")
 
 
 class FalStableAudioEngine:
@@ -291,6 +311,8 @@ class FalStableAudioEngine:
             },
         )
 
+    _MAX_AUDIO_INPUT_BYTES = 10 * 1024 * 1024  # 10 MB
+
     def _encode_source_audio(self, audio: np.ndarray, sample_rate: int) -> str:
         """encode source audio as a data URI for fal.ai audio input."""
         import base64
@@ -299,6 +321,22 @@ class FalStableAudioEngine:
         mono = np.mean(audio, axis=1) if audio.ndim > 1 else audio
         buf = BytesIO()
         sf.write(buf, mono, sample_rate, format="WAV", subtype="PCM_16")
+        wav_size = buf.tell()
+
+        if wav_size > self._MAX_AUDIO_INPUT_BYTES:
+            max_samples = int(
+                (self._MAX_AUDIO_INPUT_BYTES / wav_size) * len(mono)
+            )
+            log.warning(
+                "Source audio WAV is %d bytes (> %d MB limit); truncating to %d samples",
+                wav_size,
+                self._MAX_AUDIO_INPUT_BYTES // (1024 * 1024),
+                max_samples,
+            )
+            mono = mono[:max_samples]
+            buf = BytesIO()
+            sf.write(buf, mono, sample_rate, format="WAV", subtype="PCM_16")
+
         buf.seek(0)
         b64 = base64.b64encode(buf.read()).decode("ascii")
         return f"data:audio/wav;base64,{b64}"
@@ -321,6 +359,10 @@ def _decode_audio_bytes(content: bytes) -> tuple[np.ndarray, int]:
 def _download_audio(url: str) -> tuple[np.ndarray, int]:
     """download and decode audio from a URL."""
     import httpx
+
+    if not is_url_allowed(url):
+        host = urlparse(url).hostname or "unknown"
+        raise ValueError(f"Audio download blocked — host not in allowlist: {host}")
 
     with httpx.Client(timeout=60.0) as client:
         response = client.get(url)

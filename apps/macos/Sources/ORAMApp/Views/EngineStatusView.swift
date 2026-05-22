@@ -1,3 +1,4 @@
+// NOTE: This view is currently unused in the active dashboard. Retained for future use.
 import SwiftUI
 
 struct EngineStatusView: View {
@@ -26,8 +27,9 @@ struct EngineStatusView: View {
                     .font(.title2.bold())
 
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach((store.state?.log ?? []).indices, id: \.self) { index in
-                        Text(store.state?.log[index] ?? "")
+                    let logEntries = store.state?.log ?? []
+                    ForEach(logEntries.indices, id: \.self) { index in
+                        Text(logEntries[index])
                             .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }

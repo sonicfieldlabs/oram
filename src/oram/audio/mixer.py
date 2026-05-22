@@ -168,8 +168,15 @@ class Mixer:
 
     def advance_playheads(self, layers: list[LoopLayer], frames: int) -> None:
         """advance all sounding layer playheads."""
+        any_solo = any(l.solo for l in layers)
         for layer in layers:
-            if not layer.is_empty and not layer.muted:
+            if layer.is_empty:
+                continue
+            if any_solo:
+                # when solo is active, advance solo'd layers regardless of mute
+                if layer.solo:
+                    self.advance_playhead(layer, frames)
+            elif not layer.muted:
                 self.advance_playhead(layer, frames)
 
     # --- in-place operations (no allocations) ---

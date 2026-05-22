@@ -28,7 +28,11 @@ struct DaemonMetadata: Codable {
     }
 
     var baseURL: URL {
-        URL(string: "http://\(host):\(port)")!
+        guard let url = URL(string: "http://\(host):\(port)") else {
+            // Fallback to localhost when host string produces an invalid URL
+            return URL(string: "http://127.0.0.1:\(port)")!
+        }
+        return url
     }
 }
 

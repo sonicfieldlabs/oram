@@ -58,7 +58,7 @@ def redact_mapping(value: Any) -> Any:
         result = {}
         for key, child in value.items():
             if _is_secret_key(str(key)):
-                result["credential"] = REDACTION
+                result[key] = REDACTION
             else:
                 result[key] = redact_mapping(child)
         return result

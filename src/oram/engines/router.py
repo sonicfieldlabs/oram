@@ -11,6 +11,7 @@ routing considers: capability match, availability, cost, latency.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 
 from oram.engines.adapter import GenerationRequest, GenerationResult
@@ -140,7 +141,6 @@ class EngineRouter:
             decision.reason,
         )
 
-        import time
         t0 = time.monotonic()
         try:
             result = adapter.generate(request)
@@ -158,13 +158,11 @@ class EngineRouter:
         health.success_count += 1
         health.last_latency_ms = latency_ms
         health.available = True
-        import time
         health.last_check = time.monotonic()
 
     def _record_error(self, engine_id: str) -> None:
         health = self._health.setdefault(engine_id, HealthStatus(engine_id=engine_id))
         health.error_count += 1
-        import time
         health.last_check = time.monotonic()
 
     def _record_decision(self, decision: RoutingDecision) -> None:

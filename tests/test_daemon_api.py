@@ -121,7 +121,7 @@ def test_daemon_refreshes_stability_engine_from_credential_store(tmp_path):
     with TestClient(app, raise_server_exceptions=False) as client:
         providers = client.get("/providers").json()
         ids = {engine["id"] for engine in providers["engines"]}
-        assert "stability-stable-audio-2" in ids
+        assert "stability-stable-audio-25" in ids
         status = client.get("/credentials/status").json()
         assert status["stability"]["configured"] is True
         assert "unit-test-stability-key" not in str(providers)

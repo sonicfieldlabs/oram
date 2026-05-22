@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 DEFAULT_ALLOWED_HOSTS = {
     "api.elevenlabs.io",
     "api.stability.ai",
+    "fal.run",
+    "v3.fal.media",
+    "storage.googleapis.com",
 }
 
 

@@ -33,7 +33,7 @@ KEY_MAP: dict[str, OramAction] = {
     "x": ClearLayerAction(),
     "s": SaveSessionAction(),
     "e": ExportMixAction(),
-    "l": AnalyzeMixAction(),
+    "a": AnalyzeMixAction(),
     "q": QuitAction(),
 }
 

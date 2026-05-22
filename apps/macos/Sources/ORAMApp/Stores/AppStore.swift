@@ -14,6 +14,7 @@ final class AppStore: ObservableObject {
 
     let client = DaemonClient()
     private let daemonManager = DaemonManager()
+    private var retryTask: Task<Void, Never>?
 
     var selectedSound: SoundRecord? {
         sounds.first { $0.id == selectedSoundID }
@@ -34,9 +35,18 @@ final class AppStore: ObservableObject {
             sounds = try await client.sounds().sounds
             connectionStatus = "connected"
             errorMessage = nil
+            retryTask?.cancel()
+            retryTask = nil
         } catch {
             connectionStatus = "offline"
             errorMessage = error.localizedDescription
+            // L12: Auto-reconnect after 5 seconds on failure
+            retryTask?.cancel()
+            retryTask = Task {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self.refreshAll()
+            }
         }
     }
 
@@ -177,6 +187,16 @@ final class AppStore: ObservableObject {
         guard let selectedSoundID else { return }
         do {
             try await client.reveal(soundID: selectedSoundID)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func toggleFavorite(soundID: String) async {
+        guard let sound = sounds.first(where: { $0.id == soundID }) else { return }
+        do {
+            _ = try await client.favorite(soundID: soundID, favorite: !sound.favorite)
+            await refreshAll()
         } catch {
             errorMessage = error.localizedDescription
         }
