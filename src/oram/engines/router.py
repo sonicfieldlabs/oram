@@ -312,8 +312,8 @@ class EngineRouter:
 
             # analysis-aware boosting
             if analysis:
-                if analysis.get("contains_speech") and spec.has_capability(AudioCapability.TEXT_TO_SPEECH):
-                    s += 2.0
+                if analysis.get("contains_speech") and spec.has_capability(AudioCapability.TEXT_TO_SOUND_EFFECT):
+                    s += 2.0  # ORAM never generates speech — boost sfx for vocal content
                 if analysis.get("rhythmic_regularity", 0) > 0.6 and spec.has_capability(AudioCapability.TEXT_TO_MUSIC):
                     s += 1.5
                 if analysis.get("is_noisy") and spec.has_capability(AudioCapability.TEXT_TO_SOUND_EFFECT):
@@ -376,9 +376,9 @@ def infer_intent_from_analysis(analysis: dict) -> SonicIntent:
     pitch_confidence = analysis.get("pitch_confidence", 0.0)
     rhythmic = analysis.get("rhythmic_regularity", 0.0)
 
-    # voice detection — highest priority
+    # voice detection — ORAM never generates speech, route to sfx instead
     if contains_speech or contains_voice:
-        return SonicIntent.VOICE
+        return SonicIntent.SOUND_EFFECT
 
     # music detection — tonal + rhythmic content
     if pitch_confidence > 0.65 or rhythmic > 0.7:

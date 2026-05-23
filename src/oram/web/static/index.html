@@ -25,7 +25,6 @@
         <button class="hdr-btn hdr-fx" id="btn-fx" data-hint="dsp effects — open the texture transforms" aria-label="DSP effects" aria-haspopup="true" aria-expanded="false">fx</button>
         <span class="hdr-sep"></span>
         <button class="hdr-btn" id="btn-summon" data-hint="summon — open the texture palette for prompt generation" aria-label="Summon texture">✦</button>
-        <button class="hdr-btn" id="btn-listen" data-hint="listen — agent analyzes current layer texture" aria-label="Listen">☊</button>
         <span class="hdr-sep"></span>
         <button class="hdr-btn" id="btn-master-rec" data-hint="export current mix — bounce all layers to a single WAV" aria-label="Export current mix">◉</button>
         <button class="hdr-btn hdr-kill" id="btn-kill" data-hint="kill all sound — mute every layer and stop recording (k)" aria-label="Kill all sound">⊘</button>
@@ -39,7 +38,7 @@
         <span class="meter-dot meter-dot-in" id="meter-dot-in"></span>
         <span class="meter-dot meter-dot-out" id="meter-dot-out"></span>
       </div>
-      <button id="btn-mode-cycle" class="hdr-btn hdr-mode mode-cycle" data-hint="cycle input mode: prompt · audio · listen" aria-label="Cycle input mode">p</button>
+      <button id="btn-auto-mode" class="hdr-btn hdr-auto-mode" data-hint="auto mode — when on, recording automatically generates a second layer" aria-label="Toggle auto mode" aria-pressed="false"><span class="auto-mode-label">auto</span></button>
       <button id="btn-settings" class="hdr-btn" data-hint="audio settings" aria-label="Audio settings">⚙</button>
       <button id="btn-theme-toggle" class="hdr-btn hdr-theme" data-hint="toggle theme (light / dark)" aria-label="Toggle theme" aria-pressed="false">☾</button>
     </div>
@@ -129,21 +128,7 @@
 
 
 
-  <!-- summon palette -->
-  <section id="summon-palette" class="hidden">
-    <div class="palette-header">
-      <span>summon a texture</span>
-      <button id="palette-close" class="palette-close-btn" aria-label="Close summon palette">×</button>
-    </div>
-    <div class="palette-grid">
-      <button class="summon-chip" data-prompt="distant metallic rain">metallic rain</button>
-      <button class="summon-chip" data-prompt="room tone">room tone</button>
-      <button class="summon-chip" data-prompt="low drone">low drone</button>
-      <button class="summon-chip" data-prompt="synthetic forest">synthetic forest</button>
-      <button class="summon-chip" data-prompt="quiet machine">quiet machine</button>
-      <button class="summon-chip" data-prompt="fake field recording">field recording</button>
-    </div>
-  </section>
+  <!-- summon: direct listen+generate (no palette) -->
 
   <!-- ═══ LAYERS (3 visible by default, 4th hidden until "+") ═══ -->
   <section id="layers" class="layers-panel">
@@ -259,29 +244,39 @@
 <div id="about-overlay" class="hidden" aria-hidden="true">
   <div id="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
     <button id="about-close" class="palette-close-btn" aria-label="Close about">×</button>
+    <div class="about-logo-wrap">
+      <img src="/static/logo-oram.png" alt="oram" class="about-logo">
+    </div>
     <h2 id="about-title">oram</h2>
     <p class="about-tagline">recursive listening instrument for synthetic sound.</p>
     <blockquote class="about-epigraph">"We seem to have tuned circuits within us" <cite>— Daphne Oram</cite></blockquote>
-    <p>record, generate, transform, and layer sounds through a prompt-driven interface.</p>
+    <p>record sound → the system listens, detects pitch, tempo, key and spectral shape → generates a complementary layer using AI sound engines. each generation is informed by what's already playing, creating a dialogue between human input and machine imagination.</p>
 
-    <h3>top bar</h3>
+    <h3>workflow</h3>
+    <ul class="about-list">
+      <li><strong>record</strong> — capture audio from your mic into the selected layer</li>
+      <li><strong>listen</strong> — oram analyzes pitch, BPM, key, harmonics, and spectral character</li>
+      <li><strong>generate</strong> — AI creates a new layer constrained by the analysis but free in imagination</li>
+      <li><strong>layer</strong> — stack up to 4 layers, each aware of the others' spectral space</li>
+      <li><strong>transform</strong> — apply DSP effects: reverse, granular, reverb, pitch-shift…</li>
+    </ul>
+
+    <h3>controls</h3>
     <ul class="about-list">
       <li><strong>⏺</strong> record from mic into selected layer</li>
       <li><strong>⊕</strong> overdub onto selected layer</li>
       <li><strong>fx</strong> open DSP transforms (reverse, granulate, reverb…)</li>
-      <li><strong>✦</strong> summon — generate a texture from a prompt preset</li>
-      <li><strong>☊</strong> listen — agent analyzes current layer</li>
-      <li><strong>◉</strong> export mix · <strong>⊘</strong> kill all sound</li>
-      <li><strong>+</strong> add a 4th layer</li>
-      <li><strong>p / a / l</strong> input mode: <em>prompt</em> · <em>audio</em> · <em>listen</em></li>
+      <li><strong>✦</strong> summon — listen to what's sounding and generate a new layer</li>
+      <li><strong>auto</strong> auto-generative mode: record → listen → generate automatically</li>
+      <li><strong>◉</strong> export mix · <strong>⊘</strong> kill all sound · <strong>+</strong> add layer</li>
     </ul>
 
     <h3>layers</h3>
     <ul class="about-list">
-      <li><strong>corners</strong> — top-left: select/mute (right-click: solo) · top-right: export · bottom-left: auto-generate · bottom-right: clear</li>
+      <li><strong>corners</strong> — top-left: select/mute (right-click: solo) · top-right: export · bottom-left: generate from · bottom-right: clear</li>
       <li><strong>waveform</strong> — drag to set loop region · click to clear</li>
       <li><strong>vol strip</strong> — drag, scroll, double-click for unity</li>
-      <li><strong>prompt</strong> — type a description below the layers and press <kbd>↵</kbd></li>
+      <li><strong>prompt</strong> — type a description below and press <kbd>↵</kbd></li>
     </ul>
 
     <h3>keys</h3>
@@ -292,11 +287,11 @@
     </ul>
 
     <h3>engines</h3>
-    <p>use <code>oram credentials set elevenlabs</code> or the macOS app provider panel to store a key locally. without keys, oram runs in mock mode. open <kbd>⚙</kbd> to pick an engine.</p>
+    <p>oram uses ElevenLabs (sound effects, music) and Stability AI (Stable Audio) for generation. set API keys via CLI or the <kbd>⚙</kbd> settings panel. without keys, oram runs in mock mode.</p>
     <pre class="env-block">oram credentials set elevenlabs
-oram credentials status
-oram credentials test elevenlabs</pre>
-    <p>local engines (TangoFlux, Kokoro, Whisper.cpp) need no key.</p>
+oram credentials set stability
+oram credentials status</pre>
+    <p class="about-footer-note">generation is always non-vocal — oram produces sound textures, effects, and music, never speech.</p>
   </div>
 </div>
 

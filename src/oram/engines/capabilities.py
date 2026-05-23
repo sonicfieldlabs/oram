@@ -62,8 +62,9 @@ class SonicIntent(str, Enum):
 
 # intent → required capabilities (any one match is sufficient)
 INTENT_CAPABILITY_MAP: dict[SonicIntent, list[AudioCapability]] = {
+    # VOICE redirects to sound effects — ORAM never generates speech
     SonicIntent.VOICE: [
-        AudioCapability.TEXT_TO_SPEECH,
+        AudioCapability.TEXT_TO_SOUND_EFFECT,
     ],
     SonicIntent.SOUND_EFFECT: [
         AudioCapability.TEXT_TO_SOUND_EFFECT,
@@ -77,7 +78,7 @@ INTENT_CAPABILITY_MAP: dict[SonicIntent, list[AudioCapability]] = {
     ],
     SonicIntent.TRANSFORM: [
         AudioCapability.AUDIO_TO_AUDIO,
-        AudioCapability.SPEECH_TO_SPEECH,
+        # SPEECH_TO_SPEECH removed — ORAM never uses voice APIs
     ],
     SonicIntent.ANALYZE: [
         AudioCapability.AUDIO_ANALYSIS,
@@ -89,6 +90,6 @@ INTENT_CAPABILITY_MAP: dict[SonicIntent, list[AudioCapability]] = {
 # legacy engine name → sonic intent (backward compat with v1 "sfx"/"voice"/"music")
 LEGACY_ENGINE_INTENT_MAP: dict[str, SonicIntent] = {
     "sfx": SonicIntent.SOUND_EFFECT,
-    "voice": SonicIntent.VOICE,
+    "voice": SonicIntent.SOUND_EFFECT,  # voice requests redirect to sfx
     "music": SonicIntent.MUSIC,
 }

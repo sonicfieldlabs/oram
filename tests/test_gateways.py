@@ -79,6 +79,18 @@ class TestScribeModel:
         assert "scribe_v1" not in source
 
 
+class TestGatewayRouter:
+    """gateway routing preserves explicit engine IDs."""
+
+    def test_provider_specific_engine_override(self):
+        from oram.gateway.router import select_engine
+
+        decision = select_engine({}, user_mode="local-mock")
+
+        assert decision.engine == "local-mock"
+        assert "user selected local-mock" in decision.reason
+
+
 class TestResampleUtility:
     """audio resample and normalization."""
 

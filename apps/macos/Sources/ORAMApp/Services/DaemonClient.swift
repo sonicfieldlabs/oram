@@ -46,6 +46,10 @@ final class DaemonClient {
         try await get("/library/sounds")
     }
 
+    func waveform(target: Int, points: Int = 512) async throws -> WaveformPeaks {
+        try await get("/waveform/\(target)?points=\(points)")
+    }
+
     func sendCommand(_ text: String) async throws {
         let payload = ["text": text]
         let _: EmptyResponse = try await post("/command", payload: payload)
@@ -77,6 +81,16 @@ final class DaemonClient {
         let _: EmptyResponse = try await post("/layer/generate", payload: payload)
     }
 
+    func setLoopRegion(layer target: Int, startPct: Double, endPct: Double, enabled: Bool) async throws {
+        let payload = LoopRegionPayload(
+            target: target,
+            startPct: startPct,
+            endPct: endPct,
+            enabled: enabled
+        )
+        let _: EmptyResponse = try await post("/layer/loop-region", payload: payload)
+    }
+
     func setVolume(layer target: Int, volume: Double) async throws {
         let payload = VolumePayload(target: target, volume: volume)
         let _: EmptyResponse = try await post("/layer/volume", payload: payload)
@@ -88,6 +102,10 @@ final class DaemonClient {
 
     func setInputMode(_ mode: String) async throws {
         let _: EmptyResponse = try await post("/input-mode", payload: InputModePayload(mode: mode))
+    }
+
+    func toggleAutoListen() async throws {
+        let _: EmptyResponse = try await post("/auto-listen", payload: EmptyPayload())
     }
 
     func updateSettings(
@@ -182,6 +200,20 @@ private struct GenerateFromPayload: Encodable {
     let route: String
     let engine: String
     let duration: Double?
+}
+
+private struct LoopRegionPayload: Encodable {
+    let target: Int
+    let startPct: Double
+    let endPct: Double
+    let enabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case target
+        case startPct = "start_pct"
+        case endPct = "end_pct"
+        case enabled
+    }
 }
 
 private struct VolumePayload: Encodable {

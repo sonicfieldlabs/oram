@@ -14,6 +14,7 @@ struct DaemonMetadata: Codable {
     let version: String
     let authTokenConfigured: Bool
     let metadataPath: String
+    let projectPath: String?
     let auth: DaemonAuth?
 
     enum CodingKeys: String, CodingKey {
@@ -24,6 +25,7 @@ struct DaemonMetadata: Codable {
         case version
         case authTokenConfigured = "auth_token_configured"
         case metadataPath = "metadata_path"
+        case projectPath = "project_path"
         case auth
     }
 
@@ -146,6 +148,50 @@ struct LayerState: Decodable, Identifiable {
         case loopStartSeconds = "loop_start_seconds"
         case loopEndSeconds = "loop_end_seconds"
     }
+}
+
+extension LayerState {
+    static let placeholderLayers: [LayerState] = (1...4).map { placeholder(slot: $0) }
+
+    static func placeholder(slot: Int) -> LayerState {
+        LayerState(
+            id: "placeholder-\(slot)",
+            slot: slot,
+            name: "Layer \(slot)",
+            state: "empty",
+            sourceType: "empty",
+            layerMode: nil,
+            duration: 0,
+            muted: false,
+            solo: false,
+            volume: 1,
+            pan: 0,
+            effects: [],
+            isGenerated: false,
+            generationPrompt: nil,
+            parentLayerID: nil,
+            generationDepth: nil,
+            listeningRoute: nil,
+            generationEngine: nil,
+            waveform: Array(repeating: 0, count: 64),
+            waveformRevision: 0,
+            playheadPct: 0,
+            loopEnabled: false,
+            loopStartPct: 0,
+            loopEndPct: 100,
+            loopStartSeconds: 0,
+            loopEndSeconds: 0
+        )
+    }
+}
+
+struct WaveformPeaks: Decodable {
+    let target: Int
+    let points: Int
+    let revision: Int
+    let duration: Double
+    let peaks: [[Double]]
+    let rms: [Double]
 }
 
 struct CredentialStatus: Decodable {

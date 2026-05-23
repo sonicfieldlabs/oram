@@ -87,6 +87,19 @@ def test_daemon_dashboard_control_endpoints(tmp_path):
         assert "input_level" in state
         assert state["layers"][0]["waveform_revision"] >= 1
 
+        waveform = client.get("/waveform/1?points=80")
+        assert waveform.status_code == 200
+        waveform_data = waveform.json()
+        assert waveform_data["points"] == 80
+        assert waveform_data["revision"] == state["layers"][0]["waveform_revision"]
+        assert "peaks" in waveform_data
+
+        looped = client.post("/layer/loop-region", json={"target": 1, "start_pct": 10, "end_pct": 80})
+        assert looped.status_code == 200
+        loop_data = looped.json()
+        assert loop_data["status"] == "ok"
+        assert loop_data["loop_enabled"] is True
+
         volume = client.post("/layer/volume", json={"target": 1, "volume": 0.5})
         assert volume.status_code == 200
         assert client.get("/state").json()["layers"][0]["volume"] == 0.5
@@ -125,3 +138,18 @@ def test_daemon_refreshes_stability_engine_from_credential_store(tmp_path):
         status = client.get("/credentials/status").json()
         assert status["stability"]["configured"] is True
         assert "unit-test-stability-key" not in str(providers)
+
+
+def test_daemon_websocket_streams_state(tmp_path):
+    service = LocalOramService(
+        OramConfig(mock_audio=True, session_dir=tmp_path / "sessions"),
+        library=OramLibrary(tmp_path / "library"),
+        credential_store=MemoryCredentialStore(),
+        mock_audio=True,
+    )
+    app = create_app(service, auth_token="")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        with client.websocket_connect("/ws") as ws:
+            state = ws.receive_json()
+            assert state["version"]
+            assert "layers" in state

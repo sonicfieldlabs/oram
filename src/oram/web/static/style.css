@@ -1874,6 +1874,8 @@ input:focus-visible {
   display: none !important;
 }
 
+/* ── oram logo ── */
+
 /* ── clickable ORAM title — replaces h1 ── */
 .oram-title {
   font-family: var(--font);
@@ -2092,6 +2094,27 @@ input:focus-visible {
   color: var(--text);
   text-transform: uppercase;
   margin-bottom: 6px;
+}
+.about-logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.about-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  object-fit: cover;
+  opacity: 0.9;
+  box-shadow: 0 0 20px rgba(255,255,255,0.05);
+}
+.about-footer-note {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
 }
 #about-modal h3 {
   font-size: 10px;
@@ -2867,27 +2890,34 @@ header {
   color: var(--accent);
 }
 
-/* ── mode cycle button — shows first letter ── */
-.hdr-btn.hdr-mode {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
+/* ── auto-mode toggle ── */
+.hdr-auto-mode {
+  position: relative;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: lowercase;
-  width: auto;
-  min-width: 26px;
-  height: 36px;
-  padding: 0 7px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-ghost, #555);
+  cursor: pointer;
+  transition: color 0.25s ease, text-shadow 0.25s ease;
 }
-.hdr-btn.hdr-mode.is-prompt {
-  color: var(--text-secondary);
+.hdr-auto-mode:hover {
+  color: var(--text-dim, #888);
 }
-.hdr-btn.hdr-mode.is-audio {
-  color: var(--record);
-  background: var(--record-glow);
+.hdr-auto-mode.active {
+  color: var(--accent, #7ef28a);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent, #7ef28a) 35%, transparent);
 }
-.hdr-btn.hdr-mode.is-listen {
-  color: var(--generated);
-  background: var(--generated-glow);
+.hdr-auto-mode.active .auto-mode-label::after {
+  content: ' ✦';
+}
+[data-theme="light"] .hdr-auto-mode.active {
+  color: var(--accent, #2a8c4a);
+  text-shadow: none;
 }
 
 /* ── theme icon ── */

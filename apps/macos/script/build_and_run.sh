@@ -55,7 +55,20 @@ if [[ -f "$ROOT_DIR/Assets/AppIcon.icns" ]]; then
 fi
 rm -rf "$PYTHON_RESOURCE_DIR/src"
 cp -R "$REPO_ROOT/src" "$PYTHON_RESOURCE_DIR/src"
-find "$PYTHON_RESOURCE_DIR/src" \( -name "__pycache__" -o -name "*.pyc" -o -name ".DS_Store" \) -print0 | xargs -0 rm -rf
+find "$PYTHON_RESOURCE_DIR/src" \( \
+  -name "__pycache__" -o \
+  -name "*.pyc" -o \
+  -name ".DS_Store" -o \
+  -name "oram_sessions" -o \
+  -name "*.wav" -o \
+  -name "*.aiff" -o \
+  -name "*.aif" -o \
+  -name "*.flac" -o \
+  -name "*.mp3" -o \
+  -name "*.m4a" -o \
+  -name "*.ogg" -o \
+  -name "*.caf" \
+\) -print0 | xargs -0 rm -rf
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -80,6 +93,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>NSApplication</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>ORAM records local audio into layers when you press record.</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
 </dict>
 </plist>
 PLIST

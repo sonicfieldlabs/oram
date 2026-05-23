@@ -20,6 +20,9 @@ dependencies = [
     "typer>=0.9",
     "httpx>=0.27",
     "python-dotenv>=1.0",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "websockets>=11.0",
 ]
 
 [project.optional-dependencies]

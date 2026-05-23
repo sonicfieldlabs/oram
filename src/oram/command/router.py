@@ -483,9 +483,21 @@ class ActionRouter:
             decision = select_engine(analysis_data, engine_mode)
             self._on_status(f"engine: {decision.engine} — {decision.reason}")
 
-            # 3. compile prompt
-            prompt = compile_prompt(report, decision.engine)
-            self._on_status(f"prompt: {prompt[:80]}...")
+            # 3. compile prompt with mix context
+            mix_ctx = None
+            try:
+                from oram.ears.mix_context import build_mix_context
+                active_layers = [
+                    l for l in self.layers.layers
+                    if not l.is_empty and not l.muted
+                ]
+                if active_layers:
+                    mix_ctx = build_mix_context(active_layers, source_layer.sample_rate)
+            except Exception:
+                pass  # mix context is optional
+
+            prompt = compile_prompt(report, decision.engine, mix_context=mix_ctx)
+            self._on_status(f"prompt: {prompt[:100]}...")
 
             # 4. generate
             gen_duration = self._clamp_duration(

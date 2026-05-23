@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from oram.engines.adapter import EngineSpec, GenerationRequest, GenerationResult
 from oram.engines.capabilities import (
@@ -13,7 +12,6 @@ from oram.engines.capabilities import (
     SonicIntent,
 )
 from oram.engines.registry import EngineRegistry
-
 
 # ── fixtures ──
 
@@ -245,9 +243,13 @@ class TestEngineSpec:
     def test_supports_intent(self):
         spec = _sfx_engine().spec
         assert spec.supports_intent(SonicIntent.SOUND_EFFECT)
-        assert not spec.supports_intent(SonicIntent.VOICE)
+        # VOICE now redirects to TEXT_TO_SOUND_EFFECT — SFX engines handle it
+        assert spec.supports_intent(SonicIntent.VOICE)
 
     def test_tts_supports_voice_and_transform(self):
         spec = _tts_engine().spec
-        assert spec.supports_intent(SonicIntent.VOICE)
-        assert spec.supports_intent(SonicIntent.TRANSFORM)
+        # VOICE intent now maps to TEXT_TO_SOUND_EFFECT (ORAM never uses TTS),
+        # so a TTS-only engine no longer matches VOICE intent — correct by design.
+        assert not spec.supports_intent(SonicIntent.VOICE)
+        # TRANSFORM now only maps to AUDIO_TO_AUDIO (not SPEECH_TO_SPEECH)
+        assert not spec.supports_intent(SonicIntent.TRANSFORM)

@@ -40,9 +40,16 @@ VALID_ENGINES = frozenset({
     "auto", "sfx", "voice", "music",
     # provider-specific engine IDs
     "elevenlabs-sfx", "elevenlabs-tts", "elevenlabs-music", "elevenlabs-scribe",
+    "elevenlabs-voice-changer", "elevenlabs-voice-design", "elevenlabs-isolation",
     "stability-stable-audio-2", "stable-audio-2", "stable-audio-25",
-    "local",
+    "stability-stable-audio-25", "local", "local-mock",
 })
+
+VALID_ENGINE_PREFIXES = ("elevenlabs-", "stability-", "stable-audio-", "local-")
+
+
+def _is_valid_engine(value: str) -> bool:
+    return value in VALID_ENGINES or any(value.startswith(prefix) for prefix in VALID_ENGINE_PREFIXES)
 
 VALID_LAYER_MODES = frozenset({
     "recorder", "looper", "sampler",
@@ -241,7 +248,7 @@ class GenerateLayerAction(BaseModel):
     @field_validator("engine")
     @classmethod
     def _valid_engine(cls, v: str) -> str:
-        if v not in VALID_ENGINES:
+        if not _is_valid_engine(v):
             raise ValueError(f"invalid engine: {v}")
         return v
 
@@ -289,7 +296,7 @@ class GenerateFromAction(BaseModel):
     @field_validator("engine")
     @classmethod
     def _valid_engine(cls, v: str) -> str:
-        if v not in VALID_ENGINES:
+        if not _is_valid_engine(v):
             raise ValueError(f"invalid engine: {v}")
         return v
 
@@ -333,7 +340,7 @@ class ListenAgainAction(BaseModel):
     @field_validator("engine")
     @classmethod
     def _valid_engine(cls, v: str) -> str:
-        if v not in VALID_ENGINES:
+        if not _is_valid_engine(v):
             raise ValueError(f"invalid engine: {v}")
         return v
 

@@ -196,6 +196,7 @@ class LocalSidecarEngine:
         if request.source_audio is not None:
             import base64
             import io
+
             import soundfile as sf
 
             buf = io.BytesIO()
@@ -235,6 +236,7 @@ class LocalSidecarEngine:
 
         # audio response
         import io
+
         import soundfile as sf
 
         buf = io.BytesIO(response.content)

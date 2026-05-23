@@ -15,7 +15,6 @@ from oram.engines.capabilities import (
 from oram.engines.registry import EngineRegistry
 from oram.engines.router import EngineRouter, resolve_intent
 
-
 # ── fixtures ──
 
 class _MockEngine:
@@ -140,12 +139,13 @@ class TestRouting:
         decision = router.route(req)
         assert decision.engine_id == "local-sfx"
 
-    def test_intent_voice_routes_to_tts(self):
+    def test_intent_voice_routes_to_sfx(self):
+        # VOICE now maps to TEXT_TO_SOUND_EFFECT — routes to SFX, not TTS
         reg = _filled_registry()
         router = EngineRouter(reg)
         req = GenerationRequest(prompt="test", intent=SonicIntent.VOICE)
         decision = router.route(req)
-        assert decision.engine_id == "test-tts"
+        assert decision.engine_id == "test-sfx"
 
     def test_intent_sound_effect_prefers_cloud(self):
         reg = _filled_registry()
@@ -219,6 +219,7 @@ class TestExecution:
         assert result.provider == "elevenlabs"
 
     def test_execute_calls_correct_engine(self):
+        # VOICE intent now routes to SFX engines (ORAM never uses TTS)
         sfx = _sfx_engine()
         tts = _tts_engine()
         reg = EngineRegistry()
@@ -227,8 +228,8 @@ class TestExecution:
         router = EngineRouter(reg)
         req = GenerationRequest(prompt="hello world", intent=SonicIntent.VOICE)
         router.execute(req)
-        assert tts.call_count == 1
-        assert sfx.call_count == 0
+        assert sfx.call_count == 1
+        assert tts.call_count == 0
 
     def test_execute_with_unavailable_engine_uses_alternative(self):
         sfx = _sfx_engine(available=False)
@@ -263,7 +264,8 @@ class TestResolveIntent:
         assert resolve_intent("sfx") == SonicIntent.SOUND_EFFECT
 
     def test_legacy_voice(self):
-        assert resolve_intent("voice") == SonicIntent.VOICE
+        # legacy "voice" string now resolves to SOUND_EFFECT
+        assert resolve_intent("voice") == SonicIntent.SOUND_EFFECT
 
     def test_legacy_music(self):
         assert resolve_intent("music") == SonicIntent.MUSIC

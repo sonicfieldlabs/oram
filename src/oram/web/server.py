@@ -256,6 +256,12 @@ def _on_record_complete(layer):
 
         tech = report.technical
         parts = []
+        if tech.dominant_pitch_note:
+            parts.append(f"pitch: {tech.dominant_pitch_note}")
+        if tech.key_estimate:
+            parts.append(f"key: {tech.key_estimate}")
+        if tech.estimated_bpm > 0:
+            parts.append(f"bpm: {tech.estimated_bpm:.0f}")
         if tech.texture:
             parts.append(tech.texture)
         if tech.noise_balance:
@@ -278,8 +284,23 @@ def _on_record_complete(layer):
         decision = select_engine(analysis_data, "auto")
         _append_log(f"engine: {decision.engine} — {decision.reason}")
 
-        prompt = compile_prompt(report, decision.engine)
-        _append_log(f"prompt: {prompt[:80]}...")
+        # build mix context from all active layers
+        mix_ctx = None
+        try:
+            from oram.ears.mix_context import build_mix_context
+            active_layers = [
+                l for l in _layer_manager.layers
+                if not l.is_empty and not l.muted
+            ]
+            if active_layers:
+                mix_ctx = build_mix_context(active_layers, layer.sample_rate)
+                if mix_ctx.dominant_pitches:
+                    _append_log(f"mix context: {', '.join(mix_ctx.dominant_pitches)} — {mix_ctx.density_level}")
+        except Exception:
+            pass  # mix context is optional — proceed without it
+
+        prompt = compile_prompt(report, decision.engine, mix_context=mix_ctx)
+        _append_log(f"prompt: {prompt[:100]}...")
 
         gen_duration = min(layer.duration_seconds * 1.2, 30.0)
         audio = _router._call_engine(decision.engine, prompt, gen_duration, layer)
@@ -801,13 +822,13 @@ def _compute_waveform_peaks(layer, points: int) -> dict:
     buf = layer.buffer
     mono = np.mean(buf, axis=1) if buf.ndim > 1 else buf
     length = len(mono)
-    chunk = max(1, length // points)
+    edges = np.linspace(0, length, points + 1, dtype=int)
     peaks = []
     rms = []
     for i in range(points):
-        s_idx = i * chunk
-        e_idx = min(s_idx + chunk, length)
-        if s_idx < length:
+        s_idx = int(edges[i])
+        e_idx = int(edges[i + 1])
+        if s_idx < length and e_idx > s_idx:
             segment = mono[s_idx:e_idx]
             peaks.append([round(float(np.min(segment)), 5), round(float(np.max(segment)), 5)])
             rms.append(round(float(np.sqrt(np.mean(segment ** 2))), 5))

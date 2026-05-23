@@ -6,10 +6,10 @@ fallback for local terminal work and CI.
 
 from __future__ import annotations
 
-import os
-import platform
 import ctypes
 import ctypes.util
+import os
+import platform
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -345,8 +345,9 @@ class ChainedCredentialStore:
 def default_credential_store() -> CredentialStore:
     """Return the default local credential store.
 
-    macOS uses Keychain first and env second. Other platforms use env so the
-    Python package stays usable in CI and headless development.
+    Environment variables override Keychain values so tests, CI, and explicit
+    terminal sessions can force a provider key without mutating stored app
+    credentials.
     """
 
     env_store = EnvCredentialStore()
@@ -358,7 +359,7 @@ def default_credential_store() -> CredentialStore:
 
     keychain = MacOSKeychainCredentialStore()
     if keychain.is_supported:
-        return ChainedCredentialStore(keychain, [env_store])
+        return ChainedCredentialStore(env_store, [keychain])
     return env_store
 
 

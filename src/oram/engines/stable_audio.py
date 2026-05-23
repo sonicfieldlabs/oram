@@ -316,6 +316,7 @@ class FalStableAudioEngine:
     def _encode_source_audio(self, audio: np.ndarray, sample_rate: int) -> str:
         """encode source audio as a data URI for fal.ai audio input."""
         import base64
+
         import soundfile as sf
 
         mono = np.mean(audio, axis=1) if audio.ndim > 1 else audio

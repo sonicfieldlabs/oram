@@ -141,13 +141,11 @@
   }
 
   function render(s) {
-    // single mode cycle button — combines input_mode + auto_listen into one indicator
-    const modeKey = s.auto_listen ? 'listen' : (s.input_mode === 'audio' ? 'audio' : 'prompt');
-    const modeLetters = { prompt: 'p', audio: 'a', listen: 'l' };
-    if (btnModeCycle) {
-      btnModeCycle.textContent = modeLetters[modeKey] || modeKey;
-      btnModeCycle.className = 'hdr-btn hdr-mode mode-cycle is-' + modeKey;
-      btnModeCycle.dataset.mode = modeKey;
+    // auto-mode indicator — sync with server state
+    const btnAutoMode = document.getElementById('btn-auto-mode');
+    if (btnAutoMode) {
+      btnAutoMode.classList.toggle('active', !!s.auto_listen);
+      btnAutoMode.setAttribute('aria-pressed', String(!!s.auto_listen));
     }
 
     // record button
@@ -157,7 +155,7 @@
     const promptFrame = document.getElementById('prompt-frame');
     if (promptFrame) promptFrame.classList.toggle('recording', !!s.recording);
     const promptModeLabel = document.getElementById('prompt-mode-label');
-    if (promptModeLabel) promptModeLabel.textContent = modeKey;
+    if (promptModeLabel) promptModeLabel.textContent = 'prompt';
     const selIdx = s.selected_layer != null ? s.selected_layer : 0;
     updateLayerBadge(selIdx);
 
@@ -629,32 +627,17 @@
     }
   });
 
-  // single mode-cycle button: prompt → audio → listen → prompt
-  if (btnModeCycle) {
-    btnModeCycle.addEventListener('click', async () => {
-      const cur = btnModeCycle.dataset.mode || 'prompt';
-      const next = cur === 'prompt' ? 'audio' : (cur === 'audio' ? 'listen' : 'prompt');
-      const modeLetters2 = { prompt: 'p', audio: 'a', listen: 'l' };
-
-      // optimistic UI update — don't wait for server round-trip
-      btnModeCycle.textContent = modeLetters2[next] || next;
-      btnModeCycle.className = 'hdr-btn hdr-mode mode-cycle is-' + next;
-      btnModeCycle.dataset.mode = next;
-      const promptModeLabel2 = document.getElementById('prompt-mode-label');
-      if (promptModeLabel2) promptModeLabel2.textContent = next;
-
-      // set input_mode (prompt | audio); listen reuses prompt input mode
-      const desiredInputMode = next === 'audio' ? 'audio' : 'prompt';
-      if (state.input_mode !== desiredInputMode && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'set_input_mode', mode: desiredInputMode }));
+  // auto-mode toggle button
+  const btnAutoMode = document.getElementById('btn-auto-mode');
+  if (btnAutoMode) {
+    btnAutoMode.addEventListener('click', async () => {
+      const res = await apiPost('/api/auto-listen');
+      if (res && res.status === 'ok') {
+        const isOn = res.auto_listen;
+        btnAutoMode.classList.toggle('active', isOn);
+        btnAutoMode.setAttribute('aria-pressed', String(isOn));
+        addLog('auto mode: ' + (isOn ? 'on — recording will auto-generate' : 'off'), 'system', '⚙');
       }
-
-      // toggle auto_listen flag to match next state
-      const desiredAutoListen = next === 'listen';
-      if (!!state.auto_listen !== desiredAutoListen) {
-        await apiPost('/api/auto-listen');
-      }
-      addLog('mode: ' + next, 'system', '⚙');
     });
   }
 
@@ -1227,7 +1210,6 @@
   // other transport — DSP effects moved to fx-palette popover
   const transportCommands = {
     'btn-overdub': 'overdub',
-    'btn-listen': 'listen to the texture',
   };
 
   Object.entries(transportCommands).forEach(([id, cmd]) => {
@@ -1246,20 +1228,28 @@
     btnFx?.setAttribute('aria-expanded', 'false');
   }
 
-  document.getElementById('btn-summon').addEventListener('click', () => {
-    const willOpen = palette.classList.contains('hidden');
-    closeAllPalettes();
-    if (willOpen) palette.classList.remove('hidden');
-  });
-  document.getElementById('palette-close').addEventListener('click', () => {
-    palette.classList.add('hidden');
-  });
+  // summon button → directly listen to what's sounding and generate
+  document.getElementById('btn-summon').addEventListener('click', async () => {
+    const sel = (state.selected_layer || 0) + 1;
+    addLog(`summoning: listening to layer ${sel} and generating…`, 'generated', '✦');
+    const btn = document.getElementById('btn-summon');
+    if (btn) btn.classList.add('generating');
 
-  document.querySelectorAll('.summon-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      sendCommand('add ' + chip.dataset.prompt);
-      palette.classList.add('hidden');
+    const engineSel = document.getElementById('engine-selector');
+    const selectedEngine = engineSel ? engineSel.value : 'auto';
+
+    const res = await apiPost('/api/generate', {
+      target: sel,
+      route: 'hybrid',
+      engine: selectedEngine,
     });
+
+    if (btn) btn.classList.remove('generating');
+    if (res && res.status === 'ok') {
+      addLog(`summoned → generated from layer ${sel}`, 'generated', '✦');
+    } else {
+      addLog('summon failed: ' + (res?.message || 'unknown error'), 'error', '✕');
+    }
   });
 
   // fx palette — DSP effects popover
@@ -1365,7 +1355,12 @@
         autoGenerate(sel);
         break;
       }
-      case 'l': sendCommand('listen to the texture'); break;
+      case 'l': {
+        // toggle auto-mode with keyboard
+        const autoBtn = document.getElementById('btn-auto-mode');
+        if (autoBtn) autoBtn.click();
+        break;
+      }
       case '?':
       case 'h':
         openPalette();
@@ -1373,7 +1368,7 @@
       case 'Escape':
         if (state.recording) stopRecording();
         settingsPanel.classList.add('hidden');
-        palette.classList.add('hidden');
+        palette?.classList.add('hidden');
         if (fxPalette) {
           fxPalette.classList.add('hidden');
           btnFx?.setAttribute('aria-expanded', 'false');
@@ -1493,9 +1488,9 @@
     { group: 'dsp', label: 'Spatial Far', icon: '↠', action: () => sendCommand('make it far away') },
     { group: 'dsp', label: 'Stretch Breathe', icon: '≈', action: () => sendCommand('stretch until it breathes') },
     // agent
-    { group: 'agent', label: 'Listen to Texture', icon: '☊', shortcut: 'l', action: () => sendCommand('listen to the texture') },
+    { group: 'agent', label: 'Toggle Auto Mode', icon: '⚙', shortcut: 'l', action: () => { const autoBtn = document.getElementById('btn-auto-mode'); if (autoBtn) autoBtn.click(); } },
     { group: 'agent', label: 'Auto-Generate', icon: '✦', shortcut: 'g', action: () => { const sel = (state.selected_layer || 0) + 1; autoGenerate(sel); } },
-    { group: 'agent', label: 'Summon Palette', icon: '✦', action: () => palette.classList.toggle('hidden') },
+    { group: 'agent', label: 'Summon (Listen + Generate)', icon: '✦', action: () => { document.getElementById('btn-summon')?.click(); } },
     // session
     { group: 'session', label: 'Save Session', icon: '⬡', action: () => sendCommand('save session') },
     { group: 'session', label: 'Export Mix', icon: '◉', action: () => apiPost('/api/export-master') },

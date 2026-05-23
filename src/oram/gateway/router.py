@@ -31,11 +31,13 @@ def select_engine(analysis: dict, user_mode: str = "auto") -> EngineDecision:
     - duration: float
     - spectral_centroid: float
 
-    user_mode: "auto" | "sfx" | "voice" | "music"
+    user_mode: "auto" | "sfx" | "voice" | "music" | provider-specific engine ID
     """
 
-    # explicit user override
-    if user_mode in ("sfx", "voice", "music"):
+    # explicit user override (voice is never allowed — ORAM generates sound, not speech)
+    if user_mode == "voice":
+        user_mode = "sfx"
+    if user_mode not in ("", "auto"):
         return EngineDecision(
             engine=user_mode,
             reason=f"user selected {user_mode}",
@@ -48,12 +50,12 @@ def select_engine(analysis: dict, user_mode: str = "auto") -> EngineDecision:
     pitch_confidence = analysis.get("pitch_confidence", 0.0)
     rhythmic = analysis.get("rhythmic_regularity", 0.0)
 
-    # voice detection
+    # voice detection — ORAM never generates speech, route to sfx instead
     if contains_speech or contains_voice:
         return EngineDecision(
-            engine="voice",
-            reason="detected speech or vocal content",
-            confidence=0.8 if contains_speech else 0.6,
+            engine="sfx",
+            reason="detected vocal content — routing to sfx (ORAM never generates speech)",
+            confidence=0.7,
         )
 
     # music detection

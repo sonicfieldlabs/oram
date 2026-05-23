@@ -84,7 +84,7 @@ class TestEngineValidators:
     """engine field validation."""
 
     def test_valid_engines(self):
-        for eng in ("auto", "sfx", "voice", "music"):
+        for eng in ("auto", "sfx", "voice", "music", "local-mock", "stability-stable-audio-25"):
             action = GenerateFromAction(engine=eng)
             assert action.engine == eng
 

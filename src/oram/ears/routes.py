@@ -45,6 +45,18 @@ class TechnicalReport:
     contains_speech: bool = False
     contains_voice: bool = False
 
+    # musical features — concrete data for generation constraints
+    dominant_pitch_hz: float = 0.0
+    dominant_pitch_note: str = ""          # "A3", "C#4"
+    pitch_detection_confidence: float = 0.0
+    estimated_bpm: float = 0.0
+    bpm_confidence: float = 0.0
+    harmonic_ratios: list[float] = field(default_factory=list)
+    spectral_shape: list[float] = field(default_factory=list)  # 8-band energy fingerprint
+    onset_pattern: str = ""                # "x..x..x." — rhythmic grid
+    key_estimate: str = ""                 # "C minor"
+    key_confidence: float = 0.0
+
 
 @dataclass
 class DescriptiveReport:
@@ -93,11 +105,30 @@ class TechnicalRoute:
         analysis = analyze_buffer(buffer, sample_rate)
         duration = len(buffer) / sample_rate
 
+        # extract concrete musical features
+        try:
+            from oram.ears.musical_features import extract_musical_features
+            mf = extract_musical_features(buffer, sample_rate)
+        except Exception:
+            from oram.ears.musical_features import MusicalFeatures
+            mf = MusicalFeatures()
+
         tech = TechnicalReport(
             duration=round(duration, 2),
             loudness_rms=round(analysis.rms, 4),
             peak=round(analysis.peak, 4),
             spectral_centroid_hz=round(analysis.spectral_centroid_hz, 1),
+            # musical features
+            dominant_pitch_hz=mf.pitch_hz,
+            dominant_pitch_note=mf.pitch_note,
+            pitch_detection_confidence=mf.pitch_confidence,
+            estimated_bpm=mf.bpm,
+            bpm_confidence=mf.bpm_confidence,
+            harmonic_ratios=mf.harmonic_ratios,
+            spectral_shape=mf.spectral_shape,
+            onset_pattern=mf.onset_grid,
+            key_estimate=mf.key_estimate,
+            key_confidence=mf.key_confidence,
         )
 
         # ── noise balance — spectral flatness is the gold standard ──
@@ -385,7 +416,11 @@ class DescriptiveRoute:
             resembles_parts.append(f"{tech.texture} character")
         if tech.density and tech.density != "moderate":
             resembles_parts.append(f"{tech.density} arrangement")
-        desc.resembles = ", ".join(resembles_parts) if resembles_parts else f"{tech.texture or 'neutral'} material sound"
+        desc.resembles = (
+            ", ".join(resembles_parts)
+            if resembles_parts
+            else f"{tech.texture or 'neutral'} material sound"
+        )
 
         # cinematic context
         if tech.is_noisy and tech.density == "dense":

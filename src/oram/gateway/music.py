@@ -23,7 +23,7 @@ class MusicAdapter:
     engine_name = "music"
 
     def __init__(self, api_key: str | None = None):
-        self._api_key = api_key or resolve_provider_secret("elevenlabs") or ""
+        self._api_key = (resolve_provider_secret("elevenlabs") or "") if api_key is None else api_key
 
     def is_available(self) -> bool:
         return bool(self._api_key)

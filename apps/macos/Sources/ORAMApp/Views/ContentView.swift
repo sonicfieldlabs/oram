@@ -31,14 +31,7 @@ struct ContentView: View {
         ("≈", "stretch", "stretch until it breathes", "time stretch — slow and breathe")
     ]
 
-    private let summonPrompts = [
-        "distant metallic rain",
-        "room tone",
-        "low drone",
-        "synthetic forest",
-        "quiet machine",
-        "fake field recording"
-    ]
+    // summon prompts removed — summon now triggers direct listen+generate
 
     var body: some View {
         ZStack {
@@ -59,9 +52,7 @@ struct ContentView: View {
                     fxPalette
                 }
 
-                if showSummon {
-                    summonPalette
-                }
+                // summon palette removed — direct listen+generate action
 
                 layersPanel
 
@@ -191,16 +182,13 @@ struct ContentView: View {
 
                 HeaderSeparator()
 
-                HeaderGlyph("✦", active: showSummon, role: .summon, theme: lightTheme) {
-                    showSummon.toggle()
-                    if showSummon { showFX = false }
+                HeaderGlyph("✦", role: .summon, theme: lightTheme) {
+                    Task {
+                        let sel = store.state?.selectedLayer ?? 1
+                        await store.generateFromLayer(sel, engine: selectedModel)
+                    }
                 }
-                .onHoverHint("summon — open the texture palette for prompt generation", $hint)
-
-                HeaderGlyph("☊", theme: lightTheme) {
-                    Task { await store.sendCommand("listen to the texture") }
-                }
-                .onHoverHint("listen — agent analyzes current layer texture", $hint)
+                .onHoverHint("summon — listen to what's sounding and generate a new layer", $hint)
 
                 HeaderSeparator()
 
@@ -233,10 +221,15 @@ struct ContentView: View {
                 )
                     .onHoverHint("in / out level", $hint)
 
-                HeaderGlyph(modeLetter, active: store.modeKey != "prompt", role: store.modeKey == "listen" ? .summon : .normal, theme: lightTheme) {
-                    Task { await store.cycleInputMode() }
+                Button {
+                    Task { await store.toggleAutoListen() }
+                } label: {
+                    Text("auto")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(store.state?.autoListen == true ? DashboardTheme.accent(lightTheme) : DashboardTheme.ghost(lightTheme))
                 }
-                .onHoverHint("cycle input mode: prompt · audio · listen", $hint)
+                .buttonStyle(.plain)
+                .onHoverHint("auto mode — when on, recording automatically generates a second layer", $hint)
 
                 HeaderGlyph("⚙", active: showSettings, theme: lightTheme) {
                     showSettings.toggle()
@@ -267,13 +260,7 @@ struct ContentView: View {
         .padding(.vertical, 4)
     }
 
-    private var modeLetter: String {
-        switch store.modeKey {
-        case "audio": return "a"
-        case "listen": return "l"
-        default: return "p"
-        }
-    }
+    // modeLetter removed — replaced by auto-mode toggle
 
     private var hintBar: some View {
         HStack {
@@ -401,45 +388,14 @@ struct ContentView: View {
         .dashboardPanel(theme: lightTheme)
     }
 
-    private var summonPalette: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            PaletteHeader(title: "summon a texture", theme: lightTheme) {
-                showSummon = false
-            }
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                ForEach(summonPrompts, id: \.self) { item in
-                    Button {
-                        prompt = item
-                        showSummon = false
-                        Task {
-                            await store.generate(
-                                prompt: item,
-                                duration: 8,
-                                provider: selectedProvider,
-                                model: selectedModel,
-                                tags: []
-                            )
-                        }
-                    } label: {
-                        Text(item)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .frame(maxWidth: .infinity, minHeight: 40)
-                    }
-                    .buttonStyle(ChipButtonStyle(theme: lightTheme, role: .summon))
-                    .onHoverHint("prompt: \(item)", $hint)
-                }
-            }
-        }
-        .padding(12)
-        .dashboardPanel(theme: lightTheme)
-    }
+    // summonPalette removed — summon button now triggers direct listen+generate
 
     private var layersPanel: some View {
         VStack(spacing: 0) {
             ForEach(visibleLayers) { layer in
                 DashboardLayerRow(
                     layer: layer,
+                    waveform: store.waveforms[layer.slot],
                     selected: layer.slot == store.state?.selectedLayer,
                     theme: lightTheme,
                     onHint: { hint = $0 },
@@ -448,7 +404,7 @@ struct ContentView: View {
                         Task { await store.sendCommand(command) }
                     },
                     onGenerate: {
-                        Task { await store.generateFromLayer(layer.slot) }
+                        Task { await store.generateFromLayer(layer.slot, engine: selectedModel) }
                     },
                     onExport: {
                         Task { await store.exportLayer(layer.slot) }
@@ -458,6 +414,16 @@ struct ContentView: View {
                     },
                     onVolume: { value in
                         Task { await store.setVolume(layer: layer.slot, volume: value) }
+                    },
+                    onLoopRegion: { start, end, enabled in
+                        Task {
+                            await store.setLoopRegion(
+                                layer: layer.slot,
+                                startPct: start,
+                                endPct: end,
+                                enabled: enabled
+                            )
+                        }
                     }
                 )
             }
@@ -471,7 +437,8 @@ struct ContentView: View {
     }
 
     private var visibleLayers: [LayerState] {
-        let layers = store.state?.layers ?? []
+        let stateLayers = store.state?.layers ?? []
+        let layers = stateLayers.isEmpty ? LayerState.placeholderLayers : stateLayers
         if showFourthLayer || layers.dropFirst(3).contains(where: { $0.state != "empty" }) {
             return layers
         }
@@ -593,6 +560,7 @@ struct ContentView: View {
 
 private struct DashboardLayerRow: View {
     let layer: LayerState
+    let waveform: WaveformPeaks?
     let selected: Bool
     let theme: Bool
     let onHint: (String) -> Void
@@ -602,33 +570,106 @@ private struct DashboardLayerRow: View {
     let onExport: () -> Void
     let onClear: () -> Void
     let onVolume: (Double) -> Void
+    let onLoopRegion: (Double, Double, Bool) -> Void
+
+    @State private var loopDragStart: Double?
+    @State private var loopDragCurrent: Double?
 
     var body: some View {
-        HStack(spacing: 8) {
-            VStack(spacing: 8) {
-                corner("\(layer.slot)", hint: "click: select / toggle mute · right-click: solo") {
-                    if selected && layer.state != "empty" {
-                        onCommand("mute layer \(layer.slot)")
-                    } else {
-                        onCommand("select layer \(layer.slot)")
+        ZStack {
+            HStack(spacing: 12) {
+                waveformPanel
+
+                VStack(alignment: .trailing, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(layer.duration > 0 ? String(format: "%.1fs", layer.duration) : "")
+                            .foregroundStyle(DashboardTheme.secondary(theme))
+                        Text(stateTag)
+                            .foregroundStyle(tagColor)
                     }
+                    .font(.system(size: 10, design: .monospaced))
+
+                    Text(metaText)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(DashboardTheme.dim(theme))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if let loopText {
+                        Text(loopText)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(DashboardTheme.accent(theme))
+                            .lineLimit(1)
+                    }
+
+                    EffectChips(effects: layer.effects ?? [], theme: theme)
+                    VolumeStrip(value: layer.volume, theme: theme, onCommit: onVolume)
+                        .frame(width: 8, height: 58)
                 }
-                .contextMenu {
-                    Button("Solo layer \(layer.slot)") {
-                        onCommand("solo layer \(layer.slot)")
-                    }
-                    Button(layer.muted ? "Unmute layer \(layer.slot)" : "Mute layer \(layer.slot)") {
-                        onCommand("mute layer \(layer.slot)")
-                    }
+                .frame(width: 88, alignment: .trailing)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 18)
+
+            corner(
+                "\(layer.slot)",
+                role: .identity,
+                alignment: .topLeading,
+                hint: "click: select / toggle mute · right-click: solo"
+            ) {
+                if selected && layer.state != "empty" {
+                    onCommand("mute layer \(layer.slot)")
+                } else {
+                    onCommand("select layer \(layer.slot)")
                 }
-                corner("✦", hint: "auto-generate from what's sounding") {
-                    onGenerate()
+            }
+            .contextMenu {
+                Button("Solo layer \(layer.slot)") {
+                    onCommand("solo layer \(layer.slot)")
+                }
+                Button(layer.muted ? "Unmute layer \(layer.slot)" : "Mute layer \(layer.slot)") {
+                    onCommand("mute layer \(layer.slot)")
                 }
             }
 
+            corner(
+                "↓",
+                role: .export,
+                alignment: .topTrailing,
+                hint: "export / bounce layer to WAV",
+                action: onExport
+            )
+
+            corner(
+                "✦",
+                role: .generate,
+                alignment: .bottomLeading,
+                hint: "auto-generate from what's sounding",
+                action: onGenerate
+            )
+
+            corner(
+                "⌫",
+                role: .clear,
+                alignment: .bottomTrailing,
+                hint: "clear / delete layer audio",
+                action: onClear
+            )
+        }
+        .frame(maxWidth: .infinity)
+        .background(rowBackground)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(selected ? DashboardTheme.accent(theme) : (layer.state == "recording" ? DashboardTheme.record : .clear))
+                .frame(width: 2)
+        }
+    }
+
+    private var waveformPanel: some View {
+        GeometryReader { geo in
             ZStack {
-                DashboardWaveformView(layer: layer, theme: theme)
-                    .frame(height: 74)
+                DashboardWaveformView(layer: layer, waveform: waveform, theme: theme)
+                    .frame(width: geo.size.width, height: geo.size.height)
                     .opacity(layer.muted ? 0.42 : 1)
 
                 if layer.state == "empty" {
@@ -636,67 +677,74 @@ private struct DashboardLayerRow: View {
                         .foregroundStyle(DashboardTheme.ghost(theme))
                 }
 
-                if layer.loopEnabled == true && layer.state != "empty" {
-                    LoopSelectionOverlay(layer: layer, theme: theme)
+                if let range = visibleLoopRange {
+                    LoopRangeOverlay(startPct: range.start, endPct: range.end, theme: theme)
                         .allowsHitTesting(false)
                 }
 
                 if layer.state != "empty" {
-                    GeometryReader { geo in
-                        Rectangle()
-                            .fill(DashboardTheme.accent(theme).opacity(0.72))
-                            .frame(width: 1.4)
-                            .offset(x: geo.size.width * CGFloat(min(max(layer.playheadPct ?? 0, 0), 100) / 100))
-                    }
-                    .allowsHitTesting(false)
+                    Rectangle()
+                        .fill(DashboardTheme.text(theme).opacity(0.62))
+                        .frame(width: 1.4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .offset(x: geo.size.width * CGFloat(min(max(layer.playheadPct ?? 0, 0), 100) / 100))
+                        .allowsHitTesting(false)
                 }
             }
-            .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(DashboardTheme.border(theme), lineWidth: 1)
-            )
-
-            VStack(spacing: 8) {
-                corner("↓", hint: "export / bounce layer to WAV") {
-                    onExport()
-                }
-                corner("⌫", hint: "clear / delete layer audio") {
-                    onClear()
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text(layer.duration > 0 ? String(format: "%.1fs", layer.duration) : "")
-                        .foregroundStyle(DashboardTheme.secondary(theme))
-                    Text(stateTag)
-                        .foregroundStyle(tagColor)
-                    Spacer()
-                }
-                Text(metaText)
-                    .foregroundStyle(DashboardTheme.dim(theme))
-                    .lineLimit(1)
-                if let loopText {
-                    Text(loopText)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(DashboardTheme.accent(theme))
-                        .lineLimit(1)
-                }
-                EffectChips(effects: layer.effects ?? [], theme: theme)
-                VolumeStrip(value: layer.volume, theme: theme, onCommit: onVolume)
-                    .frame(height: 34)
-            }
-            .frame(width: 150)
+            .contentShape(Rectangle())
+            .gesture(loopGesture(width: geo.size.width))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(rowBackground)
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(selected ? DashboardTheme.accent(theme) : (layer.state == "recording" ? DashboardTheme.record : .clear))
-                .frame(width: 2)
+        .frame(height: 74)
+        .frame(maxWidth: .infinity)
+        .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(DashboardTheme.border(theme), lineWidth: 1)
+        )
+    }
+
+    private var visibleLoopRange: (start: Double, end: Double)? {
+        if let start = loopDragStart, let current = loopDragCurrent {
+            return (min(start, current), max(start, current))
         }
+        guard layer.loopEnabled == true, layer.state != "empty" else {
+            return nil
+        }
+        return (
+            min(max(layer.loopStartPct ?? 0, 0), 100),
+            min(max(layer.loopEndPct ?? 100, 0), 100)
+        )
+    }
+
+    private func loopGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard layer.state != "empty", width > 0 else { return }
+                let pct = pctFrom(x: value.location.x, width: width)
+                if loopDragStart == nil {
+                    loopDragStart = pct
+                }
+                loopDragCurrent = pct
+            }
+            .onEnded { value in
+                defer {
+                    loopDragStart = nil
+                    loopDragCurrent = nil
+                }
+                guard layer.state != "empty", width > 0, let start = loopDragStart else { return }
+                let end = pctFrom(x: value.location.x, width: width)
+                let lo = min(start, end)
+                let hi = max(start, end)
+                if hi - lo >= 1 {
+                    onLoopRegion(lo, hi, true)
+                } else if layer.loopEnabled == true {
+                    onLoopRegion(0, 100, false)
+                }
+            }
+    }
+
+    private func pctFrom(x: CGFloat, width: CGFloat) -> Double {
+        Double(min(max(x / max(width, 1), 0), 1) * 100)
     }
 
     private var rowBackground: Color {
@@ -737,16 +785,104 @@ private struct DashboardLayerRow: View {
         return String(format: "%.2f-%.2f", start, end)
     }
 
-    private func corner(_ text: String, hint: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(text)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .frame(width: 30, height: 30)
+    private func corner(
+        _ text: String,
+        role: LayerCornerRole,
+        alignment: Alignment,
+        hint: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        ZStack {
+            Button(action: action) {
+                Text(text)
+                    .font(.system(size: text.count > 1 ? 10 : 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(cornerColor(role))
+                    .opacity(role == .identity ? identityOpacity : 0.62)
+                    .frame(width: 68, height: 30, alignment: textAlignment(alignment))
+                    .padding(.horizontal, 12)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(width: 92, height: 30)
+            .background(cornerGlow(role, alignment: alignment))
+            .onHover { hovering in
+                hovering ? onHint(hint) : onClearHint()
+            }
         }
-        .buttonStyle(HeaderButtonStyle(theme: theme, active: selected && text == "\(layer.slot)"))
-        .onHover { hovering in
-            hovering ? onHint(hint) : onClearHint()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+    }
+
+    private func cornerColor(_ role: LayerCornerRole) -> Color {
+        switch role {
+        case .identity:
+            if layer.solo { return DashboardTheme.solo }
+            if layer.muted { return DashboardTheme.dim(theme) }
+            return layerColor
+        case .export:
+            return DashboardTheme.generated
+        case .generate:
+            return DashboardTheme.summon
+        case .clear:
+            return DashboardTheme.record
         }
+    }
+
+    private var layerColor: Color {
+        switch layer.slot {
+        case 1: DashboardTheme.accent(theme)
+        case 2: DashboardTheme.generated
+        case 3: DashboardTheme.summon
+        case 4: DashboardTheme.solo
+        default: DashboardTheme.accent(theme)
+        }
+    }
+
+    private var identityOpacity: Double {
+        if selected { return 1 }
+        if layer.state == "empty" { return 0.52 }
+        return 0.88
+    }
+
+    private func textAlignment(_ alignment: Alignment) -> Alignment {
+        switch alignment {
+        case .topLeading, .bottomLeading:
+            return .leading
+        case .topTrailing, .bottomTrailing:
+            return .trailing
+        default:
+            return .center
+        }
+    }
+
+    private func cornerGlow(_ role: LayerCornerRole, alignment: Alignment) -> some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [
+                        cornerColor(role).opacity(role == .identity ? (selected ? 0.22 : 0.12) : 0.06),
+                        .clear
+                    ],
+                    startPoint: gradientStart(alignment),
+                    endPoint: .center
+                )
+            )
+    }
+
+    private func gradientStart(_ alignment: Alignment) -> UnitPoint {
+        switch alignment {
+        case .topLeading: return .topLeading
+        case .topTrailing: return .topTrailing
+        case .bottomLeading: return .bottomLeading
+        case .bottomTrailing: return .bottomTrailing
+        default: return .center
+        }
+    }
+
+    private enum LayerCornerRole {
+        case identity
+        case export
+        case generate
+        case clear
     }
 }
 
@@ -772,6 +908,7 @@ private struct PaletteHeader: View {
 
 private struct DashboardWaveformView: View {
     let layer: LayerState
+    let waveform: WaveformPeaks?
     let theme: Bool
 
     var body: some View {
@@ -792,7 +929,8 @@ private struct DashboardWaveformView: View {
                 context.stroke(grid, with: .color(DashboardTheme.border(theme).opacity(0.22)), lineWidth: 1)
             }
 
-            if values.allSatisfy({ $0 == 0 }) {
+            let hasPeaks = !(waveform?.peaks.isEmpty ?? true)
+            if values.allSatisfy({ $0 == 0 }) && !hasPeaks {
                 var dash = Path()
                 dash.move(to: CGPoint(x: 0, y: midY))
                 dash.addLine(to: CGPoint(x: size.width, y: midY))
@@ -805,18 +943,38 @@ private struct DashboardWaveformView: View {
             }
 
             let maxValue = max(values.max() ?? 0.001, 0.001)
-            let barWidth = size.width / CGFloat(max(values.count, 1))
             let color = waveformColor
-            for index in values.indices {
-                let normalized = CGFloat(max(0, min(1, values[index] / maxValue)))
-                let height = max(1, normalized * (size.height - 6))
-                let rect = CGRect(
-                    x: CGFloat(index) * barWidth + 0.5,
-                    y: midY - height / 2,
-                    width: max(1, barWidth - 1),
-                    height: height
-                )
-                context.fill(Path(rect), with: .color(color.opacity(0.35 + Double(normalized) * 0.55)))
+            if let peaks = waveform?.peaks, !peaks.isEmpty {
+                let maxPeak = peaks.reduce(0.001) { partial, pair in
+                    let lo = pair.indices.contains(0) ? abs(pair[0]) : 0
+                    let hi = pair.indices.contains(1) ? abs(pair[1]) : 0
+                    return max(partial, lo, hi)
+                }
+                let amp = (size.height / 2 - 3) / CGFloat(maxPeak)
+                let step = size.width / CGFloat(max(peaks.count - 1, 1))
+                for index in peaks.indices {
+                    let pair = peaks[index]
+                    let minValue = pair.indices.contains(0) ? pair[0] : 0
+                    let maxValue = pair.indices.contains(1) ? pair[1] : 0
+                    let x = CGFloat(index) * step
+                    var path = Path()
+                    path.move(to: CGPoint(x: x, y: midY - CGFloat(maxValue) * amp))
+                    path.addLine(to: CGPoint(x: x, y: midY - CGFloat(minValue) * amp))
+                    context.stroke(path, with: .color(color.opacity(0.92)), lineWidth: 1)
+                }
+            } else {
+                let barWidth = size.width / CGFloat(max(values.count, 1))
+                for index in values.indices {
+                    let normalized = CGFloat(max(0, min(1, values[index] / maxValue)))
+                    let height = max(1, normalized * (size.height - 6))
+                    let rect = CGRect(
+                        x: CGFloat(index) * barWidth + 0.5,
+                        y: midY - height / 2,
+                        width: max(1, barWidth - 1),
+                        height: height
+                    )
+                    context.fill(Path(rect), with: .color(color.opacity(0.35 + Double(normalized) * 0.55)))
+                }
             }
         }
     }
@@ -835,14 +993,15 @@ private struct DashboardWaveformView: View {
     }
 }
 
-private struct LoopSelectionOverlay: View {
-    let layer: LayerState
+private struct LoopRangeOverlay: View {
+    let startPct: Double
+    let endPct: Double
     let theme: Bool
 
     var body: some View {
         GeometryReader { geo in
-            let start = CGFloat(min(max(layer.loopStartPct ?? 0, 0), 100)) / 100
-            let end = CGFloat(min(max(layer.loopEndPct ?? 100, 0), 100)) / 100
+            let start = CGFloat(min(max(startPct, 0), 100)) / 100
+            let end = CGFloat(min(max(endPct, 0), 100)) / 100
             Rectangle()
                 .fill(DashboardTheme.accent(theme).opacity(0.14))
                 .frame(width: max(0, geo.size.width * (end - start)))
@@ -1233,7 +1392,7 @@ private struct AboutOverlay: View {
                         .foregroundStyle(DashboardTheme.secondary(theme))
                 }
 
-                Text("recorder · looper · summoner · listener · archive")
+                Text("recorder · looper · summoner · auto-generator · archive")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(DashboardTheme.secondary(theme))
 

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+import numpy as np
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -26,6 +28,7 @@ from oram.command.schemas import (
     GenerateFromAction,
     GenerateLayerAction,
     RecordAction,
+    SetLoopRegionAction,
     SetVolumeAction,
     StopRecordingAction,
 )
@@ -62,6 +65,15 @@ class GenerateRequest(BaseModel):
 
 class LayerTargetRequest(BaseModel):
     target: int | str = "selected"
+
+
+class LoopRegionRequest(BaseModel):
+    target: int | str = "selected"
+    start_pct: float | None = None
+    end_pct: float | None = None
+    start_seconds: float | None = None
+    end_seconds: float | None = None
+    enabled: bool = True
 
 
 class GenerateFromRequest(BaseModel):
@@ -456,6 +468,85 @@ class LocalOramService:
         message = self.router.route(action, raw_text=f"daemon:generate-from:{req.route}->{req.engine}")
         return {"status": "ok", "message": message}
 
+    def set_loop_region(self, req: LoopRegionRequest) -> dict[str, Any]:
+        action = SetLoopRegionAction(
+            target=req.target,
+            start_pct=req.start_pct,
+            end_pct=req.end_pct,
+            start_seconds=req.start_seconds,
+            end_seconds=req.end_seconds,
+            enabled=req.enabled,
+        )
+        message = self.router.route(action, raw_text="daemon:loop-region")
+        ok = message.startswith("loop enabled:") or message.startswith("loop disabled:")
+        try:
+            layer = self.layers.get_layer(req.target)
+            length = layer.length_samples
+            sr = layer.sample_rate
+            start = layer.looper.start_offset
+            end = layer.looper.end_offset if layer.looper.end_offset > 0 else length
+            payload = {
+                "status": "ok" if ok else "error",
+                "message": message,
+                "target": layer.slot + 1,
+                "loop_enabled": layer.looper.enabled,
+                "loop_start_pct": round(start / length * 100, 2) if length > 0 else 0.0,
+                "loop_end_pct": round(end / length * 100, 2) if length > 0 else 100.0,
+                "loop_start_seconds": round(start / sr, 3) if sr > 0 else 0.0,
+                "loop_end_seconds": round(end / sr, 3) if sr > 0 else 0.0,
+                "loop_duration_seconds": round((end - start) / sr, 3) if sr > 0 else 0.0,
+            }
+        except Exception as exc:
+            return {
+                "status": "error",
+                "error": redact_text(exc),
+                "message": message,
+            }
+        return payload
+
+    def waveform(self, target: int, points: int = 1024) -> dict[str, Any]:
+        points = max(64, min(int(points), 2048))
+        try:
+            layer = self.layers.get_layer(target)
+        except Exception as exc:
+            return {"error": "invalid layer", "message": redact_text(exc), "target": target}
+
+        if layer.is_empty or layer.buffer.shape[0] == 0:
+            return {
+                "target": layer.slot + 1,
+                "points": points,
+                "revision": layer.waveform_revision,
+                "duration": 0.0,
+                "peaks": [],
+                "rms": [],
+            }
+
+        with layer._buf_lock:
+            buffer = np.array(layer.buffer, copy=True)
+        mono = np.mean(buffer, axis=1) if buffer.ndim > 1 else buffer
+        length = len(mono)
+        edges = np.linspace(0, length, points + 1, dtype=int)
+        peaks = []
+        rms = []
+        for index in range(points):
+            start = int(edges[index])
+            end = int(edges[index + 1])
+            if start < length and end > start:
+                segment = mono[start:end]
+                peaks.append([round(float(np.min(segment)), 5), round(float(np.max(segment)), 5)])
+                rms.append(round(float(np.sqrt(np.mean(segment ** 2))), 5))
+            else:
+                peaks.append([0.0, 0.0])
+                rms.append(0.0)
+        return {
+            "target": layer.slot + 1,
+            "points": points,
+            "revision": layer.waveform_revision,
+            "duration": round(layer.duration_seconds, 3),
+            "peaks": peaks,
+            "rms": rms,
+        }
+
     def set_volume(self, req: VolumeRequest) -> dict[str, Any]:
         action = SetVolumeAction(target=req.target, volume=req.volume)
         message = self.router.route(action, raw_text=f"daemon:volume:{req.target}:{req.volume:.3f}")
@@ -685,6 +776,17 @@ def create_app(
     async def generate_from_layer(req: GenerateFromRequest):
         return service.generate_from_layer(req)
 
+    @app.post("/layer/loop-region")
+    async def loop_region(req: LoopRegionRequest):
+        payload = service.set_loop_region(req)
+        if payload.get("status") == "error":
+            return JSONResponse(payload, status_code=400)
+        return payload
+
+    @app.get("/waveform/{target}")
+    async def waveform(target: int, points: int = 1024):
+        return service.waveform(target=target, points=points)
+
     @app.post("/layer/volume")
     async def set_volume(req: VolumeRequest):
         return service.set_volume(req)
@@ -760,6 +862,25 @@ def create_app(
             return JSONResponse({"error": "not_found"}, status_code=404)
         return {"status": "ok", "path": str(path)}
 
+    @app.websocket("/ws")
+    async def websocket_state(ws: WebSocket):
+        if auth_token:
+            query_token = ws.query_params.get("token", "")
+            auth_header = ws.headers.get("authorization", "")
+            if query_token != auth_token and auth_header != f"Bearer {auth_token}":
+                await ws.close(code=4001, reason="unauthorized")
+                return
+
+        await ws.accept()
+        try:
+            while True:
+                await ws.send_text(json.dumps(service.state()))
+                await asyncio.sleep(1 / 12)
+        except WebSocketDisconnect:
+            return
+        except RuntimeError:
+            return
+
     @app.on_event("shutdown")
     def shutdown():
         service.shutdown()
@@ -798,6 +919,7 @@ def run_daemon(
         version=package_version(),
         auth_token_configured=bool(token),
         token=token,
+        project_path=str(Path.cwd()),
     )
     print(f"oram daemon listening on http://{host}:{selected_port}", flush=True)
     print(f"metadata: {metadata_path}", flush=True)

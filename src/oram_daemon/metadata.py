@@ -31,6 +31,7 @@ def write_daemon_metadata(
     version: str,
     auth_token_configured: bool,
     token: str | None = None,
+    project_path: str | None = None,
     metadata_path: Path | None = None,
 ) -> Path:
     path = metadata_path or daemon_metadata_path()
@@ -43,6 +44,7 @@ def write_daemon_metadata(
         "version": version,
         "auth_token_configured": bool(auth_token_configured),
         "metadata_path": str(path),
+        "project_path": project_path,
     }
     if token:
         payload["auth"] = {

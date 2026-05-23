@@ -430,6 +430,7 @@ class ElevenLabsVoiceDesignEngine:
 
         if audio_b64:
             import base64
+
             import soundfile as sf
 
             audio_bytes = base64.b64decode(audio_b64)
@@ -502,6 +503,7 @@ class ElevenLabsIsolationEngine:
             raise ValueError("voice isolation requires source_audio in the request")
 
         import io
+
         import soundfile as sf
 
         from oram.gateway.client import ElevenLabsHTTPClient

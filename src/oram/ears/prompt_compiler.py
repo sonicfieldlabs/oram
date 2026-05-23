@@ -1,101 +1,123 @@
 """oram.ears.prompt_compiler — translates listening reports into engine-specific prompts.
 
 the prompt compiler is the bridge between listening and generation.
-the same source sound can produce radically different outputs depending on engine.
+v2: data-driven constraints + creative freedom.
+
+structure of every prompt:
+1. hard constraints — pitch, duration, harmonic series, BPM (from analysis data)
+2. soft constraints — spectral gaps, key context (from mix context)
+3. creative seed — the imaginative direction (from speculative route)
+4. negative constraints — no speech, no drums unless rhythmic source
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from oram.ears.routes import ListeningReport
 
+if TYPE_CHECKING:
+    from oram.ears.mix_context import MixContext
 
-def compile_sfx_prompt(report: ListeningReport) -> str:
-    """compile a prompt optimized for ElevenLabs SFX engine.
 
-    focuses on: material, gesture, space, transient detail.
+def compile_sfx_prompt(
+    report: ListeningReport,
+    mix_context: MixContext | None = None,
+) -> str:
+    """compile a prompt optimized for sound effects / textures.
+
+    uses concrete data as constraints, speculative layer for creative direction.
     """
     parts = []
     tech = report.technical
-    desc = report.descriptive
     spec = report.speculative
 
-    # recording proximity
-    if tech.recording_quality:
-        parts.append("Close-mic sound effect of")
+    # ── 1. hard constraints from analysis data ──
+
+    # pitch anchor
+    if tech.dominant_pitch_note and tech.pitch_detection_confidence > 0.3:
+        parts.append(f"Sound texture rooted at {tech.dominant_pitch_note} ({tech.dominant_pitch_hz:.0f}Hz)")
+    elif tech.spectral_centroid_hz > 0:
+        # use centroid as rough pitch region when no clear pitch
+        if tech.spectral_centroid_hz < 400:
+            parts.append("Low-frequency sound texture")
+        elif tech.spectral_centroid_hz < 2000:
+            parts.append("Mid-range sound texture")
+        else:
+            parts.append("High-frequency sound texture")
     else:
-        parts.append("Sound effect of")
+        parts.append("Sound texture")
 
-    # material description
-    if desc.resembles:
-        parts.append(desc.resembles)
-    elif desc.material:
-        parts.append(desc.material)
-    else:
-        parts.append("unidentified material event")
+    # harmonic character
+    if tech.harmonic_ratios and len(tech.harmonic_ratios) > 1:
+        if len(tech.harmonic_ratios) >= 5:
+            parts.append("with rich harmonic content")
+        elif any(r > 3.5 for r in tech.harmonic_ratios):
+            parts.append("with upper partials and overtones")
+        else:
+            parts.append("with simple harmonic structure")
 
-    # gesture / action
-    if desc.action:
-        parts.append(f", {desc.action}")
+    # rhythmic character
+    if tech.estimated_bpm > 0 and tech.bpm_confidence > 0.3:
+        parts.append(f"at {tech.estimated_bpm:.0f} BPM")
+    if tech.onset_pattern and "x" in tech.onset_pattern:
+        density = tech.onset_pattern.count("x")
+        if density > 8:
+            parts.append("with dense rhythmic activity")
+        elif density > 3:
+            parts.append("with rhythmic pulse")
 
-    # texture details
-    texture_details = []
+    # key context
+    if tech.key_estimate and tech.key_confidence > 0.3:
+        parts.append(f"in {tech.key_estimate}")
+
+    # envelope shape
+    if tech.attack_profile and tech.decay_profile:
+        parts.append(f", {tech.attack_profile} attack, {tech.decay_profile}")
+
+    # texture from analysis
     if tech.texture:
-        texture_details.append(f"{tech.texture}")
-    if tech.noise_balance == "noisy":
-        texture_details.append("friction")
-    if tech.transient_type:
-        texture_details.append(f"{tech.transient_type} transients")
-    if texture_details:
-        parts.append(f", {' '.join(texture_details)}")
+        parts.append(f", {tech.texture} texture")
 
-    # space / environment
-    if desc.environment:
-        parts.append(f", {desc.environment}")
+    # ── 2. soft constraints from mix context ──
+    if mix_context:
+        try:
+            from oram.ears.mix_context import format_mix_constraints
+            constraint_text = format_mix_constraints(mix_context)
+            if constraint_text:
+                parts.append(f". {constraint_text}")
+        except Exception:
+            pass
 
-    # speculative flavor (subtle)
+    # ── 3. creative seed from speculative route ──
     if spec.imaginary_thing:
-        parts.append(f", slightly {spec.imaginary_thing.split(',')[0].strip()}")
+        parts.append(f". Imagine: {spec.imaginary_thing.split(',')[0].strip()}")
+    elif spec.non_human_gesture:
+        parts.append(f". Evokes: {spec.non_human_gesture}")
 
-    # duration
+    # ── 4. negative constraints ──
     if tech.duration:
-        parts.append(f", {tech.duration} seconds")
+        parts.append(f". {tech.duration} seconds")
+    parts.append(", no speech, no vocals")
 
     return " ".join(parts).replace("  ", " ").strip()
 
 
-def compile_voice_prompt(report: ListeningReport) -> str:
-    """compile a prompt optimized for ElevenLabs Voice engine.
-
-    focuses on: vocal texture, breath, phonetics, delivery.
-    """
-    parts = []
-    tech = report.technical
-    spec = report.speculative
-
-    if spec.sonic_fiction:
-        parts.append(spec.sonic_fiction)
-    elif spec.hidden_body:
-        parts.append(f"A voice shaped by {spec.hidden_body}")
-    else:
-        parts.append("Whispered asemic vocal texture")
-
-    if tech.texture:
-        parts.append(f"with {tech.texture} qualities")
-
-    if tech.is_noisy:
-        parts.append(", breath and friction, dry mouth sounds")
-    else:
-        parts.append(", clean sustained tones, soft delivery")
-
-    parts.append(", no semantic words, pure sonic gesture")
-
-    return " ".join(parts).replace("  ", " ").strip()
+def compile_voice_prompt(
+    report: ListeningReport,
+    mix_context: MixContext | None = None,
+) -> str:
+    """ORAM never generates speech — redirect to sfx prompt."""
+    return compile_sfx_prompt(report, mix_context)
 
 
-def compile_music_prompt(report: ListeningReport) -> str:
-    """compile a prompt optimized for ElevenLabs Music engine.
+def compile_music_prompt(
+    report: ListeningReport,
+    mix_context: MixContext | None = None,
+) -> str:
+    """compile a prompt optimized for music generation.
 
-    focuses on: tonality, rhythm, atmosphere, structure.
+    uses concrete data as constraints, speculative layer for atmosphere.
     """
     parts = []
     tech = report.technical
@@ -104,15 +126,31 @@ def compile_music_prompt(report: ListeningReport) -> str:
 
     parts.append("Create a short instrumental")
 
-    # style inference
-    if tech.rhythm == "regular":
+    # ── 1. hard constraints ──
+
+    # key + pitch
+    if tech.key_estimate and tech.key_confidence > 0.3:
+        parts.append(f"in {tech.key_estimate}")
+    elif tech.dominant_pitch_note and tech.pitch_detection_confidence > 0.3:
+        parts.append(f"rooted around {tech.dominant_pitch_note}")
+
+    # tempo
+    if tech.estimated_bpm > 0 and tech.bpm_confidence > 0.3:
+        parts.append(f"at {tech.estimated_bpm:.0f} BPM")
+
+    # style inference from rhythm
+    if tech.rhythm == "dense rhythmic" or tech.rhythm == "regular":
         parts.append("rhythmic piece")
-    elif tech.pitch_tendency == "tonal":
+    elif tech.pitch_tendency and "tonal" in tech.pitch_tendency:
         parts.append("ambient drone")
     else:
         parts.append("ambient loop")
 
-    # material
+    # harmonic content
+    if tech.harmonic_ratios and len(tech.harmonic_ratios) >= 4:
+        parts.append("with harmonic richness")
+
+    # material from descriptive
     if desc.resembles:
         parts.append(f"inspired by {desc.resembles}")
     elif desc.material:
@@ -121,29 +159,45 @@ def compile_music_prompt(report: ListeningReport) -> str:
     # texture
     if tech.texture:
         parts.append(f", {tech.texture} texture")
-    if tech.density:
+    if tech.density and tech.density != "moderate":
         parts.append(f", {tech.density}")
 
-    # speculative atmosphere
+    # ── 2. soft constraints from mix context ──
+    if mix_context:
+        try:
+            from oram.ears.mix_context import format_mix_constraints
+            constraint_text = format_mix_constraints(mix_context)
+            if constraint_text:
+                parts.append(f". {constraint_text}")
+        except Exception:
+            pass
+
+    # ── 3. creative seed ──
     if spec.impossible_room:
         parts.append(f", {spec.impossible_room}")
     elif desc.environment:
         parts.append(f", {desc.environment}")
 
-    parts.append(", no drums unless rhythmic source")
+    # ── 4. negative constraints ──
+    parts.append(", no drums unless rhythmic source, no speech, no vocals")
 
     return " ".join(parts).replace("  ", " ").strip()
 
 
-def compile_prompt(report: ListeningReport, engine: str) -> str:
+def compile_prompt(
+    report: ListeningReport,
+    engine: str,
+    mix_context: MixContext | None = None,
+) -> str:
     """compile engine-specific prompt from a listening report.
 
     engine: "sfx" | "voice" | "music"
+    mix_context: optional multi-layer context for complementary generation.
     """
     compilers = {
         "sfx": compile_sfx_prompt,
-        "voice": compile_voice_prompt,
+        "voice": compile_sfx_prompt,  # ORAM never generates speech
         "music": compile_music_prompt,
     }
     compiler = compilers.get(engine, compile_sfx_prompt)
-    return compiler(report)
+    return compiler(report, mix_context)

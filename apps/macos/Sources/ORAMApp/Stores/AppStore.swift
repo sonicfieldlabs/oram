@@ -8,6 +8,7 @@ final class AppStore: ObservableObject {
     @Published var providers: [ProviderEngine] = []
     @Published var credentials: [String: CredentialStatus] = [:]
     @Published var sounds: [SoundRecord] = []
+    @Published var waveforms: [Int: WaveformPeaks] = [:]
     @Published var selectedSoundID: SoundRecord.ID?
     @Published var errorMessage: String?
     @Published var isGenerating = false
@@ -15,6 +16,10 @@ final class AppStore: ObservableObject {
     let client = DaemonClient()
     private let daemonManager = DaemonManager()
     private var retryTask: Task<Void, Never>?
+    private var wsTask: URLSessionWebSocketTask?
+    private var wsRetryTask: Task<Void, Never>?
+    private var waveformCacheKeys: [Int: String] = [:]
+    private var waveformFetches: Set<String> = []
 
     var selectedSound: SoundRecord? {
         sounds.first { $0.id == selectedSoundID }
@@ -23,16 +28,19 @@ final class AppStore: ObservableObject {
     func bootstrap() async {
         connectionStatus = await daemonManager.launchIfNeeded(client: client)
         await refreshAll()
+        connectWebSocket()
     }
 
     func refreshAll() async {
         do {
             _ = try client.loadMetadata()
             health = try await client.health()
-            state = try await client.state()
+            let nextState = try await client.state()
+            state = nextState
             providers = try await client.providers().engines
             credentials = try await client.credentialStatus()
             sounds = try await client.sounds().sounds
+            await refreshWaveforms(for: nextState)
             connectionStatus = "connected"
             errorMessage = nil
             retryTask?.cancel()
@@ -118,9 +126,18 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func generateFromLayer(_ target: Int) async {
+    func generateFromLayer(_ target: Int, engine: String = "auto") async {
         do {
-            try await client.generateFromLayer(target)
+            try await client.generateFromLayer(target, engine: engine)
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setLoopRegion(layer target: Int, startPct: Double, endPct: Double, enabled: Bool) async {
+        do {
+            try await client.setLoopRegion(layer: target, startPct: startPct, endPct: endPct, enabled: enabled)
             await refreshAll()
         } catch {
             errorMessage = error.localizedDescription
@@ -150,6 +167,15 @@ final class AppStore: ObservableObject {
         let next = current == "prompt" ? "audio" : (current == "audio" ? "listen" : "prompt")
         do {
             try await client.setInputMode(next)
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func toggleAutoListen() async {
+        do {
+            try await client.toggleAutoListen()
             await refreshAll()
         } catch {
             errorMessage = error.localizedDescription
@@ -199,6 +225,87 @@ final class AppStore: ObservableObject {
             await refreshAll()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func connectWebSocket() {
+        guard let metadata = client.metadata else { return }
+        wsTask?.cancel(with: .goingAway, reason: nil)
+        var components = URLComponents()
+        components.scheme = "ws"
+        components.host = metadata.host
+        components.port = metadata.port
+        components.path = "/ws"
+        if let token = metadata.auth?.token, metadata.auth?.enabled == true {
+            components.queryItems = [URLQueryItem(name: "token", value: token)]
+        }
+        guard let url = components.url else { return }
+        let session = URLSession(configuration: .default)
+        let task = session.webSocketTask(with: url)
+        wsTask = task
+        task.resume()
+        receiveWSMessage(task)
+    }
+
+    private func receiveWSMessage(_ task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
+            Task { @MainActor in
+                guard let self else { return }
+                switch result {
+                case .success(let message):
+                    switch message {
+                    case .string(let text):
+                        if let data = text.data(using: .utf8),
+                           let newState = try? JSONDecoder().decode(EngineState.self, from: data) {
+                            self.state = newState
+                            await self.refreshWaveforms(for: newState)
+                        }
+                    case .data(let data):
+                        if let newState = try? JSONDecoder().decode(EngineState.self, from: data) {
+                            self.state = newState
+                            await self.refreshWaveforms(for: newState)
+                        }
+                    @unknown default:
+                        break
+                    }
+                    self.receiveWSMessage(task)
+                case .failure:
+                    // Reconnect after delay
+                    self.wsRetryTask?.cancel()
+                    self.wsRetryTask = Task {
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        guard !Task.isCancelled else { return }
+                        self.connectWebSocket()
+                    }
+                }
+            }
+        }
+    }
+
+    private func refreshWaveforms(for state: EngineState) async {
+        let activeSlots = Set(state.layers.filter { $0.state != "empty" }.map(\.slot))
+        for slot in Array(waveforms.keys) where !activeSlots.contains(slot) {
+            waveforms.removeValue(forKey: slot)
+            waveformCacheKeys.removeValue(forKey: slot)
+        }
+
+        for layer in state.layers where layer.state != "empty" {
+            let revision = layer.waveformRevision ?? 0
+            let key = "\(layer.id):\(revision):512"
+            if waveformCacheKeys[layer.slot] == key || waveformFetches.contains(key) {
+                continue
+            }
+            waveformFetches.insert(key)
+            do {
+                let waveform = try await client.waveform(target: layer.slot, points: 512)
+                if waveform.revision == revision {
+                    waveforms[layer.slot] = waveform
+                    waveformCacheKeys[layer.slot] = key
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            waveformFetches.remove(key)
         }
     }
 }

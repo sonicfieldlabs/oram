@@ -19,10 +19,8 @@ from oram.engines.router import (
     HealthStatus,
     RoutingDecision,
     infer_intent_from_analysis,
-    resolve_intent,
     select_engine_v2,
 )
-
 
 # ── helpers ──
 
@@ -309,12 +307,14 @@ class TestRoutingHistory:
 
 class TestIntentInference:
     def test_speech_detected(self):
+        # speech detection now routes to SOUND_EFFECT (ORAM never uses TTS)
         intent = infer_intent_from_analysis({"contains_speech": True})
-        assert intent == SonicIntent.VOICE
+        assert intent == SonicIntent.SOUND_EFFECT
 
     def test_voice_detected(self):
+        # voice detection now routes to SOUND_EFFECT (ORAM never uses TTS)
         intent = infer_intent_from_analysis({"contains_voice": True})
-        assert intent == SonicIntent.VOICE
+        assert intent == SonicIntent.SOUND_EFFECT
 
     def test_music_by_pitch(self):
         intent = infer_intent_from_analysis({"pitch_confidence": 0.8})
@@ -351,11 +351,12 @@ class TestLegacyBridge:
         assert decision.intent == "sound_effect" or decision.engine_id == "sound_effect"
 
     def test_select_engine_v2_auto_with_speech(self):
+        # speech now routes to sound_effect intent (ORAM never uses TTS)
         decision = select_engine_v2(
             analysis={"contains_speech": True},
             user_mode="auto",
         )
-        assert decision.intent == "voice" or decision.engine_id == "voice"
+        assert decision.intent == "sound_effect"
 
     def test_select_engine_v2_with_router(self):
         sfx = _MockEngine(

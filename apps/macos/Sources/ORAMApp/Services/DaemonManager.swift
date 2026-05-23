@@ -1,7 +1,10 @@
+import Darwin
 import Foundation
 
 final class DaemonManager: @unchecked Sendable {
     private var process: Process?
+    private let metadataURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/ORAM/oram-daemon.json")
 
     deinit {
         stop()
@@ -13,13 +16,18 @@ final class DaemonManager: @unchecked Sendable {
     }
 
     func launchIfNeeded(client: DaemonClient) async -> String {
-        if (try? client.loadMetadata()) != nil, (try? await client.health()) != nil {
-            return "connected"
-        }
-
         guard let root = findPythonProject() else {
             return "daemon not running"
         }
+
+        if let metadata = try? client.loadMetadata(), (try? await client.health()) != nil {
+            if metadata.projectPath == root.path {
+                return "connected"
+            }
+            terminateDaemon(pid: metadata.pid)
+        }
+
+        try? FileManager.default.removeItem(at: metadataURL)
 
         let process = Process()
         let uv = bundledUV()
@@ -29,8 +37,9 @@ final class DaemonManager: @unchecked Sendable {
             : daemonArguments(root: root)
         process.currentDirectoryURL = root
         process.environment = daemonEnvironment()
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let logHandle = daemonLogHandle()
+        process.standardOutput = logHandle
+        process.standardError = logHandle
 
         do {
             try process.run()
@@ -46,7 +55,10 @@ final class DaemonManager: @unchecked Sendable {
             }
         }
 
-        return "daemon starting"
+        if process.isRunning {
+            return "daemon starting"
+        }
+        return "daemon exited — see ORAM/daemon.log"
     }
 
     private func findPythonProject() -> URL? {
@@ -79,6 +91,8 @@ final class DaemonManager: @unchecked Sendable {
     private func daemonArguments(root: URL) -> [String] {
         [
             "run",
+            "--extra",
+            "web",
             "--project",
             root.path,
             "oram",
@@ -86,8 +100,7 @@ final class DaemonManager: @unchecked Sendable {
             "--host",
             "127.0.0.1",
             "--port",
-            "auto",
-            "--mock-audio"
+            "auto"
         ]
     }
 
@@ -104,5 +117,26 @@ final class DaemonManager: @unchecked Sendable {
         environment["UV_PYTHON_INSTALL_DIR"] = support.appendingPathComponent("python").path
         environment["ORAM_DISABLE_DOTENV"] = "1"
         return environment
+    }
+
+    private func daemonLogHandle() -> FileHandle {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ORAM", isDirectory: true)
+        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let logURL = support.appendingPathComponent("daemon.log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        if let handle = try? FileHandle(forWritingTo: logURL) {
+            _ = try? handle.seekToEnd()
+            if let marker = "\n--- ORAM daemon launch \(Date()) ---\n".data(using: .utf8) {
+                try? handle.write(contentsOf: marker)
+            }
+            return handle
+        }
+        return FileHandle.nullDevice
+    }
+
+    private func terminateDaemon(pid: Int) {
+        guard pid > 0 else { return }
+        _ = kill(pid_t(pid), SIGTERM)
     }
 }

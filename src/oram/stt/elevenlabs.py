@@ -11,7 +11,7 @@ class ElevenLabsSTTAdapter:
     """speech-to-text adapter backed by ElevenLabs Scribe."""
 
     def __init__(self, api_key: str | None = None, params: dict | None = None):
-        self._api_key = api_key or resolve_provider_secret("elevenlabs") or ""
+        self._api_key = (resolve_provider_secret("elevenlabs") or "") if api_key is None else api_key
         self._params = params or {"tag_audio_events": True, "diarize": False}
 
     def is_available(self) -> bool:
