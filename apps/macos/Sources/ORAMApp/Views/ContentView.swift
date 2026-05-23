@@ -200,7 +200,7 @@ struct ContentView: View {
                 HeaderGlyph("⊘", role: .danger, theme: lightTheme) {
                     Task { await store.killAll() }
                 }
-                .onHoverHint("kill all sound — mute every layer and stop recording", $hint)
+                .onHoverHint("kill all sound — stop capture, mute layers, discard pending output", $hint)
 
                 HeaderSeparator()
 
@@ -1392,19 +1392,24 @@ private struct AboutOverlay: View {
                         .foregroundStyle(DashboardTheme.secondary(theme))
                 }
 
-                Text("recorder · looper · summoner · auto-generator · archive")
+                Text("recorder · looper · sampler · engine router · local archive")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(DashboardTheme.secondary(theme))
 
-                Text("Local-first BYOK sound material system. The app launches a localhost daemon, stores provider keys in macOS Keychain, keeps mock mode available, and writes generated sounds into the local ORAM Library.")
+                Text("Local-first BYOK sound workstation. The macOS app controls the Python engine through a localhost daemon, stores provider keys in macOS Keychain, keeps Local Mock available, and writes generated sounds into the local ORAM Library.")
                     .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(DashboardTheme.dim(theme))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("macOS: quit sends kill-all audio first, then stops any daemon process launched by the app. The kill control stops recording and command capture, mutes every layer, and discards pending generation output.")
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(DashboardTheme.dim(theme))
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
                     MiniFact("open source", theme: theme)
                     MiniFact("no telemetry", theme: theme)
-                    MiniFact("no Momoto server", theme: theme)
+                    MiniFact("localhost daemon", theme: theme)
                     MiniFact("local archive", theme: theme)
                 }
 
@@ -1463,6 +1468,7 @@ private struct CommandPaletteOverlay: View {
     private let commands = [
         "record",
         "stop recording",
+        "kill audio",
         "overdub",
         "listen to the texture",
         "export mix",

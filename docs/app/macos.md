@@ -28,6 +28,8 @@ The app:
   the repository DMG
 - stores provider keys directly in Keychain
 - calls the daemon over localhost
+- sends a hard-silence request before quitting, then stops any daemon process
+  launched by the app
 - never displays a stored provider key by default
 - bundles the ORAM logo as an app resource and dashboard header image
 

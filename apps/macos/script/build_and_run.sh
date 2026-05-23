@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 APP_NAME="ORAM"
 BUNDLE_ID="wtf.momoto.oram"
+APP_VERSION="$(awk -F'"' '/^version = / {print $2; exit}' "$REPO_ROOT/pyproject.toml")"
+APP_VERSION="${APP_VERSION:-0.0.0}"
 BUILD_CONFIGURATION="${ORAM_BUILD_CONFIGURATION:-release}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -84,7 +86,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>$APP_VERSION</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>

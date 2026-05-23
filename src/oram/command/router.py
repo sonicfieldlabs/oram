@@ -22,6 +22,7 @@ from oram.command.schemas import (
     ForkLayerAction,
     GenerateFromAction,
     GenerateLayerAction,
+    KillAudioAction,
     ListenAction,
     ListenAgainAction,
     MuteLayerAction,
@@ -90,6 +91,7 @@ class ActionRouter:
         self._pending_clear_ts: float = 0.0  # monotonic timestamp
         self._on_status = on_status or (lambda msg: None)
         self._quit_requested = False
+        self._audio_kill_epoch = 0
         # v2: store last listening report per layer
         self._listening_reports: dict[str, object] = {}
 
@@ -100,6 +102,39 @@ class ActionRouter:
     def emit_status(self, message: str) -> None:
         """publish a status message without routing an action."""
         self._on_status(message)
+
+    @property
+    def audio_kill_epoch(self) -> int:
+        """monotonic token used to discard audio created after a kill request."""
+        return self._audio_kill_epoch
+
+    def is_audio_epoch_current(self, epoch: int) -> bool:
+        return epoch == self._audio_kill_epoch
+
+    def kill_all_audio(self) -> list[str]:
+        """hard-silence ORAM without clearing layer buffers."""
+        self._audio_kill_epoch += 1
+        results: list[str] = []
+
+        was_recording = bool(getattr(self.engine, "_recording", False))
+        was_capturing = bool(getattr(self.engine, "_command_capture", False))
+        if hasattr(self.engine, "stop_all_audio"):
+            self.engine.stop_all_audio()
+        else:
+            if was_recording and hasattr(self.engine, "stop_recording"):
+                self.engine.stop_recording()
+            if was_capturing and hasattr(self.engine, "stop_command_capture"):
+                self.engine.stop_command_capture()
+
+        if was_recording:
+            results.append("stopped recording")
+        if was_capturing:
+            results.append("stopped command capture")
+
+        results.extend(self.layers.silence_all())
+        self.session.listening = False
+        self.session.mode = Mode.RECORD
+        return results
 
     def route(self, action: OramAction, raw_text: str | None = None) -> str:
         """route an action to the appropriate handler. returns status message."""
@@ -130,6 +165,7 @@ class ActionRouter:
         handlers = {
             RecordAction: self._handle_record,
             StopRecordingAction: lambda a: self._handle_stop_recording(),
+            KillAudioAction: lambda a: self._handle_kill_audio(),
             OverdubAction: self._handle_overdub,
             SelectLayerAction: self._handle_select,
             MuteLayerAction: self._handle_mute,
@@ -193,6 +229,10 @@ class ActionRouter:
         if captured is None:
             return "recording stopped (no audio captured)"
         return "recording stopped"
+
+    def _handle_kill_audio(self) -> str:
+        results = self.kill_all_audio()
+        return "killed all audio" if results else "audio already silent"
 
     def _handle_overdub(self, action: OverdubAction) -> str:
         target = self._target_for_recording(action.target)
@@ -452,15 +492,25 @@ class ActionRouter:
 
         threading.Thread(
             target=self._generate_from_worker,
-            args=(layer, action.route, action.engine, action.duration),
+            args=(layer, action.route, action.engine, action.duration, self._audio_kill_epoch),
             daemon=True,
         ).start()
 
         return f"generating from layer {layer.slot + 1} ({action.route} → {action.engine})"
 
-    def _generate_from_worker(self, source_layer, route_name: str, engine_mode: str, duration: float | None) -> None:
+    def _generate_from_worker(
+        self,
+        source_layer,
+        route_name: str,
+        engine_mode: str,
+        duration: float | None,
+        audio_epoch: int,
+    ) -> None:
         """listen + compile + generate in background."""
         try:
+            if not self.is_audio_epoch_current(audio_epoch):
+                return
+
             from oram.ears.prompt_compiler import compile_prompt
             from oram.ears.routes import create_route
             from oram.gateway.router import select_engine
@@ -499,6 +549,10 @@ class ActionRouter:
             prompt = compile_prompt(report, decision.engine, mix_context=mix_ctx)
             self._on_status(f"prompt: {prompt[:100]}...")
 
+            if not self.is_audio_epoch_current(audio_epoch):
+                self._on_status("generation discarded after kill")
+                return
+
             # 4. generate
             gen_duration = self._clamp_duration(
                 duration or min(source_layer.duration_seconds * 1.2, 30.0),
@@ -508,6 +562,10 @@ class ActionRouter:
 
             if audio is None:
                 self._on_status("generation failed: no audio returned")
+                return
+
+            if not self.is_audio_epoch_current(audio_epoch):
+                self._on_status("generation discarded after kill")
                 return
 
             # 5. create derived layer
@@ -744,15 +802,18 @@ class ActionRouter:
 
         threading.Thread(
             target=self._generate_worker,
-            args=(action,),
+            args=(action, self._audio_kill_epoch),
             daemon=True,
         ).start()
 
         return f"summoning: {action.prompt}"
 
-    def _generate_worker(self, action: GenerateLayerAction) -> None:
+    def _generate_worker(self, action: GenerateLayerAction, audio_epoch: int) -> None:
         """generate sound in a worker thread."""
         try:
+            if not self.is_audio_epoch_current(audio_epoch):
+                return
+
             engine = action.engine if action.engine != "auto" else "sfx"
             duration = self._clamp_duration(action.duration, kind="generated") or action.duration
             audio = self._call_engine(
@@ -770,6 +831,11 @@ class ActionRouter:
 
             if audio is None:
                 self._on_status("generation failed")
+                self.session.mode = Mode.RECORD
+                return
+
+            if not self.is_audio_epoch_current(audio_epoch):
+                self._on_status("generation discarded after kill")
                 self.session.mode = Mode.RECORD
                 return
 

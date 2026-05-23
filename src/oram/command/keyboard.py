@@ -9,6 +9,7 @@ from oram.command.schemas import (
     AnalyzeMixAction,
     ClearLayerAction,
     ExportMixAction,
+    KillAudioAction,
     MuteLayerAction,
     OramAction,
     OverdubAction,
@@ -34,6 +35,7 @@ KEY_MAP: dict[str, OramAction] = {
     "s": SaveSessionAction(),
     "e": ExportMixAction(),
     "a": AnalyzeMixAction(),
+    "k": KillAudioAction(),
     "q": QuitAction(),
 }
 

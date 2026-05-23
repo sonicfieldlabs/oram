@@ -61,6 +61,7 @@ x         clear selected layer (repeat to confirm)
 s         save session
 e         export mix
 l         generate listening report
+k         hard-silence audio (stop capture, mute layers, discard pending output)
 i         toggle prompt/audio input mode
 tab       cycle mode
 q         quit

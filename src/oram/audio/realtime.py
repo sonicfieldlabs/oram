@@ -88,6 +88,8 @@ class RealAudioEngine:
 
     def start(self) -> None:
         """start the audio stream."""
+        if self._running:
+            return
         self._running = True
         self._has_input = False
         self._input_channels = 0
@@ -162,6 +164,7 @@ class RealAudioEngine:
 
     def stop(self) -> None:
         """stop the audio stream."""
+        self.stop_all_audio()
         self._running = False
         if self._stream is not None:
             try:
@@ -170,6 +173,19 @@ class RealAudioEngine:
             except Exception:
                 pass
             self._stream = None
+
+    def stop_all_audio(self) -> None:
+        """stop capture state without invoking record-complete callbacks."""
+        with self._control_lock:
+            self._recording = False
+            self._record_target = None
+            self._record_ring.reset()
+            self._overdub_mode = False
+            self._command_capture = False
+            self._command_ring.reset()
+            self._auto_stop_pending = False
+            self._input_level = 0.0
+            self._output_level = 0.0
 
     def is_running(self) -> bool:
         return self._running

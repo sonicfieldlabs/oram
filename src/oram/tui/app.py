@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from oram import __version__
 from oram.archive.waveform_text import layer_to_text
 from oram.tui.meters import render_meter
 from oram.tui.theme import ORAM_THEME
@@ -82,9 +83,9 @@ class OramTUI:
         scene = self.session.scene or "untitled"
 
         header = Text()
-        header.append("oram v2", style="oram.title")
+        header.append(f"oram {__version__}", style="oram.title")
         header.append(
-            " // recorder / looper / sampler",
+            " // recorder / looper / sampler / engine router",
             style="oram.mode",
         )
 

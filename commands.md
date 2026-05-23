@@ -21,6 +21,7 @@ record eight seconds       -> record(duration=8.0)
 record 8 seconds           -> record(duration=8.0)
 record four bars           -> record(bars=4) (requires BPM)
 stop recording             -> stop_recording()
+kill audio                 -> kill_audio()
 loop this                  -> (set mode to loop)
 overdub                    -> overdub(target=selected)
 mute layer two             -> mute_layer(target=2)
@@ -95,10 +96,11 @@ analyze the loop           -> analyze_mix()
 
 ## action types
 
-all 17 MVP action types:
+core action types:
 
 - `record`
 - `stop_recording`
+- `kill_audio`
 - `overdub`
 - `select_layer`
 - `mute_layer`

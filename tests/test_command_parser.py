@@ -9,6 +9,7 @@ from oram.command.schemas import (
     ClearLayerAction,
     ExportMixAction,
     GenerateLayerAction,
+    KillAudioAction,
     MuteLayerAction,
     OverdubAction,
     QuitAction,
@@ -54,6 +55,10 @@ class TestTransportCommands:
     def test_stop_recording(self):
         result = parser.parse("stop recording")
         assert isinstance(result, StopRecordingAction)
+
+    def test_kill_audio(self):
+        result = parser.parse("kill audio")
+        assert isinstance(result, KillAudioAction)
 
     def test_loop_this(self):
         result = parser.parse("loop this")

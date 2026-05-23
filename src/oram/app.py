@@ -12,6 +12,7 @@ from datetime import datetime
 from rich.console import Console
 from rich.live import Live
 
+from oram import __version__
 from oram.agent.controller import AgentController
 from oram.agent.llm_adapter import LLMCliAdapter
 from oram.audio.engine import MockAudioEngine
@@ -211,7 +212,7 @@ def run(config: OramConfig) -> None:
     engine.start()
 
     console.print("")
-    console.print("oram v2.0.0 — recursive listening instrument", style="oram.title")
+    console.print(f"oram {__version__} — local recursive audio workstation", style="oram.title")
     stt_label = "off" if config.no_stt else config.stt_backend
     gw_label = "elevenlabs" if gateway else "mock"
     console.print(
@@ -224,7 +225,7 @@ def run(config: OramConfig) -> None:
         style="oram.status",
     )
     console.print(
-        "          l=listen  g=generate  f=fork  tab=mode  s=save  e=export  q=quit",
+        "          l=listen  g=generate  f=fork  k=kill  tab=mode  s=save  e=export  q=quit",
         style="oram.status",
     )
     console.print(
@@ -241,6 +242,7 @@ def run(config: OramConfig) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        router.kill_all_audio()
         engine.stop()
         console.print("\noram stopped.", style="oram.title")
 

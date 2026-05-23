@@ -37,7 +37,7 @@ from oram.engines.registry import EngineRegistry
 from oram.engines.router import EngineRouter
 from oram.gateway.usage import UsageTracker
 from oram.summon.mock import MockSoundGenerator
-from oram.types import LayerState, Mode, OramSession, SourceType
+from oram.types import Mode, OramSession, SourceType
 from oram_daemon.metadata import find_available_port, write_daemon_metadata
 from oram_library import OramLibrary
 from oram_security import CredentialStore, default_credential_store, redact_mapping, redact_text
@@ -377,6 +377,7 @@ class LocalOramService:
 
     def generate(self, req: GenerateRequest) -> dict[str, Any]:
         self.refresh_provider_credentials()
+        audio_epoch = self.router.audio_kill_epoch
         duration = self.config.validate_duration(req.duration, kind="generated")
         engine = req.model or "local-mock"
         audio = self.router._call_engine(engine, req.prompt, duration, provider=req.provider)
@@ -384,6 +385,10 @@ class LocalOramService:
             action = GenerateLayerAction(prompt=req.prompt, duration=duration, engine=engine)
             self.router.route(action, raw_text="daemon:generate")
             return {"status": "accepted", "message": "generation queued"}
+
+        if not self.router.is_audio_epoch_current(audio_epoch):
+            self.append_log("generation discarded after kill")
+            return {"status": "cancelled", "message": "generation discarded after kill"}
 
         provider = _provider_for_engine(engine, req.provider)
         record = self.library.store_sound(
@@ -553,19 +558,8 @@ class LocalOramService:
         return {"status": "ok", "message": message}
 
     def kill_all(self) -> dict[str, Any]:
-        results = []
-        if bool(getattr(self.engine, "_recording", False)):
-            self.router.route(StopRecordingAction(), raw_text="daemon:kill-stop")
-            results.append("stopped recording")
-
-        for layer in self.layers.layers:
-            if not layer.is_empty:
-                layer.muted = True
-                layer.solo = False
-                layer.state = LayerState.MUTED
-                results.append(f"muted layer {layer.slot + 1}")
-
-        message = "killed all" if results else "nothing to kill"
+        results = self.router.kill_all_audio()
+        message = "killed all audio" if results else "audio already silent"
         self.append_log(message)
         return {"status": "ok", "message": message, "actions": results}
 
@@ -700,6 +694,7 @@ class LocalOramService:
             return {"provider": provider, "configured": True, "status": "failed", "message": redact_text(exc)}
 
     def shutdown(self) -> None:
+        self.router.kill_all_audio()
         self.engine.stop()
 
 

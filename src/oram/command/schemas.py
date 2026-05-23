@@ -87,6 +87,14 @@ class StopRecordingAction(BaseModel):
     action: Literal["stop_recording"] = "stop_recording"
 
 
+class KillAudioAction(BaseModel):
+    """immediately silence all ORAM audio activity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["kill_audio"] = "kill_audio"
+
+
 class OverdubAction(BaseModel):
     """overdub into the selected or specified layer."""
 
@@ -448,6 +456,7 @@ class UnknownAction(BaseModel):
 OramAction = Annotated[
     RecordAction
     | StopRecordingAction
+    | KillAudioAction
     | OverdubAction
     | SelectLayerAction
     | MuteLayerAction

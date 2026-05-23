@@ -175,6 +175,21 @@ class LayerManager:
         self._reset_loop_region(layer)
         layer.waveform_revision += 1
 
+    def silence_all(self) -> list[str]:
+        """force every non-empty layer into a silent playback state."""
+        results: list[str] = []
+        for layer in self.layers:
+            layer.solo = False
+            layer.playhead = 0
+            if layer.is_empty:
+                layer.muted = False
+                continue
+            if not layer.muted or layer.state != LayerState.MUTED:
+                results.append(f"silenced layer {layer.slot + 1}")
+            layer.muted = True
+            layer.state = LayerState.MUTED
+        return results
+
     def undo_clear(self, layer: Layer) -> bool:
         """restore a cleared layer from undo buffer."""
         if layer.id in self._undo_buffers:

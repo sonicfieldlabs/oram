@@ -1,4 +1,4 @@
-/* app.js — oram v3.0 dashboard controller */
+/* app.js — ORAM dashboard controller */
 
 (function () {
   'use strict';
@@ -77,6 +77,21 @@
       return null;
     }
   }
+
+  function hardSilenceOnPageExit() {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (_authToken) headers['Authorization'] = 'Bearer ' + _authToken;
+      fetch('/api/kill', {
+        method: 'POST',
+        headers,
+        body: '{}',
+        keepalive: true,
+      });
+    } catch (_) {}
+  }
+
+  window.addEventListener('pagehide', hardSilenceOnPageExit);
 
   // ── time formatting ──
   function timeNow() {
@@ -1383,7 +1398,7 @@
   // ── init ──
   connect();
   setupHints();
-  addLog('oram v3.0 dashboard initialized', 'system', '▸');
+  addLog('ORAM dashboard initialized', 'system', '▸');
 
   // pre-load devices
   loadDevices();

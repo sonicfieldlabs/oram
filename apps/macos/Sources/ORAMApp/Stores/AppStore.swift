@@ -20,13 +20,18 @@ final class AppStore: ObservableObject {
     private var wsRetryTask: Task<Void, Never>?
     private var waveformCacheKeys: [Int: String] = [:]
     private var waveformFetches: Set<String> = []
+    private var isShuttingDown = false
 
     var selectedSound: SoundRecord? {
         sounds.first { $0.id == selectedSoundID }
     }
 
     func bootstrap() async {
+        isShuttingDown = false
         connectionStatus = await daemonManager.launchIfNeeded(client: client)
+        if connectionStatus == "connected", client.isConfigured {
+            try? await client.killAll()
+        }
         await refreshAll()
         connectWebSocket()
     }
@@ -160,6 +165,26 @@ final class AppStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func shutdown() async {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
+        retryTask?.cancel()
+        retryTask = nil
+        wsRetryTask?.cancel()
+        wsRetryTask = nil
+        wsTask?.cancel(with: .goingAway, reason: nil)
+        wsTask = nil
+        do {
+            if client.isConfigured {
+                try await client.killAll()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        daemonManager.stop()
+        connectionStatus = "stopped"
     }
 
     func cycleInputMode() async {

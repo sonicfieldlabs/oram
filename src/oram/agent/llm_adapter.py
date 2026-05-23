@@ -42,6 +42,7 @@ not as text-to-speech.
 Allowed actions and their schemas:
 - {"action":"record","target":"selected","duration":8.0,"overdub":false}
 - {"action":"stop_recording"}
+- {"action":"kill_audio"}
 - {"action":"overdub","target":"selected","duration":null}
 - {"action":"select_layer","target":1}  (target: 1-4)
 - {"action":"mute_layer","target":1}

@@ -124,6 +124,21 @@ class TestLayerState:
         mgr.mute(mgr.layers[0])
         assert mgr.get_active_layers() == []
 
+    def test_silence_all_mutes_non_empty_layers_and_resets_playheads(self):
+        mgr = LayerManager()
+        for layer in mgr.layers[:2]:
+            mgr.assign_buffer(layer, np.ones((100, 2), dtype=np.float32))
+            layer.playhead = 40
+        mgr.solo(mgr.layers[0])
+
+        results = mgr.silence_all()
+
+        assert results == ["silenced layer 1", "silenced layer 2"]
+        assert all(layer.muted for layer in mgr.layers[:2])
+        assert not any(layer.solo for layer in mgr.layers)
+        assert [layer.playhead for layer in mgr.layers[:2]] == [0, 0]
+        assert mgr.get_active_layers() == []
+
     def test_solo_overrides_mute(self):
         mgr = LayerManager()
         for i in range(3):

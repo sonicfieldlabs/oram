@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>oram — recursive listening instrument</title>
+<title>ORAM — local recursive audio workstation</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -27,7 +27,7 @@
         <button class="hdr-btn" id="btn-summon" data-hint="summon — open the texture palette for prompt generation" aria-label="Summon texture">✦</button>
         <span class="hdr-sep"></span>
         <button class="hdr-btn" id="btn-master-rec" data-hint="export current mix — bounce all layers to a single WAV" aria-label="Export current mix">◉</button>
-        <button class="hdr-btn hdr-kill" id="btn-kill" data-hint="kill all sound — mute every layer and stop recording (k)" aria-label="Kill all sound">⊘</button>
+        <button class="hdr-btn hdr-kill" id="btn-kill" data-hint="kill all sound — stop capture, mute layers, discard pending output (k)" aria-label="Kill all sound">⊘</button>
         <span class="hdr-sep"></span>
         <button class="hdr-btn hdr-add-layer" id="btn-add-layer" data-hint="add another layer slot" aria-label="Add layer">+</button>
       </div>
@@ -248,9 +248,9 @@
       <img src="/static/logo-oram.png" alt="oram" class="about-logo">
     </div>
     <h2 id="about-title">oram</h2>
-    <p class="about-tagline">recursive listening instrument for synthetic sound.</p>
+    <p class="about-tagline">local-first recursive audio workstation.</p>
     <blockquote class="about-epigraph">"We seem to have tuned circuits within us" <cite>— Daphne Oram</cite></blockquote>
-    <p>record sound → the system listens, detects pitch, tempo, key and spectral shape → generates a complementary layer using AI sound engines. each generation is informed by what's already playing, creating a dialogue between human input and machine imagination.</p>
+    <p>record sound → ORAM listens for pitch, tempo, key and spectral shape → the engine router creates a complementary layer through the selected local or BYOK provider. layers stay editable as recorder, looper, sampler and archive material.</p>
 
     <h3>workflow</h3>
     <ul class="about-list">
@@ -268,7 +268,7 @@
       <li><strong>fx</strong> open DSP transforms (reverse, granulate, reverb…)</li>
       <li><strong>✦</strong> summon — listen to what's sounding and generate a new layer</li>
       <li><strong>auto</strong> auto-generative mode: record → listen → generate automatically</li>
-      <li><strong>◉</strong> export mix · <strong>⊘</strong> kill all sound · <strong>+</strong> add layer</li>
+      <li><strong>◉</strong> export mix · <strong>⊘</strong> hard-silence capture/layers/pending output · <strong>+</strong> add layer</li>
     </ul>
 
     <h3>layers</h3>
@@ -287,7 +287,7 @@
     </ul>
 
     <h3>engines</h3>
-    <p>oram uses ElevenLabs (sound effects, music) and Stability AI (Stable Audio) for generation. set API keys via CLI or the <kbd>⚙</kbd> settings panel. without keys, oram runs in mock mode.</p>
+    <p>ORAM exposes Local Mock by default and currently routes generation to configured ElevenLabs, Stability AI, fal Stable Audio, or local sidecar engines. Hugging Face and Replicate credentials can be tracked, but their adapters are not active yet. keys stay server-side and are never sent to the dashboard.</p>
     <pre class="env-block">oram credentials set elevenlabs
 oram credentials set stability
 oram credentials status</pre>

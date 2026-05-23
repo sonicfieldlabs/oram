@@ -19,6 +19,7 @@ from oram.command.schemas import (
     EffectParameters,
     ExportMixAction,
     GenerateLayerAction,
+    KillAudioAction,
     MuteLayerAction,
     OramAction,
     OverdubAction,
@@ -145,6 +146,9 @@ def _match_transport(text: str, entities: ExtractedEntities) -> OramAction | Non
     """match transport commands."""
     if re.match(r"stop\s+record", text):
         return StopRecordingAction()
+
+    if re.match(r"(kill|silence|stop\s+all)(?:\s+(?:audio|sound|sounds))?$", text):
+        return KillAudioAction()
 
     if re.match(r"(record|rec)\b", text):
         return RecordAction(

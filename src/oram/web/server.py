@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from oram import __version__
 from oram.agent.controller import AgentController
 from oram.agent.llm_adapter import LLMCliAdapter
 from oram.audio.engine import MockAudioEngine
@@ -161,7 +162,7 @@ def _get_state_snapshot() -> dict[str, Any]:
             })
 
     return {
-        "version": "2.0.0",
+        "version": __version__,
         "mode": _session.mode.value,
         "input_mode": _session.input_mode,
         "scene": _session.scene,
@@ -243,6 +244,7 @@ def _on_record_complete(layer):
         _append_log(f"recorded layer {layer.slot + 1} ({layer.duration_seconds:.1f}s)")
         return
 
+    audio_epoch = _router.audio_kill_epoch
     _append_log(f"recorded layer {layer.slot + 1} — listening...")
 
     try:
@@ -253,6 +255,10 @@ def _on_record_complete(layer):
         route = create_route("hybrid", llm_adapter=_router.llm_adapter)
         report = route.listen(layer.buffer, layer.sample_rate)
         _router._listening_reports[layer.id] = report
+
+        if not _router.is_audio_epoch_current(audio_epoch):
+            _append_log("generation discarded after kill")
+            return
 
         tech = report.technical
         parts = []
@@ -302,11 +308,19 @@ def _on_record_complete(layer):
         prompt = compile_prompt(report, decision.engine, mix_context=mix_ctx)
         _append_log(f"prompt: {prompt[:100]}...")
 
+        if not _router.is_audio_epoch_current(audio_epoch):
+            _append_log("generation discarded after kill")
+            return
+
         gen_duration = min(layer.duration_seconds * 1.2, 30.0)
         audio = _router._call_engine(decision.engine, prompt, gen_duration, layer)
 
         if audio is None:
             _append_log("generation: no audio returned (check API key)")
+            return
+
+        if not _router.is_audio_epoch_current(audio_epoch):
+            _append_log("generation discarded after kill")
             return
 
         new_layer = _layer_manager.create_derived_layer(
@@ -481,14 +495,17 @@ async def lifespan(app: FastAPI):
     _router.engine = _engine
 
     _start_audio_engine_or_fallback()
-    _append_log("oram v2 ready — record to begin")
+    _append_log(f"oram {__version__} ready — record to begin")
 
     task = asyncio.create_task(_state_broadcast_loop())
 
     yield
 
     task.cancel()
-    _engine.stop()
+    if _router is not None:
+        _router.kill_all_audio()
+    if _engine is not None:
+        _engine.stop()
 
 
 # ── security ──
@@ -542,7 +559,7 @@ def _is_origin_allowed(origin: str | None) -> bool:
 
 # ── app ──
 
-app = FastAPI(title="oram v2", lifespan=lifespan)
+app = FastAPI(title=f"ORAM {__version__} Dashboard", lifespan=lifespan)
 app.add_middleware(TokenAuthMiddleware)
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -981,22 +998,11 @@ async def stop_recording():
 
 @app.post("/api/kill")
 async def kill_all():
-    """kill all sound: stop recording + mute all layers."""
-    results = []
-    if _engine and _engine._recording:
-        from oram.command.schemas import StopRecordingAction
-        _router.route(StopRecordingAction(), raw_text="api:kill-stop")
-        results.append("stopped recording")
-
-    if _layer_manager:
-        from oram.command.schemas import MuteLayerAction
-        for i, layer in enumerate(_layer_manager.layers):
-            if not layer.is_empty and not layer.muted:
-                action = MuteLayerAction(target=i + 1)
-                _router.route(action, raw_text=f"api:kill-mute-{i+1}")
-                results.append(f"muted layer {i + 1}")
-
-    msg = "killed all" if results else "nothing to kill"
+    """kill all sound: stop capture, mute layers, and discard pending output."""
+    if _router is None:
+        return {"error": "not initialized"}
+    results = _router.kill_all_audio()
+    msg = "killed all audio" if results else "audio already silent"
     _append_log(msg)
     return {"status": "ok", "message": msg, "actions": results}
 

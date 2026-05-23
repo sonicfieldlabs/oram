@@ -7,7 +7,13 @@ import numpy as np
 from oram.audio.engine import MockAudioEngine
 from oram.audio.layer import LayerManager
 from oram.command.router import ActionRouter
-from oram.command.schemas import ApplyEffectAction, ClearLayerAction, EffectParameters, RecordAction
+from oram.command.schemas import (
+    ApplyEffectAction,
+    ClearLayerAction,
+    EffectParameters,
+    KillAudioAction,
+    RecordAction,
+)
 from oram.config import OramConfig
 from oram.types import OramSession
 
@@ -59,6 +65,26 @@ def test_record_duration_is_clamped_before_engine_allocation():
     router.route(RecordAction(target=1, duration=999.0))
 
     assert engine._record_max_samples == engine.sample_rate
+
+
+def test_kill_audio_stops_capture_and_mutes_layers():
+    router, layers, engine = _router()
+    layers.assign_buffer(layers.layers[0], np.ones((100, 2), dtype=np.float32))
+    layers.assign_buffer(layers.layers[1], np.ones((100, 2), dtype=np.float32))
+    router.route(RecordAction(target=1, duration=1.0))
+    engine.start_command_capture()
+    epoch_before = router.audio_kill_epoch
+
+    result = router.route(KillAudioAction())
+
+    assert result == "killed all audio"
+    assert router.audio_kill_epoch == epoch_before + 1
+    assert engine._recording is False
+    assert engine._command_capture is False
+    assert engine.get_input_level() == 0.0
+    assert engine.get_output_level() == 0.0
+    assert [layer.muted for layer in layers.layers[:2]] == [True, True]
+    assert [layer.playhead for layer in layers.layers[:2]] == [0, 0]
 
 
 def test_make_everything_softer_reduces_all_active_layer_volumes():

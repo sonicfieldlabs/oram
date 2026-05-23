@@ -19,6 +19,7 @@ class AudioEngine(Protocol):
 
     def start(self) -> None: ...
     def stop(self) -> None: ...
+    def stop_all_audio(self) -> None: ...
     def is_running(self) -> bool: ...
     def has_input(self) -> bool: ...
     def get_input_level(self) -> float: ...
@@ -70,15 +71,36 @@ class MockAudioEngine:
 
     def start(self) -> None:
         """start the mock audio engine."""
+        if self._running:
+            return
         self._running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         """stop the mock audio engine."""
+        self.stop_all_audio()
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
+            self._thread = None
+
+    def stop_all_audio(self) -> None:
+        """stop recording/capture and force callback-visible levels to silence."""
+        with self._record_lock:
+            self._recording = False
+            self._record_target = None
+            self._record_buffer = []
+            self._record_max_samples = None
+            self._record_samples = 0
+            self._overdub_mode = False
+
+        self._command_capture = False
+        self._command_buffer = []
+        self._command_max_samples = None
+        self._command_samples = 0
+        self._input_level = 0.0
+        self._output_level = 0.0
 
     def is_running(self) -> bool:
         return self._running
