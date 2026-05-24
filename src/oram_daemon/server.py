@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -54,12 +55,24 @@ class CommandRequest(BaseModel):
     text: str = Field(min_length=1)
 
 
+class ParseActionRequest(BaseModel):
+    text: str = Field(min_length=1)
+
+
 class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1)
     duration: float = 8.0
     provider: str = "auto"
     model: str = "local-mock"
     target_layer: int | str | None = "first_empty"
+    tags: list[str] = Field(default_factory=list)
+
+
+class PluginGenerateRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    duration: float = 8.0
+    provider: str = "auto"
+    model: str = "local-mock"
     tags: list[str] = Field(default_factory=list)
 
 
@@ -375,6 +388,11 @@ class LocalOramService:
         message = self.router.route(action, raw_text=redact_text(text))
         return redact_mapping({"status": "ok", "message": message, "action": action.model_dump()})
 
+    def parse_action(self, text: str) -> dict[str, Any]:
+        """Parse command text without mutating daemon audio state."""
+        action = self.agent.process_command(text)
+        return redact_mapping({"status": "ok", "action": action.model_dump()})
+
     def generate(self, req: GenerateRequest) -> dict[str, Any]:
         self.refresh_provider_credentials()
         audio_epoch = self.router.audio_kill_epoch
@@ -419,6 +437,40 @@ class LocalOramService:
             "status": "ok",
             "sound": record.as_dict(),
             "layer": layer_slot,
+        }
+
+    def plugin_generate(self, req: PluginGenerateRequest) -> dict[str, Any]:
+        """Generate audio for a plugin-owned layer without assigning daemon state."""
+        self.refresh_provider_credentials()
+        audio_epoch = self.router.audio_kill_epoch
+        duration = self.config.validate_duration(req.duration, kind="generated")
+        engine = req.model or "local-mock"
+        audio = self.router._call_engine(engine, req.prompt, duration, provider=req.provider)
+        if audio is None:
+            return {
+                "status": "error",
+                "error": "generation_failed",
+                "message": "generation failed: no audio returned",
+            }
+
+        if not self.router.is_audio_epoch_current(audio_epoch):
+            self.append_log("plugin generation discarded after kill")
+            return {"status": "cancelled", "message": "generation discarded after kill"}
+
+        provider = _provider_for_engine(engine, req.provider)
+        record = self.library.store_sound(
+            audio,
+            self.session.sample_rate,
+            prompt=req.prompt,
+            provider=provider,
+            model=engine,
+            session_id=self.session.id,
+            tags=req.tags,
+        )
+        self.append_log(f"plugin generated {record.id} via {provider}/{engine}")
+        return {
+            "status": "ok",
+            "sound": record.as_dict(),
         }
 
     def record_start(self, req: RecordStartRequest) -> dict[str, Any]:
@@ -715,7 +767,12 @@ def create_app(
     *,
     auth_token: str | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="ORAM Local Daemon")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        app.state.service.shutdown()
+
+    app = FastAPI(title="ORAM Local Daemon", lifespan=lifespan)
     app.state.service = service
     app.add_middleware(BearerAuthMiddleware, token=auth_token)
 
@@ -747,9 +804,17 @@ def create_app(
     async def command(req: CommandRequest):
         return service.command(req.text)
 
+    @app.post("/actions/parse")
+    async def parse_action(req: ParseActionRequest):
+        return service.parse_action(req.text)
+
     @app.post("/generate")
     async def generate(req: GenerateRequest):
         return await asyncio.to_thread(service.generate, req)
+
+    @app.post("/plugin/generate")
+    async def plugin_generate(req: PluginGenerateRequest):
+        return await asyncio.to_thread(service.plugin_generate, req)
 
     @app.post("/record/start")
     async def record_start(req: RecordStartRequest):
@@ -875,10 +940,6 @@ def create_app(
             return
         except RuntimeError:
             return
-
-    @app.on_event("shutdown")
-    def shutdown():
-        service.shutdown()
 
     return app
 

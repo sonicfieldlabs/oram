@@ -31,6 +31,9 @@ oram_sessions/
 # macOS app build artifacts
 apps/macos/.build/
 apps/macos/dist/
+plugins/oram-plugin/JUCE/
+plugins/oram-plugin/build/
+plugins/oram-plugin/dist/
 *.dmg
 checksums.txt
 !releases/

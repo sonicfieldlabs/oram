@@ -123,6 +123,49 @@ def test_daemon_dashboard_control_endpoints(tmp_path):
         assert client.get("/state").json()["layers"][0]["state"] == "empty"
 
 
+def test_plugin_parse_does_not_mutate_daemon_state(tmp_path):
+    service = LocalOramService(
+        OramConfig(mock_audio=True, session_dir=tmp_path / "sessions"),
+        library=OramLibrary(tmp_path / "library"),
+        credential_store=MemoryCredentialStore(),
+        mock_audio=True,
+    )
+    app = create_app(service, auth_token="")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        before = client.get("/state").json()
+        parsed = client.post("/actions/parse", json={"text": "select layer 3"})
+        after = client.get("/state").json()
+
+        assert parsed.status_code == 200
+        assert parsed.json()["action"] == {"action": "select_layer", "target": 3}
+        assert before["selected_layer"] == after["selected_layer"] == 1
+
+
+def test_plugin_generate_writes_library_without_assigning_layer(tmp_path):
+    service = LocalOramService(
+        OramConfig(mock_audio=True, session_dir=tmp_path / "sessions"),
+        library=OramLibrary(tmp_path / "library"),
+        credential_store=MemoryCredentialStore(),
+        mock_audio=True,
+    )
+    app = create_app(service, auth_token="")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        generated = client.post(
+            "/plugin/generate",
+            json={"prompt": "quiet room tone", "duration": 0.5, "model": "local-mock"},
+        )
+        assert generated.status_code == 200
+        data = generated.json()
+        assert data["status"] == "ok"
+        assert data["sound"]["id"].startswith("oram_sound_")
+
+        state = client.get("/state").json()
+        assert all(layer["state"] == "empty" for layer in state["layers"])
+
+        sounds = client.get("/library/sounds").json()
+        assert [sound["id"] for sound in sounds["sounds"]] == [data["sound"]["id"]]
+
+
 def test_daemon_refreshes_stability_engine_from_credential_store(tmp_path):
     service = LocalOramService(
         OramConfig(mock_audio=True, session_dir=tmp_path / "sessions"),

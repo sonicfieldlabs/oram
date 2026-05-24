@@ -1,7 +1,7 @@
 # Local Engine Boundary
 
 ORAM's Python engine remains the source of truth. The macOS app, dashboard, and
-future DAW plug-ins speak to a local service boundary instead of mutating audio
+DAW plug-ins speak to a local service boundary instead of mutating shared audio
 state directly.
 
 ## Existing Engine Responsibilities
@@ -47,6 +47,18 @@ POST /library/sounds/{id}/favorite
 POST /library/sounds/{id}/tags
 POST /library/reveal
 ```
+
+Plug-in clients that own their own realtime audio state use a non-mutating
+subset:
+
+```text
+POST /actions/parse
+POST /plugin/generate
+```
+
+`/actions/parse` returns structured ORAM actions without routing them through
+the daemon's `ActionRouter`. `/plugin/generate` writes generated audio to the
+ORAM Library without assigning it to daemon layers.
 
 ## State Rules
 
