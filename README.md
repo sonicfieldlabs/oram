@@ -1,10 +1,28 @@
 # ORAM
 
-ORAM is an alpha local-first sound workstation for recording, looping, sampling,
-listening, and generating sound material.
+> "We seem to have tuned circuits within us"
+> — Daphne Oram, *An Individual Note of Music, Sound and Electronics*
 
-It started as a speech-operated terminal looper for synthetic sound studies. The
-current app has several surfaces around the same core idea:
+ORAM is a local-first sound workstation for recording, looping, sampling,
+listening, and generating sound material. It is built from the idea that sound
+is never at rest.
+
+Every recorded layer becomes a flowing circuit: a small river of frequencies,
+tensions, residues and resonances that can be listened to, transformed, summoned
+and returned. The user does not simply control the system. They tune with it.
+
+```text
+record → resonate → listen → transform → generate → return
+```
+
+Named after **Daphne Oram** — pioneer of electronic music, inventor of the
+Oramics machine, and composer who built instruments to hear what did not yet
+exist.
+
+## What ORAM Is
+
+ORAM started as a speech-operated terminal looper for synthetic sound studies.
+The current app has several surfaces around the same core idea:
 
 - Python CLI/TUI instrument
 - localhost dashboard and daemon
@@ -15,8 +33,17 @@ ORAM is not a DAW replacement, not a chatbot, and not a hosted prompt-to-song
 service. It is a small instrument where local audio, structured commands, and
 optional BYOK providers become constrained audio actions.
 
+Not stable objects, but flowing resonant states. Not notes, but unstable
+entities. Not fixed frequencies, but living circuits of relation.
+
 ```text
-recorder -> looper -> sampler -> engine router -> local archive
+layers    = circuits
+loops     = resonant fields
+prompts   = tuning gestures
+generation = summoning
+analysis  = listening back
+effects   = tension-shaping
+archive   = trace of a state
 ```
 
 ## Alpha Status
@@ -58,19 +85,182 @@ Current known alpha gaps:
 | VST3 | `plugins/oram-plugin` | Alpha build with JUCE module-info generation |
 | Standalone plugin app | `plugins/oram-plugin` | Alpha debug/release build |
 
+## Core Flow
+
+The performer records sound. The sound loops. The performer speaks or types.
+The agent listens to the speech, parses intent, and translates it into a
+constrained audio action. The sound changes. The performer listens again. The
+process repeats as a cycle of recording, transformation, and listening.
+
+ORAM does not only generate sound. It listens for states of tension. Every loop
+is treated as a resonant body: unstable, mutable, recursive, alive. The user is
+not outside the circuit. The listener, the microphone, the machine, the model,
+and the sound form one tuned system.
+
+```text
+recorder → looper → sampler → engine router → local archive
+```
+
 ## What It Does
 
-- Records host or microphone audio into four layers.
+- Records host or microphone audio into layered circuits (up to four layers).
 - Loops, overdubs, mutes, solos, clears, pans, and volumes layers.
 - Parses typed or spoken commands into structured ORAM actions.
-- Applies offline DSP such as reverse, pitch, filter, reverb, granular, trim,
-  fades, and spatial transforms.
-- Generates local mock sound by default.
-- Optionally routes generation to BYOK providers such as ElevenLabs and
-  Stability AI.
+- Applies offline DSP tension-shaping: reverse, pitch, speed, filter, reverb,
+  chorus, delay, flanger, phaser, distortion, bitcrush, stutter, granular,
+  normalize, trim, fades, and spatial transforms.
+- Listens back — spectral analysis of pitch, BPM, key, harmonics, and frequency
+  character through local FFT, LLM-based interpretation, or hybrid routes.
+- Generates sound through Local Mock by default, or summons textures through
+  BYOK providers (ElevenLabs, Stability AI, fal Stable Audio).
 - Writes generated sounds into `~/Music/ORAM Library`.
-- Archives sessions with mix/stem WAVs, command logs, metadata, waveform text,
-  and listening reports.
+- Archives sessions as traces of a state: mix/stem WAVs, command logs, metadata,
+  waveform text, and listening reports.
+
+### DSP Effects (Tension-Shaping)
+
+| Effect | Description |
+| --- | --- |
+| `reverse` | full buffer reverse |
+| `pitch` | pitch shifting |
+| `speed` | time-stretch / speed ratio |
+| `filter` | lowpass, highpass, bandpass with frequency and Q |
+| `reverb` | convolution / algorithmic reverb |
+| `chorus` | chorus modulation |
+| `delay` | delay with feedback |
+| `flanger` | flanger |
+| `phaser` | phaser |
+| `distortion` | distortion / saturation |
+| `bitcrush` | bit reduction / sample rate reduction |
+| `stutter` | stutter / glitch buffer repeat |
+| `granular` | granular synthesis / processing |
+| `normalize` | loudness normalization |
+| `trim` | silence trimming, region selection |
+| `fade` | fade in / out curves |
+| `spatial` | spatial positioning: near, far, wide |
+
+### Listening (Analysis)
+
+ORAM treats listening as an active circuit, not passive reception. The body is
+also a resonator, a filter, a modulation system — a circuit that becomes
+activated by external vibrations.
+
+Three listening routes:
+
+| Route | Engine | Description |
+| --- | --- | --- |
+| `spectral` | local FFT | frequency content, waveform statistics, amplitude dynamics |
+| `llm` | BYOK provider | spectral data sent to an LLM for natural language interpretation |
+| `hybrid` | both | combines spectral and LLM analysis into a unified listening report |
+
+Listening produces `listening_report.md` files with layer-by-layer analysis,
+frequency content, amplitude/dynamics statistics, waveform visualization, and
+optional natural language interpretation.
+
+### Generation (Summoning)
+
+Generation is always non-vocal — ORAM produces sound textures, effects, and
+music, never speech. Available engines:
+
+| Engine | Type | Description |
+| --- | --- | --- |
+| `mock` | local | test tones, noise, or silence for development |
+| `elevenlabs` | BYOK | sound generation via ElevenLabs API |
+| `stability` | BYOK | audio generation via Stability AI API |
+| `fal` | BYOK | Stable Audio generation via fal |
+
+Prompt types: `generate [prompt]`, `generate bed [prompt]`,
+`generate texture [prompt]`, `generate hit [prompt]`, `regenerate`.
+
+### Session Archive (Trace of a State)
+
+Each session archives as a complete trace:
+
+```text
+session_name/
+├── session.json          # metadata, timestamps, engine config
+├── commands.log          # chronological command log
+├── mix.wav               # stereo mixdown
+├── stems/
+│   ├── layer_1.wav
+│   ├── layer_2.wav
+│   ├── layer_3.wav
+│   └── layer_4.wav
+├── generated/            # generated audio files
+├── listening_report.md   # analysis report
+└── waveform.txt          # ASCII waveform visualization
+```
+
+## Command Grammar
+
+All interaction flows through structured commands — tuning gestures that resolve
+to bounded audio actions. Poetic language is accepted as input but must resolve
+to validated operations.
+
+### Recording and Transport
+
+```text
+record [layer N]          # capture into layer
+overdub [layer N]         # layer new audio over existing
+stop                      # stop recording / transport
+play / pause              # transport controls
+arm / disarm              # arm layer for recording
+```
+
+### Layer Control
+
+```text
+mute layer N              # mute a circuit
+solo layer N              # isolate a circuit
+clear layer N             # erase layer audio
+set layer N volume 0.8    # set amplitude
+set layer N pan -0.5      # set stereo position
+```
+
+### Effects (Tension-Shaping)
+
+```text
+reverse layer N           # reverse audio buffer
+set speed N ratio         # time-stretch / speed
+filter layer N lowpass 800 # filter with frequency
+reverb layer N            # reverb wash
+chorus / delay / flanger / phaser
+distortion / bitcrush     # saturation / reduction
+stutter / granular        # glitch / granular synthesis
+trim / fade in / fade out
+normalize
+spatial:far / spatial:near / spatial:wide
+```
+
+### Generation (Summoning)
+
+```text
+generate [prompt]         # summon a texture
+generate bed [prompt]     # summon a bed layer
+generate texture [prompt] # summon a texture
+generate hit [prompt]     # summon a percussive hit
+regenerate                # re-summon with last prompt
+```
+
+### Listening (Listening Back)
+
+```text
+listen                    # analyze current state
+listen layer N            # listen to a specific circuit
+listen mix                # listen to the full mix
+describe                  # describe what's sounding
+listen --route hybrid|spectral|llm
+```
+
+### Session and System
+
+```text
+save / export / archive   # persist the trace
+name [session_name]       # name the session
+load session [name]       # recall a previous state
+credentials set|status|test [provider]
+mode [mode_name] / status / help / quit
+```
 
 ## Local-First Model
 
@@ -148,12 +338,49 @@ tab       cycle mode
 q         quit
 ```
 
+## Dashboard Controls
+
+The browser dashboard (click the `oram` title to open the About modal) provides
+a visual control surface with:
+
+```text
+⏺  record from mic into selected layer
+⊕  overdub onto selected layer
+fx open DSP transforms (reverse, granulate, reverb…)
+✦  summon — listen to what's sounding and generate a new layer
+◉  export mix
+⊘  hard-silence capture/layers/pending output
++  add layer
+```
+
+Layer corners: top-left select/mute (right-click: solo), top-right export,
+bottom-left generate, bottom-right clear. Waveform drag sets loop region.
+Volume strip supports drag, scroll, double-click for unity.
+
+Keyboard shortcuts in the dashboard:
+
+```text
+1-4       select layer
+r         record
+o         overdub
+k         kill
+g         generate
+l         listen
+m         mute
+u         unmute all
+⌘K        command palette
+/         focus prompt
+esc       close
+```
+
 ## macOS App
 
 The native app in `apps/macos` is a SwiftUI shell around the local Python ORAM
 daemon. It launches or discovers `oram daemon`, stores provider keys in macOS
 Keychain, controls recording/generation/listening/library workflows, and writes
 generated sounds to the ORAM Library.
+
+Views: Record, Generate, Listen, Library, Settings, About.
 
 Build and run locally:
 
@@ -320,6 +547,10 @@ Privacy notes: [docs/security/local-first-privacy.md](docs/security/local-first-
 
 ## Architecture
 
+```text
+record → resonate → listen → transform → generate → return
+```
+
 Core architecture:
 
 - [architecture.md](architecture.md)
@@ -333,6 +564,30 @@ Command grammar:
 Session archive format:
 
 - [session_format.md](session_format.md)
+
+Design principles:
+
+- [concept.md](concept.md)
+
+## Design Principles
+
+**Constrained vocabulary**: commands map to bounded actions. Poetic language is
+accepted as input but must resolve to structured, validated operations.
+
+**Offline transforms**: expensive DSP happens outside the realtime audio
+callback. The callback only does bounded, predictable work.
+
+**Graceful degradation**: if STT fails, keyboard controls remain. If the LLM
+is unavailable, the deterministic parser handles commands. If generation fails,
+existing loops continue.
+
+**Minimal identity**: the interface is monochrome-first, lowercase, austere.
+The complexity lives inside the loop, not in the chrome.
+
+**Sound as material**: ORAM treats sound not as notation or signal, but as
+a changing field of tensions. Not stable objects, but flowing resonant states.
+Not notes, but unstable entities. Not fixed frequencies, but living circuits
+of relation.
 
 ## Development Checks
 
