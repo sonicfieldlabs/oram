@@ -58,6 +58,25 @@ engines:
     latencyProfile: medium
 
   # ── Stable Audio (cloud via fal) ──
+  - id: stability-stable-audio-3
+    provider: stability
+    label: Stable Audio 3 Large
+    mode: cloud
+    capabilities:
+      - text_to_music
+      - text_to_sound_effect
+      - audio_to_audio
+      - audio_inpainting
+      - audio_continuation
+      - lora_mixing
+      - audio_latent
+    requiresApiKey: true
+    supportsAudioInput: true
+    supportsSeed: true
+    maxDurationSeconds: 380
+    costPerSecond: 0
+    latencyProfile: slow
+
   - id: stable-audio-25-fal
     provider: fal
     label: Stable Audio 2.5 via fal
@@ -74,6 +93,25 @@ engines:
     latencyProfile: medium
 
   # ── Local Runners (no API key needed) ──
+  - id: stable-audio-3-local
+    provider: local
+    label: Stable Audio 3 Local Service
+    mode: local
+    capabilities:
+      - text_to_music
+      - text_to_sound_effect
+      - audio_to_audio
+      - audio_inpainting
+      - audio_continuation
+      - lora_mixing
+      - audio_latent
+    requiresApiKey: false
+    supportsAudioInput: true
+    supportsSeed: true
+    maxDurationSeconds: 380
+    costPerSecond: 0
+    latencyProfile: slow
+
   - id: tangoflux-local
     provider: local
     label: TangoFlux Local

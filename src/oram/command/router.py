@@ -492,7 +492,15 @@ class ActionRouter:
 
         threading.Thread(
             target=self._generate_from_worker,
-            args=(layer, action.route, action.engine, action.duration, self._audio_kill_epoch),
+            args=(
+                layer,
+                action.route,
+                action.engine,
+                action.duration,
+                self._audio_kill_epoch,
+                action.provider,
+                action.intent,
+            ),
             daemon=True,
         ).start()
 
@@ -505,6 +513,8 @@ class ActionRouter:
         engine_mode: str,
         duration: float | None,
         audio_epoch: int,
+        provider: str = "",
+        intent: str = "auto",
     ) -> None:
         """listen + compile + generate in background."""
         try:
@@ -558,7 +568,14 @@ class ActionRouter:
                 duration or min(source_layer.duration_seconds * 1.2, 30.0),
                 kind="generated",
             )
-            audio = self._call_engine(decision.engine, prompt, gen_duration, source_layer)
+            audio = self._call_engine(
+                decision.engine,
+                prompt,
+                gen_duration,
+                source_layer,
+                intent=intent,
+                provider=provider,
+            )
 
             if audio is None:
                 self._on_status("generation failed: no audio returned")
@@ -599,6 +616,8 @@ class ActionRouter:
         source_layer=None,
         intent: str = "auto",
         provider: str = "",
+        parameters: dict | None = None,
+        allow_mock_fallback: bool = True,
     ) -> np.ndarray | None:
         """call the appropriate engine adapter via the EngineRouter.
 
@@ -618,10 +637,17 @@ class ActionRouter:
 
                 engine_aliases = {
                     "stable-audio-2": "stability-stable-audio-2",
-                    "stable-audio-2.5": "stability-stable-audio-2",
+                    "stable-audio-2.5": "stability-stable-audio-25",
+                    "stable-audio-3": "stability-stable-audio-3",
+                    "sa3": "stable-audio-3-local",
+                    "local-sa3": "stable-audio-3-local",
                     "local": "local-mock",
                 }
                 engine_id = engine_aliases.get(engine, engine)
+                if not allow_mock_fallback and "-" in engine_id:
+                    adapter = self.engine_registry.get(engine_id) if self.engine_registry is not None else None
+                    if adapter is None or not adapter.is_available():
+                        raise RuntimeError(f"engine {engine_id} unavailable")
 
                 # resolve intent
                 if intent != "auto" and intent != "":
@@ -643,9 +669,16 @@ class ActionRouter:
                     prompt=prompt,
                     intent=sonic_intent,
                     duration_seconds=duration,
+                    source_audio=source_layer.buffer if source_layer is not None else None,
+                    source_sample_rate=(
+                        source_layer.sample_rate
+                        if source_layer is not None
+                        else self.session.sample_rate
+                    ),
                     # if engine contains "-" it's a provider-specific ID
                     engine_id=engine_id if "-" in engine_id else None,
                     provider=provider_enum,
+                    parameters=dict(parameters or {}),
                 )
 
                 # route and execute
@@ -698,7 +731,7 @@ class ActionRouter:
                 self._on_status(f"engine {engine} error: {e}")
 
         # 3. mock generator fallback
-        if self.generator:
+        if allow_mock_fallback and self.generator:
             try:
                 safe_duration = self._clamp_duration(duration, kind="generated") or 0.5
                 return self.generator.generate(prompt, safe_duration, self.session.sample_rate)

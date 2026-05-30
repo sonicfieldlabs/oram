@@ -54,7 +54,7 @@ notarytool keychain profile when making distributable builds.
   pan, and loop regions.
 - Host-input monitoring and loop-level controls.
 - Command parsing through the local daemon, applied to plugin-owned state.
-- Generation through Local Mock, ElevenLabs, or Stability routing, with returned
+- Generation through Local SA3, ElevenLabs, or Stability routing, with returned
   WAV files imported into native layers.
 - State serialization for parameters and layer audio.
 - Basic plugin-side DSP actions: reverse, speed/pitch-ratio, lowpass/highpass,

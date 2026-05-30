@@ -20,6 +20,9 @@ class AudioCapability(str, Enum):
     TEXT_TO_MUSIC = "text_to_music"
     AUDIO_TO_AUDIO = "audio_to_audio"
     AUDIO_INPAINTING = "audio_inpainting"
+    AUDIO_CONTINUATION = "audio_continuation"
+    AUDIO_LATENT = "audio_latent"
+    LORA_MIXING = "lora_mixing"
     AUDIO_ANALYSIS = "audio_analysis"
     SPEECH_TO_TEXT = "speech_to_text"
     VOICE_DESIGN = "voice_design"
@@ -57,6 +60,9 @@ class SonicIntent(str, Enum):
     MUSIC = "music"
     TEXTURE = "texture"
     TRANSFORM = "transform"
+    INPAINT = "inpaint"
+    CONTINUE = "continue"
+    LATENT = "latent"
     ANALYZE = "analyze"
 
 
@@ -79,6 +85,16 @@ INTENT_CAPABILITY_MAP: dict[SonicIntent, list[AudioCapability]] = {
     SonicIntent.TRANSFORM: [
         AudioCapability.AUDIO_TO_AUDIO,
         # SPEECH_TO_SPEECH removed — ORAM never uses voice APIs
+    ],
+    SonicIntent.INPAINT: [
+        AudioCapability.AUDIO_INPAINTING,
+    ],
+    SonicIntent.CONTINUE: [
+        AudioCapability.AUDIO_CONTINUATION,
+        AudioCapability.AUDIO_INPAINTING,
+    ],
+    SonicIntent.LATENT: [
+        AudioCapability.AUDIO_LATENT,
     ],
     SonicIntent.ANALYZE: [
         AudioCapability.AUDIO_ANALYSIS,

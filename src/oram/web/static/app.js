@@ -78,6 +78,31 @@
     }
   }
 
+  async function apiUploadLayer(target, file) {
+    try {
+      const headers = {};
+      if (_authToken) headers['Authorization'] = 'Bearer ' + _authToken;
+      if (file.type) headers['Content-Type'] = file.type;
+      const qs = new URLSearchParams({
+        target: String(target),
+        filename: file.name || 'uploaded.wav',
+      });
+      const res = await fetch(`/api/upload-layer?${qs.toString()}`, {
+        method: 'POST',
+        headers,
+        body: file,
+      });
+      if (res.status === 401) {
+        addLog('auth failed — set ?token= in URL', 'error', '✕');
+        return null;
+      }
+      return await res.json();
+    } catch (e) {
+      addLog('upload error: ' + e.message, 'error', '✕');
+      return null;
+    }
+  }
+
   function hardSilenceOnPageExit() {
     try {
       const headers = { 'Content-Type': 'application/json' };
@@ -137,6 +162,97 @@
   const waveformPending = new Map();
   const WAVEFORM_CACHE_CAP = 32;
 
+  function localStableAudioEnabled() {
+    const modeSel = document.getElementById('runtime-mode-selector');
+    return modeSel && modeSel.value === 'local';
+  }
+
+  function selectedEngineOption() {
+    const engineSel = document.getElementById('engine-selector');
+    if (!engineSel) return null;
+    return engineSel.options[engineSel.selectedIndex] || null;
+  }
+
+  function selectedApiEngineReady() {
+    const opt = selectedEngineOption();
+    if (!opt || opt.value === 'auto') return true;
+    if (opt.dataset.available === 'true') return true;
+    const label = opt.textContent.replace(/\s*\[key needed\]\s*$/, '');
+    addLog(`${label} needs an API key before it can generate`, 'error', '✕');
+    return false;
+  }
+
+  function stableAudioModeRequiresSource(mode) {
+    return mode === 'morph' || mode === 'continue' || mode === 'inpaint' || mode === 'latent';
+  }
+
+  function stableAudioSourceMode(mode) {
+    return stableAudioModeRequiresSource(mode) ? mode : 'morph';
+  }
+
+  function fieldValue(id, fallback = '') {
+    const el = document.getElementById(id);
+    return el && el.value !== '' ? el.value : fallback;
+  }
+
+  function numericField(id, fallback) {
+    const raw = fieldValue(id, '');
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function stableAudioPrompt(fallbackLayer) {
+    const text = (document.getElementById('cmd-input')?.value || '').trim();
+    if (text) return text;
+    return fallbackLayer
+      ? `transform layer ${fallbackLayer} into a complementary texture`
+      : 'detailed experimental sound texture, no speech';
+  }
+
+  function stableAudioPayload(layerNum, promptOverride, options = {}) {
+    const requestedMode = options.mode || fieldValue('sa3-mode', 'generate');
+    const mode = options.forceSource ? stableAudioSourceMode(requestedMode) : requestedMode;
+    const sourceLayer = options.forceSource || stableAudioModeRequiresSource(mode) ? layerNum : null;
+    const seedRaw = fieldValue('sa3-seed', '');
+    const seed = seedRaw === '' ? null : Number(seedRaw);
+    return {
+      prompt: promptOverride || stableAudioPrompt(sourceLayer),
+      mode,
+      duration: numericField('sa3-duration', 8),
+      provider: 'local',
+      model: 'stable-audio-3-local',
+      decoder: 'same-s',
+      local_provider: fieldValue('sa3-provider', 'stable_audio_mlx'),
+      local_model: fieldValue('sa3-model', 'sm-music'),
+      service_url: fieldValue('sa3-service-url', 'http://127.0.0.1:8765'),
+      chunked_decode: true,
+      source_layer: sourceLayer,
+      target_layer: 'first_empty',
+      assign_layer: true,
+      tags: ['stable-audio', `mode:${mode}`, sourceLayer ? 'workflow:audio-to-audio' : 'workflow:text-to-audio'],
+      negative_prompt: 'voice, speech, vocals',
+      seed: Number.isFinite(seed) ? seed : null,
+      steps: numericField('sa3-steps', 8),
+      cfg_scale: numericField('sa3-cfg', 1),
+      noise_depth: mode === 'generate' ? null : numericField('sa3-noise', 0.55),
+      variation_count: 1,
+    };
+  }
+
+  async function renderLocalStableAudio(layerNum, promptOverride, options = {}) {
+    const payload = stableAudioPayload(layerNum, promptOverride, options);
+    const workflow = payload.source_layer ? 'audio-to-audio' : 'text-to-audio';
+    const origin = payload.source_layer ? ` from layer ${payload.source_layer}` : '';
+    addLog(`local SA3 ${workflow} ${payload.mode}${origin}…`, 'generated', '✦');
+    const res = await apiPost('/api/stable-audio/render', payload);
+    if (res && res.status === 'ok') {
+      addLog(`local SA3 → layer ${res.layer || 'library'} via ${res.engine || 'stable-audio-3-local'}`, 'generated', '✦');
+      return true;
+    }
+    addLog('local SA3 failed: ' + (res?.message || 'unknown error'), 'error', '✕');
+    return false;
+  }
+
   function updateLayerBadge(layerIndex) {
     const badge = document.getElementById('header-layer-indicator');
     if (!badge) return;
@@ -170,7 +286,7 @@
     const promptFrame = document.getElementById('prompt-frame');
     if (promptFrame) promptFrame.classList.toggle('recording', !!s.recording);
     const promptModeLabel = document.getElementById('prompt-mode-label');
-    if (promptModeLabel) promptModeLabel.textContent = 'prompt';
+    if (promptModeLabel) promptModeLabel.textContent = localStableAudioEnabled() ? 'local sa3' : 'prompt';
     const selIdx = s.selected_layer != null ? s.selected_layer : 0;
     updateLayerBadge(selIdx);
 
@@ -318,10 +434,10 @@
       cornerTl.setAttribute('aria-pressed', !!layer.muted);
     }
 
-    // volume strip — vertical fill column
+    // volume strip — vertical fill column (skip updates while dragging OR during post-drag cooldown)
     const volStrip = row.querySelector('.vol-strip');
-    if (volStrip && !volStrip._dragging) {
-      const rawVol = Math.round((layer.volume || 1) * 100);
+    if (volStrip && !volStrip._dragging && !volStrip._cooldown) {
+      const rawVol = Math.round(volumeToStripPos(layer.volume || 1));
       volStrip.dataset.value = rawVol;
       updateVolStripVisual(volStrip);
     }
@@ -637,7 +753,12 @@
   const cmdInput = document.getElementById('cmd-input');
   cmdInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-      sendCommand(cmdInput.value);
+      if (localStableAudioEnabled()) {
+        const sel = (state.selected_layer || 0) + 1;
+        renderLocalStableAudio(sel, cmdInput.value.trim(), { mode: 'generate' });
+      } else {
+        sendCommand(cmdInput.value);
+      }
       cmdInput.value = '';
     }
   });
@@ -726,18 +847,23 @@
     const data = await apiGet('/api/devices');
     if (!data) return;
 
-    const sel = document.getElementById('sel-input-device');
-    sel.innerHTML = '';
-
     const inputDevices = data.devices.filter(d => d.is_input);
-    inputDevices.forEach(dev => {
-      const opt = document.createElement('option');
-      opt.value = dev.id;
-      opt.textContent = dev.name + ' (' + dev.default_samplerate + ' Hz)';
-      if (dev.id === data.current_input || dev.id === data.default_input) {
-        opt.selected = true;
-      }
-      sel.appendChild(opt);
+    const outputDevices = data.devices.filter(d => d.is_output);
+    populateDeviceSelect({
+      select: document.getElementById('sel-input-device'),
+      devices: inputDevices,
+      currentId: data.current_input,
+      defaultId: data.default_input,
+      emptyLabel: 'system default input',
+      direction: 'input',
+    });
+    populateDeviceSelect({
+      select: document.getElementById('sel-output-device'),
+      devices: outputDevices,
+      currentId: data.current_output,
+      defaultId: data.default_output,
+      emptyLabel: 'system default output',
+      direction: 'output',
     });
 
     const srSel = document.getElementById('sel-sample-rate');
@@ -745,7 +871,36 @@
       srSel.value = data.current_sample_rate.toString();
     }
 
-    addLog(`${inputDevices.length} input device(s) available`, 'system', '⚙');
+    addLog(`${inputDevices.length} input / ${outputDevices.length} output device(s) available`, 'system', '⚙');
+  }
+
+  function populateDeviceSelect({ select, devices, currentId, defaultId, emptyLabel, direction }) {
+    if (!select) return;
+    select.innerHTML = '';
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = emptyLabel;
+    select.appendChild(defaultOpt);
+
+    devices.forEach(dev => {
+      const opt = document.createElement('option');
+      opt.value = dev.id;
+      const channels = direction === 'input' ? dev.max_input_channels : dev.max_output_channels;
+      const defaultMarker = dev.id === defaultId ? ' · default' : '';
+      opt.textContent = `${dev.name} (${channels} ch · ${Math.round(dev.default_samplerate)} Hz${defaultMarker})`;
+      if (dev.id === currentId || (currentId === null && dev.id === defaultId)) {
+        opt.selected = true;
+      }
+      select.appendChild(opt);
+    });
+  }
+
+  function selectedDeviceValue(id) {
+    const el = document.getElementById(id);
+    if (!el || el.value === '') return null;
+    const value = parseInt(el.value, 10);
+    return Number.isNaN(value) ? null : value;
   }
 
   // apply settings
@@ -753,7 +908,8 @@
   if (btnApply) {
     btnApply.addEventListener('click', async () => {
       const settings = {
-        input_device: parseInt(document.getElementById('sel-input-device').value),
+        input_device: selectedDeviceValue('sel-input-device'),
+        output_device: selectedDeviceValue('sel-output-device'),
         sample_rate: parseInt(document.getElementById('sel-sample-rate').value),
         bit_depth: parseInt(document.getElementById('sel-bit-depth').value),
         rec_format: document.getElementById('sel-format').value,
@@ -818,6 +974,9 @@
         case 'auto-gen':
           autoGenerate(target);
           break;
+        case 'upload':
+          openLayerUpload(target);
+          break;
       }
       return;
     }
@@ -835,6 +994,62 @@
     }
   });
 
+  const uploadInput = document.getElementById('layer-upload-input');
+  let pendingUploadTarget = 1;
+
+  function openLayerUpload(target) {
+    pendingUploadTarget = target;
+    if (!uploadInput) return;
+    uploadInput.value = '';
+    uploadInput.click();
+  }
+
+  async function uploadFileToLayer(target, file) {
+    if (!file) return;
+    addLog(`uploading ${file.name || 'audio'} → layer ${target}…`, 'system', '↑');
+    const res = await apiUploadLayer(target, file);
+    if (res && res.status === 'ok') {
+      _optimisticSelectLayer(target - 1);
+      addLog(`layer ${target} ← ${res.filename || file.name} (${res.duration || '?'}s)`, 'system', '↑');
+      return;
+    }
+    addLog('upload failed: ' + (res?.message || 'unknown error'), 'error', '✕');
+  }
+
+  if (uploadInput) {
+    uploadInput.addEventListener('change', () => {
+      const file = uploadInput.files && uploadInput.files[0];
+      uploadFileToLayer(pendingUploadTarget, file);
+    });
+  }
+
+  const layersEl = document.getElementById('layers');
+  if (layersEl) {
+    layersEl.addEventListener('dragover', (e) => {
+      const row = e.target.closest('.layer-row');
+      if (!row) return;
+      e.preventDefault();
+      row.classList.add('drag-over');
+      e.dataTransfer.dropEffect = 'copy';
+    });
+
+    layersEl.addEventListener('dragleave', (e) => {
+      const row = e.target.closest('.layer-row');
+      if (!row || row.contains(e.relatedTarget)) return;
+      row.classList.remove('drag-over');
+    });
+
+    layersEl.addEventListener('drop', (e) => {
+      const row = e.target.closest('.layer-row');
+      if (!row) return;
+      e.preventDefault();
+      row.classList.remove('drag-over');
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      const target = parseInt(row.dataset.layer) + 1;
+      uploadFileToLayer(target, file);
+    });
+  }
+
   // right-click on TL corner → toggle solo
   document.getElementById('layers').addEventListener('contextmenu', (e) => {
     const btn = e.target.closest('.corner-tl[data-action="select"]');
@@ -849,8 +1064,18 @@
     const btn = document.querySelector(`[data-action="auto-gen"][data-target="${layerNum}"]`);
     if (btn) btn.classList.add('generating');
 
+    if (localStableAudioEnabled()) {
+      await renderLocalStableAudio(layerNum, undefined, { forceSource: true });
+      if (btn) btn.classList.remove('generating');
+      return;
+    }
+
     const engineSel = document.getElementById('engine-selector');
     const selectedEngine = engineSel ? engineSel.value : 'auto';
+    if (!selectedApiEngineReady()) {
+      if (btn) btn.classList.remove('generating');
+      return;
+    }
 
     addLog(`generating into layer ${layerNum} via ${selectedEngine}…`, 'generated', '✦');
 
@@ -896,18 +1121,34 @@
   const btnSubmit = document.getElementById('btn-submit-command');
   if (btnSubmit) {
     btnSubmit.addEventListener('click', () => {
-      sendCommand(cmdInput.value);
+      if (localStableAudioEnabled()) {
+        const sel = (state.selected_layer || 0) + 1;
+        renderLocalStableAudio(sel, cmdInput.value.trim(), { mode: 'generate' });
+      } else {
+        sendCommand(cmdInput.value);
+      }
       cmdInput.value = '';
     });
   }
 
-  // ── volume strips — vertical column with soft sqrt curve ──
+  // ── volume strips — vertical column with exponential curve ──
 
-  // soft curve: knob position 0-200 → volume 0-200% with gentler resolution low end
+  // exponential curve: knob position 0-200 → volume 0-200%
+  // gives much more resolution at low volumes for quiet layers
+  // pos 0 → vol 0 (true mute), pos 100 → vol 1.0 (unity), pos 200 → vol 2.0
   function stripPosToVolume(pos) {
-    const norm = pos / 200;             // 0..1
-    const curved = Math.pow(norm, 0.65);
-    return curved * 2;                  // 0..2 range
+    if (pos <= 0) return 0;              // true mute at zero
+    const norm = pos / 200;              // 0..1
+    const curved = Math.pow(norm, 1.8);  // exponential — low end gets ~3× more resolution
+    return curved * 2;                   // 0..2 range
+  }
+
+  // inverse: volume (0-2) → strip position (0-200)
+  function volumeToStripPos(vol) {
+    if (vol <= 0) return 0;
+    const norm = vol / 2;                // 0..1
+    const uncurved = Math.pow(norm, 1 / 1.8);
+    return Math.round(uncurved * 200);
   }
 
   function updateVolStripVisual(strip) {
@@ -915,12 +1156,12 @@
     const pct = Math.max(0, Math.min(100, (val / 200) * 100));
     const fill = strip.querySelector('.vol-strip-fill');
     if (fill) fill.style.height = pct + '%';
-    strip.classList.toggle('hot', val > 110);
-    strip.classList.toggle('silent', val < 4);
-    strip.setAttribute('aria-valuenow', String(val));
     const vol = stripPosToVolume(val);
+    strip.classList.toggle('hot', vol > 1.1);
+    strip.classList.toggle('silent', vol < 0.01);
+    strip.setAttribute('aria-valuenow', String(val));
     strip.setAttribute('aria-valuetext', vol.toFixed(2) + '×');
-    strip.dataset.display = Math.round(vol * 100) + '%';
+    strip.dataset.display = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
   }
 
   function commitStripValue(strip) {
@@ -942,18 +1183,41 @@
       showValueTimer = setTimeout(() => { delete strip.dataset.showValue; }, 900);
     }
 
+    let longPressTimer = null;
+    let didLongPress = false;
+
+    function startCooldown() {
+      strip._cooldown = true;
+      setTimeout(() => { strip._cooldown = false; }, 500);
+    }
+
     strip.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       strip._dragging = true;
+      didLongPress = false;
       strip.classList.add('dragging');
       startY = e.clientY;
       startVal = parseInt(strip.dataset.value) || 100;
       strip.setPointerCapture(e.pointerId);
       showFloatingValue();
+
+      // long-press → expanded volume overlay
+      longPressTimer = setTimeout(() => {
+        didLongPress = true;
+        strip._dragging = false;
+        strip.classList.remove('dragging');
+        try { strip.releasePointerCapture(e.pointerId); } catch (_) {}
+        openExpandedVolume(strip);
+      }, 400);
     });
 
     strip.addEventListener('pointermove', (e) => {
       if (!strip._dragging) return;
+      // cancel long-press if user moves significantly
+      if (longPressTimer && Math.abs(e.clientY - startY) > 4) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
       const dy = startY - e.clientY;                   // up = increase
       const sensitivity = e.shiftKey ? 0.5 : 1.6;
       const newVal = Math.max(0, Math.min(200, Math.round(startVal + dy * sensitivity)));
@@ -963,18 +1227,25 @@
     });
 
     strip.addEventListener('pointerup', () => {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+      if (didLongPress) { didLongPress = false; return; }
       if (!strip._dragging) return;
       strip._dragging = false;
       strip.classList.remove('dragging');
       commitStripValue(strip);
+      startCooldown();  // prevent server bounce-back
       showFloatingValue();
     });
 
     strip.addEventListener('lostpointercapture', () => {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
       if (strip._dragging) {
         strip._dragging = false;
         strip.classList.remove('dragging');
         commitStripValue(strip);
+        startCooldown();
       }
     });
 
@@ -1237,10 +1508,15 @@
   const fxPalette = document.getElementById('fx-palette');
   const btnFx = document.getElementById('btn-fx');
 
+  const mixerPanel = document.getElementById('mixer-panel');
+  const btnMixer = document.getElementById('btn-mixer');
+
   function closeAllPalettes() {
     palette?.classList.add('hidden');
     fxPalette?.classList.add('hidden');
+    mixerPanel?.classList.add('hidden');
     btnFx?.setAttribute('aria-expanded', 'false');
+    btnMixer?.setAttribute('aria-expanded', 'false');
   }
 
   // summon button → directly listen to what's sounding and generate
@@ -1250,8 +1526,18 @@
     const btn = document.getElementById('btn-summon');
     if (btn) btn.classList.add('generating');
 
+    if (localStableAudioEnabled()) {
+      await renderLocalStableAudio(sel, undefined, { forceSource: true });
+      if (btn) btn.classList.remove('generating');
+      return;
+    }
+
     const engineSel = document.getElementById('engine-selector');
     const selectedEngine = engineSel ? engineSel.value : 'auto';
+    if (!selectedApiEngineReady()) {
+      if (btn) btn.classList.remove('generating');
+      return;
+    }
 
     const res = await apiPost('/api/generate', {
       target: sel,
@@ -1298,7 +1584,410 @@
     });
   }
 
-  // log status — single-line summary + click to expand full log
+  // ── mixer panel — slide toggle ──
+  if (btnMixer && mixerPanel) {
+    btnMixer.addEventListener('click', () => {
+      const willOpen = mixerPanel.classList.contains('hidden');
+      closeAllPalettes();
+      if (willOpen) {
+        mixerPanel.classList.remove('hidden');
+        btnMixer.setAttribute('aria-expanded', 'true');
+        renderMixerChannels();
+      }
+    });
+    document.getElementById('mixer-panel-close')?.addEventListener('click', () => {
+      mixerPanel.classList.add('hidden');
+      btnMixer.setAttribute('aria-expanded', 'false');
+    });
+    document.addEventListener('click', (e) => {
+      if (mixerPanel.classList.contains('hidden')) return;
+      if (e.target.closest('#mixer-panel') || e.target.closest('#btn-mixer')) return;
+      mixerPanel.classList.add('hidden');
+      btnMixer.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  // ── mixer channel rendering ──
+  let _mixerUpdateTimer = null;
+
+  function renderMixerChannels() {
+    const container = document.getElementById('mixer-channels');
+    if (!container || !state.layers) return;
+
+    container.innerHTML = '';
+    state.layers.forEach((layer, i) => {
+      const ch = document.createElement('div');
+      ch.className = 'mixer-channel' +
+        (i === state.selected_layer ? ' selected' : '') +
+        (layer.muted ? ' muted' : '');
+      ch.dataset.index = i;
+
+      // label
+      const label = document.createElement('div');
+      label.className = 'mixer-ch-label';
+      label.textContent = String(i + 1);
+      ch.appendChild(label);
+
+      // fader + meter row
+      const faderRow = document.createElement('div');
+      faderRow.className = 'mixer-fader-row';
+
+      // meter
+      const meter = document.createElement('div');
+      meter.className = 'mixer-meter';
+      const meterFill = document.createElement('div');
+      meterFill.className = 'mixer-meter-fill';
+      meter.appendChild(meterFill);
+      meter.dataset.layerIndex = i;
+      faderRow.appendChild(meter);
+
+      // fader
+      const fader = document.createElement('div');
+      fader.className = 'mixer-fader-wrap';
+      fader.dataset.target = String(i + 1);
+      const fill = document.createElement('div');
+      fill.className = 'mixer-fader-fill';
+      const unity = document.createElement('div');
+      unity.className = 'mixer-fader-unity';
+      fader.appendChild(fill);
+      fader.appendChild(unity);
+      const vol = layer.volume || 1;
+      const pos = volumeToStripPos(vol);
+      const pct = Math.max(0, Math.min(100, (pos / 200) * 100));
+      fill.style.height = pct + '%';
+      fader.classList.toggle('hot', vol > 1.1);
+      faderRow.appendChild(fader);
+
+      ch.appendChild(faderRow);
+
+      // dB readout
+      const dbLabel = document.createElement('div');
+      dbLabel.className = 'mixer-fader-db';
+      dbLabel.textContent = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+      ch.appendChild(dbLabel);
+
+      // pan track
+      const panWrap = document.createElement('div');
+      panWrap.className = 'mixer-pan-wrap';
+      const panLbl = document.createElement('span');
+      panLbl.className = 'mixer-pan-label';
+      panLbl.textContent = 'P';
+      const panTrack = document.createElement('div');
+      panTrack.className = 'mixer-pan-track';
+      panTrack.dataset.target = String(i + 1);
+      const panThumb = document.createElement('div');
+      panThumb.className = 'mixer-pan-thumb';
+      const pan = layer.pan != null ? layer.pan : 0;
+      panThumb.style.left = ((pan + 1) / 2 * 100) + '%';
+      panTrack.appendChild(panThumb);
+      panWrap.appendChild(panLbl);
+      panWrap.appendChild(panTrack);
+      ch.appendChild(panWrap);
+
+      // mute / solo buttons
+      const btnRow = document.createElement('div');
+      btnRow.className = 'mixer-btn-row';
+      const muteBtn = document.createElement('button');
+      muteBtn.className = 'mixer-btn mixer-mute-btn' + (layer.muted ? ' on' : '');
+      muteBtn.textContent = 'M';
+      muteBtn.dataset.target = String(i + 1);
+      const soloBtn = document.createElement('button');
+      soloBtn.className = 'mixer-btn mixer-solo-btn' + (layer.solo ? ' on' : '');
+      soloBtn.textContent = 'S';
+      soloBtn.dataset.target = String(i + 1);
+      btnRow.appendChild(muteBtn);
+      btnRow.appendChild(soloBtn);
+      ch.appendChild(btnRow);
+
+      container.appendChild(ch);
+
+      // fader drag
+      setupMixerFader(fader, fill, dbLabel, i + 1);
+
+      // pan drag
+      setupMixerPan(panTrack, panThumb, i + 1);
+
+      // mute/solo clicks
+      muteBtn.addEventListener('click', () => {
+        sendCommand('mute ' + muteBtn.dataset.target);
+      });
+      soloBtn.addEventListener('click', () => {
+        sendCommand('solo ' + soloBtn.dataset.target);
+      });
+    });
+
+    // start live update
+    clearInterval(_mixerUpdateTimer);
+    _mixerUpdateTimer = setInterval(updateMixerLive, 120);
+  }
+
+  function updateMixerLive() {
+    if (!mixerPanel || mixerPanel.classList.contains('hidden')) {
+      clearInterval(_mixerUpdateTimer);
+      _mixerUpdateTimer = null;
+      return;
+    }
+    if (!state.layers) return;
+
+    const channels = document.querySelectorAll('.mixer-channel');
+    state.layers.forEach((layer, i) => {
+      const ch = channels[i];
+      if (!ch) return;
+      ch.classList.toggle('selected', i === state.selected_layer);
+      ch.classList.toggle('muted', !!layer.muted);
+
+      // update meter
+      const meterFill = ch.querySelector('.mixer-meter-fill');
+      if (meterFill) {
+        const hasSignal = layer.state !== 'empty' && !layer.muted && (layer.playhead_pct || 0) > 0;
+        const level = hasSignal ? Math.max(0, Math.min(1, state.output_level || 0)) : 0;
+        const db = level > 0.00001 ? 20 * Math.log10(level) : -Infinity;
+        const meterPct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+        meterFill.style.height = meterPct + '%';
+        meterFill.className = 'mixer-meter-fill' +
+          (db > -3 ? ' clip' : db > -18 ? ' hot' : '');
+      }
+
+      // update fader (if not dragging)
+      const fader = ch.querySelector('.mixer-fader-wrap');
+      if (fader && !fader._dragging && !fader._cooldown) {
+        const vol = layer.volume || 1;
+        const pos = volumeToStripPos(vol);
+        const pct = Math.max(0, Math.min(100, (pos / 200) * 100));
+        const fill = fader.querySelector('.mixer-fader-fill');
+        if (fill) fill.style.height = pct + '%';
+        fader.classList.toggle('hot', vol > 1.1);
+        const dbLabel = ch.querySelector('.mixer-fader-db');
+        if (dbLabel) dbLabel.textContent = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+      }
+
+      // update mute/solo states
+      const muteBtn = ch.querySelector('.mixer-mute-btn');
+      const soloBtn = ch.querySelector('.mixer-solo-btn');
+      if (muteBtn) muteBtn.classList.toggle('on', !!layer.muted);
+      if (soloBtn) soloBtn.classList.toggle('on', !!layer.solo);
+
+      // update pan
+      const panThumb = ch.querySelector('.mixer-pan-thumb');
+      const panTrack = ch.querySelector('.mixer-pan-track');
+      if (panThumb && panTrack && !panTrack._dragging) {
+        const pan = layer.pan != null ? layer.pan : 0;
+        panThumb.style.left = ((pan + 1) / 2 * 100) + '%';
+      }
+    });
+  }
+
+  function setupMixerFader(fader, fill, dbLabel, target) {
+    let startY = 0, startVal = 0;
+
+    function startCooldown() {
+      fader._cooldown = true;
+      setTimeout(() => { fader._cooldown = false; }, 500);
+    }
+
+    fader.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fader._dragging = true;
+      startY = e.clientY;
+      const layerData = state.layers?.[target - 1];
+      startVal = volumeToStripPos(layerData?.volume || 1);
+      fader.setPointerCapture(e.pointerId);
+    });
+
+    fader.addEventListener('pointermove', (e) => {
+      if (!fader._dragging) return;
+      const dy = startY - e.clientY;
+      const sensitivity = e.shiftKey ? 0.5 : 1.2;
+      const newVal = Math.max(0, Math.min(200, Math.round(startVal + dy * sensitivity)));
+      const pct = Math.max(0, Math.min(100, (newVal / 200) * 100));
+      fill.style.height = pct + '%';
+      fader.classList.toggle('hot', stripPosToVolume(newVal) > 1.1);
+      const vol = stripPosToVolume(newVal);
+      dbLabel.textContent = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+      fader._currentVal = newVal;
+    });
+
+    fader.addEventListener('pointerup', () => {
+      if (!fader._dragging) return;
+      fader._dragging = false;
+      if (fader._currentVal != null) {
+        const vol = stripPosToVolume(fader._currentVal).toFixed(2);
+        sendCommand('set volume layer ' + target + ' ' + vol);
+        startCooldown();
+        // sync the corresponding layer vol-strip
+        const strip = document.querySelector(`.vol-strip[data-target="${target}"]`);
+        if (strip) {
+          strip.dataset.value = fader._currentVal;
+          strip._cooldown = true;
+          setTimeout(() => { strip._cooldown = false; }, 500);
+          updateVolStripVisual(strip);
+        }
+      }
+    });
+
+    fader.addEventListener('lostpointercapture', () => {
+      if (fader._dragging) {
+        fader._dragging = false;
+        if (fader._currentVal != null) {
+          const vol = stripPosToVolume(fader._currentVal).toFixed(2);
+          sendCommand('set volume layer ' + target + ' ' + vol);
+          startCooldown();
+        }
+      }
+    });
+  }
+
+  function setupMixerPan(track, thumb, target) {
+    let dragging = false;
+
+    function updatePan(clientX) {
+      const rect = track.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const pan = (pct * 2 - 1).toFixed(2);
+      thumb.style.left = (pct * 100) + '%';
+      return pan;
+    }
+
+    track.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true;
+      track._dragging = true;
+      track.setPointerCapture(e.pointerId);
+      updatePan(e.clientX);
+    });
+
+    track.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      updatePan(e.clientX);
+    });
+
+    track.addEventListener('pointerup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      track._dragging = false;
+      const pan = updatePan(e.clientX);
+      sendCommand('set pan layer ' + target + ' ' + pan);
+    });
+
+    track.addEventListener('lostpointercapture', () => {
+      dragging = false;
+      track._dragging = false;
+    });
+  }
+
+  // ── expanded volume overlay ──
+  function openExpandedVolume(strip) {
+    const target = strip.dataset.target;
+    const layerIndex = parseInt(target) - 1;
+    const layer = state.layers?.[layerIndex];
+    if (!layer) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'vol-expanded-overlay';
+    overlay.id = 'vol-expanded-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'vol-expanded-card';
+
+    // label
+    const label = document.createElement('div');
+    label.className = 'vol-expanded-label';
+    label.textContent = 'layer ' + target;
+    card.appendChild(label);
+
+    // fader
+    const fader = document.createElement('div');
+    fader.className = 'vol-expanded-fader';
+    const fill = document.createElement('div');
+    fill.className = 'vol-strip-fill';
+    const unityLine = document.createElement('div');
+    unityLine.className = 'vol-strip-unity';
+    fader.appendChild(fill);
+    fader.appendChild(unityLine);
+    card.appendChild(fader);
+
+    // value display
+    const valueEl = document.createElement('div');
+    valueEl.className = 'vol-expanded-value';
+    card.appendChild(valueEl);
+
+    // mute button
+    const muteBtn = document.createElement('button');
+    muteBtn.className = 'vol-expanded-mute' + (layer.muted ? ' on' : '');
+    muteBtn.textContent = layer.muted ? 'unmute' : 'mute';
+    muteBtn.addEventListener('click', () => {
+      sendCommand('mute ' + target);
+      muteBtn.classList.toggle('on');
+      muteBtn.textContent = muteBtn.classList.contains('on') ? 'unmute' : 'mute';
+    });
+    card.appendChild(muteBtn);
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    // sync initial value from strip
+    let currentVal = parseInt(strip.dataset.value) || 100;
+
+    function updateVisual() {
+      const pct = Math.max(0, Math.min(100, (currentVal / 200) * 100));
+      fill.style.height = pct + '%';
+      const vol = stripPosToVolume(currentVal);
+      valueEl.textContent = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+    }
+    updateVisual();
+
+    // fader drag
+    let startY = 0, startFaderVal = 0;
+    let isDragging = false;
+
+    fader.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      isDragging = true;
+      startY = e.clientY;
+      startFaderVal = currentVal;
+      fader.setPointerCapture(e.pointerId);
+    });
+
+    fader.addEventListener('pointermove', (e) => {
+      if (!isDragging) return;
+      const dy = startY - e.clientY;
+      const sensitivity = e.shiftKey ? 0.3 : 0.8;
+      currentVal = Math.max(0, Math.min(200, Math.round(startFaderVal + dy * sensitivity)));
+      updateVisual();
+    });
+
+    fader.addEventListener('pointerup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      const vol = stripPosToVolume(currentVal).toFixed(2);
+      sendCommand('set volume layer ' + target + ' ' + vol);
+      // sync back to layer strip
+      strip.dataset.value = currentVal;
+      strip._cooldown = true;
+      setTimeout(() => { strip._cooldown = false; }, 500);
+      updateVolStripVisual(strip);
+    });
+
+    // close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
+
+    // close on escape
+    function onEsc(e) {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', onEsc);
+      }
+    }
+    document.addEventListener('keydown', onEsc);
+  }
+
+
   const logPanel = document.getElementById('log-panel');
   const logStatusBtn = document.getElementById('log-status');
   if (logStatusBtn && logPanel) {
@@ -1408,23 +2097,47 @@
 
   // ── engine selector ──
   const engineSelector = document.getElementById('engine-selector');
+  const runtimeModeSelector = document.getElementById('runtime-mode-selector');
+  const stableAudioPanel = document.getElementById('stable-audio-panel');
   const engineChip = document.getElementById('prompt-engine-chip');
+
+  function syncRuntimeModeControls() {
+    const local = localStableAudioEnabled();
+    if (stableAudioPanel) stableAudioPanel.classList.toggle('hidden', !local);
+    if (engineSelector) engineSelector.disabled = local;
+    const promptModeLabel = document.getElementById('prompt-mode-label');
+    if (promptModeLabel) promptModeLabel.textContent = local ? 'local sa3' : 'prompt';
+  }
+
+  if (runtimeModeSelector) {
+    runtimeModeSelector.addEventListener('change', () => {
+      syncRuntimeModeControls();
+      addLog(`runtime → ${runtimeModeSelector.value === 'local' ? 'local SA3' : 'API / auto'}`, 'system', '⚙');
+    });
+    syncRuntimeModeControls();
+  }
 
   async function loadEngines() {
     const data = await apiGet('/api/engines');
     if (!data || !data.engines) return;
 
     engineSelector.innerHTML = '';
+    const selectableEngines = data.engines.filter(e =>
+      e.capabilities.includes('text_to_sound_effect') ||
+      e.capabilities.includes('text_to_music') ||
+      e.capabilities.includes('audio_to_audio')
+    );
+    const selectableAvailable = selectableEngines.filter(e => e.available).length;
 
     // auto option
     const autoOpt = document.createElement('option');
     autoOpt.value = 'auto';
-    autoOpt.textContent = '⚡ auto (' + data.available + ' engines)';
+    autoOpt.textContent = '⚡ auto (' + selectableAvailable + ' engines)';
     engineSelector.appendChild(autoOpt);
 
     // group engines by provider
     const byProvider = {};
-    data.engines.forEach(e => {
+    selectableEngines.forEach(e => {
       if (!byProvider[e.provider]) byProvider[e.provider] = [];
       byProvider[e.provider].push(e);
     });
@@ -1445,17 +2158,20 @@
       engines.forEach(engine => {
         const opt = document.createElement('option');
         opt.value = engine.id;
-        const avail = engine.available ? '' : ' [offline]';
+        const needsKey = engine.requires_api_key && !engine.available;
+        const avail = needsKey ? ' [key needed]' : (engine.available ? '' : ' [offline]');
         const caps = engine.capabilities.map(c => c.replace('text_to_', '').replace('audio_', '')).join(', ');
         opt.textContent = engine.label + avail;
         opt.title = caps + ' · ' + engine.latency_profile + ' · $' + engine.cost_per_second + '/s';
-        opt.disabled = !engine.available;
+        opt.dataset.available = engine.available ? 'true' : 'false';
+        opt.dataset.requiresApiKey = engine.requires_api_key ? 'true' : 'false';
+        opt.disabled = !engine.available && !needsKey;
         group.appendChild(opt);
       });
       engineSelector.appendChild(group);
     });
 
-    addLog(`${data.available}/${data.total} engines available`, 'system', '⚙');
+    addLog(`${selectableAvailable}/${selectableEngines.length} generation engines available`, 'system', '⚙');
   }
 
   if (engineSelector) {

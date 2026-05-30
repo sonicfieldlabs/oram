@@ -34,6 +34,10 @@ final class DaemonClient {
         try await get("/providers")
     }
 
+    func devices() async throws -> DevicesResponse {
+        try await get("/devices")
+    }
+
     func credentialStatus() async throws -> [String: CredentialStatus] {
         try await get("/credentials/status")
     }
@@ -57,6 +61,10 @@ final class DaemonClient {
 
     func generate(_ payload: GeneratePayload) async throws -> GenerateResponse {
         try await post("/generate", payload: payload)
+    }
+
+    func stableAudioRender(_ payload: StableAudioRenderPayload) async throws -> GenerateResponse {
+        try await post("/stable-audio/render", payload: payload)
     }
 
     func recordStart() async throws {

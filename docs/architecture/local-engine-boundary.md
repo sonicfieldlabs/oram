@@ -54,11 +54,19 @@ subset:
 ```text
 POST /actions/parse
 POST /plugin/generate
+GET  /stable-audio/modes
+POST /stable-audio/render
+POST /plugin/stable-audio/render
 ```
 
 `/actions/parse` returns structured ORAM actions without routing them through
 the daemon's `ActionRouter`. `/plugin/generate` writes generated audio to the
 ORAM Library without assigning it to daemon layers.
+
+`/stable-audio/render` exposes SA3-specific Generate, Morph, Continue, Inpaint,
+Latent, and LoRA Mixer requests. `/plugin/stable-audio/render` uses the same
+payload but never mutates daemon layers, so DAW, Max, and standalone clients can
+load the returned WAV into their own timeline or buffer model.
 
 ## State Rules
 
@@ -67,6 +75,8 @@ ORAM Library without assigning it to daemon layers.
 - Generated sounds are written to the ORAM Library, then optionally assigned to
   an engine layer.
 - Slow work runs outside the realtime audio callback.
+- Stable Audio local/API rendering runs through provider adapters or a local
+  sidecar service, never inside plugin DSP/audio callbacks.
 
 ## Daemon Metadata
 

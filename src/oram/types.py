@@ -75,7 +75,11 @@ class GenerationEngine(str, Enum):
     ELEVENLABS_MUSIC = "elevenlabs-music"
     ELEVENLABS_SCRIBE = "elevenlabs-scribe"
     STABLE_AUDIO = "stable-audio-25"
+    STABILITY_STABLE_AUDIO_25 = "stability-stable-audio-25"
+    STABILITY_STABLE_AUDIO_3 = "stability-stable-audio-3"
+    STABLE_AUDIO_3_LOCAL = "stable-audio-3-local"
     LOCAL = "local"
+    LOCAL_MOCK = "local-mock"
 
 
 @dataclass

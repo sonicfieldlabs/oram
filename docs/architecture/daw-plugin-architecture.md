@@ -64,6 +64,7 @@ state:
 ```text
 POST /actions/parse
 POST /plugin/generate
+POST /plugin/stable-audio/render
 ```
 
 `POST /actions/parse` returns the structured action for a command without
@@ -73,6 +74,13 @@ routing it through `ActionRouter`.
 in the ORAM Library without assigning it to daemon layers. The response contains
 the sound record, including a local file path the plugin can load on its control
 thread and swap into native playback between render blocks.
+
+`POST /plugin/stable-audio/render` is the SA3-specific companion route for
+agentic looper workflows. It accepts ORAM mode controls such as `mode`,
+`source_layer` or `init_audio_path`, `duration`, `seed`, `noise_depth`,
+`inpaint_start`, `inpaint_end`, `variation_count`, and LoRA stack fields. The
+plugin/Max/standalone client remains responsible for loading the returned WAV
+and swapping it into its own realtime layer state.
 
 ## First Plugin Slice
 
@@ -85,6 +93,7 @@ The initial plugin is an effect-style looper:
 - mute, solo, volume, pan
 - set loop regions
 - generate via daemon and import returned WAV
+- render Stable Audio 3 clips through daemon and import returned WAV
 - parse text commands via daemon and apply supported actions locally
 - serialize parameters and native layer audio through host plugin state
 

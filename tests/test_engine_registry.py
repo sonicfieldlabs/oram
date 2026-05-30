@@ -206,12 +206,15 @@ class TestSummary:
 
 class TestFromConfig:
     def test_no_keys_gives_empty(self):
-        """with no API keys, local-mock should still register."""
+        """with no API keys, BYOK engines register as unavailable."""
         from oram.config import OramConfig
         config = OramConfig()
         config.elevenlabs_api_key = ""
         reg = EngineRegistry.from_config(config)
-        assert reg.engine_count == 1  # local-mock always registers
+        assert reg.engine_count == 8  # seven ElevenLabs BYOK modes + local-mock
+        assert reg.available_count == 1
+        assert reg.get("elevenlabs-sfx") is not None
+        assert reg.get("elevenlabs-sfx").is_available() is False
         assert reg.get("local-mock") is not None
 
     def test_elevenlabs_key_registers_engines(self):

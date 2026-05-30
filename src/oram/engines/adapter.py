@@ -82,6 +82,7 @@ class GenerationRequest:
     seed: int | None = None
     negative_prompt: str | None = None
     guidance_scale: float | None = None
+    source_audio_path: str | None = None
 
     def to_adapter_params(self) -> dict:
         """flatten provider-specific fields into a params dict for adapters."""
@@ -105,6 +106,8 @@ class GenerationRequest:
             params["negative_prompt"] = self.negative_prompt
         if self.guidance_scale is not None:
             params["guidance_scale"] = self.guidance_scale
+        if self.source_audio_path is not None:
+            params["source_audio_path"] = self.source_audio_path
         return params
 
 

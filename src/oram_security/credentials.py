@@ -351,6 +351,9 @@ def default_credential_store() -> CredentialStore:
     """
 
     env_store = EnvCredentialStore()
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return env_store
+
     requested = os.environ.get("ORAM_CREDENTIAL_STORE", "").strip().lower()
     if requested == "env":
         return env_store

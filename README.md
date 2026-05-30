@@ -111,8 +111,9 @@ recorder → looper → sampler → engine router → local archive
   normalize, trim, fades, and spatial transforms.
 - Listens back — spectral analysis of pitch, BPM, key, harmonics, and frequency
   character through local FFT, LLM-based interpretation, or hybrid routes.
-- Generates sound through Local Mock by default, or summons textures through
-  BYOK providers (ElevenLabs, Stability AI, fal Stable Audio).
+- Generates sound through Local SA3 by default when the local service is
+  available, or summons textures through BYOK providers (ElevenLabs, Stability
+  AI, fal Stable Audio).
 - Writes generated sounds into `~/Music/ORAM Library`.
 - Archives sessions as traces of a state: mix/stem WAVs, command logs, metadata,
   waveform text, and listening reports.
@@ -270,7 +271,8 @@ workstation." That is the intended boundary:
 - No ORAM cloud account is required.
 - The app talks to a localhost daemon.
 - Provider keys are stored in macOS Keychain for the packaged app.
-- Local Mock remains available without cloud credentials.
+- Local SA3 is the default local generation path; Local Mock remains available
+  only as an explicit fallback.
 - Telemetry is off by default.
 - Generated sounds and archives stay in the local ORAM Library.
 - Daemon mutation routes use a local bearer token when auth is enabled.
@@ -420,7 +422,7 @@ Current plugin features:
 - four native layers with record, overdub, mute, solo, clear, volume, and pan
 - loop regions and host-input monitoring
 - typed ORAM command parsing through the daemon
-- generation through Local Mock, ElevenLabs, or Stability routing, then WAV
+- generation through Local SA3, ElevenLabs, or Stability routing, then WAV
   import into native plugin layers
 - native state serialization for parameters and layer audio
 - basic plugin-side DSP actions including reverse, speed/pitch-ratio, filters,

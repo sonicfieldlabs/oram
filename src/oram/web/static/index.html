@@ -27,6 +27,7 @@
         <button class="hdr-btn" id="btn-summon" data-hint="summon — open the texture palette for prompt generation" aria-label="Summon texture">✦</button>
         <span class="hdr-sep"></span>
         <button class="hdr-btn" id="btn-master-rec" data-hint="export current mix — bounce all layers to a single WAV" aria-label="Export current mix">◉</button>
+        <button class="hdr-btn hdr-mixer" id="btn-mixer" data-hint="mixer — volume, pan, mute, solo for all layers" aria-label="Open mixer" aria-haspopup="true" aria-expanded="false">☰</button>
         <button class="hdr-btn hdr-kill" id="btn-kill" data-hint="kill all sound — stop capture, mute layers, discard pending output (k)" aria-label="Kill all sound">⊘</button>
         <span class="hdr-sep"></span>
         <button class="hdr-btn hdr-add-layer" id="btn-add-layer" data-hint="add another layer slot" aria-label="Add layer">+</button>
@@ -56,9 +57,15 @@
       <button id="settings-close" class="palette-close-btn" aria-label="Close settings">×</button>
     </div>
     <div class="settings-grid">
-      <div class="setting-group">
+      <div class="setting-group setting-device-group">
         <label class="setting-label" for="sel-input-device">input device</label>
         <select id="sel-input-device" class="setting-select">
+          <option value="">loading…</option>
+        </select>
+      </div>
+      <div class="setting-group setting-device-group">
+        <label class="setting-label" for="sel-output-device">output device</label>
+        <select id="sel-output-device" class="setting-select">
           <option value="">loading…</option>
         </select>
       </div>
@@ -88,6 +95,13 @@
         </select>
       </div>
       <div class="setting-group setting-engine-group">
+        <label class="setting-label" for="runtime-mode-selector">runtime mode</label>
+        <select id="runtime-mode-selector" class="setting-select" aria-label="Runtime mode" data-hint="API keeps existing provider routing; Local SA3 uses the local Stable Audio runtime">
+          <option value="api">API / auto</option>
+          <option value="local" selected>Local SA3</option>
+        </select>
+      </div>
+      <div class="setting-group setting-engine-group">
         <label class="setting-label" for="engine-selector">generation engine</label>
         <select id="engine-selector" class="setting-select" aria-label="Generation engine" data-hint="which engine generates audio">
           <option value="auto">⚡ auto</option>
@@ -97,14 +111,58 @@
         <button id="btn-apply-settings" class="setting-apply">apply</button>
       </div>
     </div>
-  </section>
-
-  <!-- ═══ PROMPT MODULE — bigger space ═══ -->
-  <section id="prompt-module">
-    <div class="prompt-frame prompt-frame-lg" id="prompt-frame">
-      <span class="prompt-mode" id="prompt-mode-label">prompt</span>
-      <input type="text" id="cmd-input" name="oram-command" aria-label="Command prompt" placeholder="describe a sound or type a command…" autocomplete="off" spellcheck="false">
-      <button id="btn-submit-command" class="prompt-submit" aria-label="Submit command">↵</button>
+    <div id="stable-audio-panel" class="stable-audio-panel hidden">
+      <div class="sa3-field">
+        <label class="setting-label" for="sa3-mode">sa3 mode</label>
+        <select id="sa3-mode" class="setting-select">
+          <option value="generate">generate</option>
+          <option value="morph">morph</option>
+          <option value="continue">continue</option>
+          <option value="inpaint">inpaint</option>
+          <option value="lora_mixer">lora</option>
+        </select>
+      </div>
+      <div class="sa3-field">
+        <label class="setting-label" for="sa3-provider">runtime</label>
+        <select id="sa3-provider" class="setting-select">
+          <option value="stable_audio_mlx" selected>MLX</option>
+          <option value="stable_audio_python">Python</option>
+          <option value="mock">Mock</option>
+        </select>
+      </div>
+      <div class="sa3-field">
+        <label class="setting-label" for="sa3-model">model</label>
+        <select id="sa3-model" class="setting-select">
+          <option value="sm-music" selected>small music</option>
+          <option value="sm-sfx">small sfx</option>
+          <option value="medium">medium</option>
+          <option value="medium-mlx">medium mlx</option>
+        </select>
+      </div>
+      <div class="sa3-field">
+        <label class="setting-label" for="sa3-duration">duration</label>
+        <input id="sa3-duration" class="setting-input" type="number" min="0.5" max="60" step="0.5" value="8">
+      </div>
+      <div class="sa3-field">
+        <label class="setting-label" for="sa3-steps">steps</label>
+        <input id="sa3-steps" class="setting-input" type="number" min="1" max="100" step="1" value="8">
+      </div>
+      <div class="sa3-field">
+        <label class="setting-label" for="sa3-cfg">cfg</label>
+        <input id="sa3-cfg" class="setting-input" type="number" min="0" max="20" step="0.1" value="1.0">
+      </div>
+      <div class="sa3-field">
+        <label class="setting-label" for="sa3-noise">noise</label>
+        <input id="sa3-noise" class="setting-input" type="number" min="0" max="1" step="0.01" value="0.55">
+      </div>
+      <div class="sa3-field">
+        <label class="setting-label" for="sa3-seed">seed</label>
+        <input id="sa3-seed" class="setting-input" type="number" step="1" placeholder="-1">
+      </div>
+      <div class="sa3-field sa3-service">
+        <label class="setting-label" for="sa3-service-url">service</label>
+        <input id="sa3-service-url" class="setting-input" type="text" value="http://127.0.0.1:8765">
+      </div>
     </div>
   </section>
 
@@ -126,7 +184,16 @@
     </div>
   </section>
 
-
+  <!-- mixer panel — slide panel with all layer controls -->
+  <section id="mixer-panel" class="hidden">
+    <div class="palette-header">
+      <span>mixer</span>
+      <button id="mixer-panel-close" class="palette-close-btn" aria-label="Close mixer">×</button>
+    </div>
+    <div id="mixer-channels" class="mixer-channels">
+      <!-- channels are rendered dynamically by JS -->
+    </div>
+  </section>
 
   <!-- summon: direct listen+generate (no palette) -->
 
@@ -135,6 +202,7 @@
     <div class="layer-row" data-layer="0" id="layer-0">
       <button class="corner corner-tl" data-action="select" data-target="1" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 1 — select / mute / right-click solo"><span class="corner-glyph">1</span></button>
       <button class="corner corner-tr" data-action="export" data-target="1" data-hint="export / bounce layer to WAV" aria-label="Export layer 1"><span class="corner-glyph">↓</span></button>
+      <button class="upload-center" data-action="upload" data-target="1" data-hint="upload audio into layer 1" aria-label="Upload audio to layer 1"><span class="upload-glyph">↑</span></button>
       <button class="corner corner-bl" data-action="auto-gen" data-target="1" data-hint="auto-generate from what's sounding" aria-label="Generate layer 1"><span class="corner-glyph">✦</span></button>
       <button class="corner corner-br" data-action="clear" data-target="1" data-hint="clear / delete layer audio" aria-label="Clear layer 1"><span class="corner-glyph">⌫</span></button>
       <div class="waveform-shell" data-target="1">
@@ -156,6 +224,7 @@
     <div class="layer-row" data-layer="1" id="layer-1">
       <button class="corner corner-tl" data-action="select" data-target="2" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 2 — select / mute / right-click solo"><span class="corner-glyph">2</span></button>
       <button class="corner corner-tr" data-action="export" data-target="2" data-hint="export / bounce layer to WAV" aria-label="Export layer 2"><span class="corner-glyph">↓</span></button>
+      <button class="upload-center" data-action="upload" data-target="2" data-hint="upload audio into layer 2" aria-label="Upload audio to layer 2"><span class="upload-glyph">↑</span></button>
       <button class="corner corner-bl" data-action="auto-gen" data-target="2" data-hint="auto-generate from what's sounding" aria-label="Generate layer 2"><span class="corner-glyph">✦</span></button>
       <button class="corner corner-br" data-action="clear" data-target="2" data-hint="clear / delete layer audio" aria-label="Clear layer 2"><span class="corner-glyph">⌫</span></button>
       <div class="waveform-shell" data-target="2">
@@ -177,6 +246,7 @@
     <div class="layer-row" data-layer="2" id="layer-2">
       <button class="corner corner-tl" data-action="select" data-target="3" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 3 — select / mute / right-click solo"><span class="corner-glyph">3</span></button>
       <button class="corner corner-tr" data-action="export" data-target="3" data-hint="export / bounce layer to WAV" aria-label="Export layer 3"><span class="corner-glyph">↓</span></button>
+      <button class="upload-center" data-action="upload" data-target="3" data-hint="upload audio into layer 3" aria-label="Upload audio to layer 3"><span class="upload-glyph">↑</span></button>
       <button class="corner corner-bl" data-action="auto-gen" data-target="3" data-hint="auto-generate from what's sounding" aria-label="Generate layer 3"><span class="corner-glyph">✦</span></button>
       <button class="corner corner-br" data-action="clear" data-target="3" data-hint="clear / delete layer audio" aria-label="Clear layer 3"><span class="corner-glyph">⌫</span></button>
       <div class="waveform-shell" data-target="3">
@@ -199,6 +269,7 @@
     <div class="layer-row layer-row-extra" data-layer="3" id="layer-3" style="display: none;">
       <button class="corner corner-tl" data-action="select" data-target="4" data-hint="click: select / toggle mute · right-click: solo" aria-label="Layer 4 — select / mute / right-click solo"><span class="corner-glyph">4</span></button>
       <button class="corner corner-tr" data-action="export" data-target="4" data-hint="export / bounce layer to WAV" aria-label="Export layer 4"><span class="corner-glyph">↓</span></button>
+      <button class="upload-center" data-action="upload" data-target="4" data-hint="upload audio into layer 4" aria-label="Upload audio to layer 4"><span class="upload-glyph">↑</span></button>
       <button class="corner corner-bl" data-action="auto-gen" data-target="4" data-hint="auto-generate from what's sounding" aria-label="Generate layer 4"><span class="corner-glyph">✦</span></button>
       <button class="corner corner-br" data-action="clear" data-target="4" data-hint="clear / delete layer audio" aria-label="Clear layer 4"><span class="corner-glyph">⌫</span></button>
       <div class="waveform-shell" data-target="4">
@@ -218,8 +289,16 @@
       </div>
     </div>
   </section>
+  <input id="layer-upload-input" type="file" accept="audio/*,.wav,.aif,.aiff,.flac,.ogg,.mp3,.m4a" hidden>
 
-
+  <!-- ═══ PROMPT MODULE — command input below layers ═══ -->
+  <section id="prompt-module">
+    <div class="prompt-frame prompt-frame-lg" id="prompt-frame">
+      <span class="prompt-mode" id="prompt-mode-label">prompt</span>
+      <input type="text" id="cmd-input" name="oram-command" aria-label="Command prompt" placeholder="describe a sound or type a command…" autocomplete="off" spellcheck="false">
+      <button id="btn-submit-command" class="prompt-submit" aria-label="Submit command">↵</button>
+    </div>
+  </section>
 
   <!-- agent log — collapsed by default, click status to unfold -->
   <section id="log-panel" class="collapsed">
@@ -287,7 +366,7 @@
     </ul>
 
     <h3>engines</h3>
-    <p>ORAM exposes Local Mock by default and currently routes generation to configured ElevenLabs, Stability AI, fal Stable Audio, or local sidecar engines. Hugging Face and Replicate credentials can be tracked, but their adapters are not active yet. keys stay server-side and are never sent to the dashboard.</p>
+    <p>ORAM opens in Local SA3 mode and routes generation to the local Stable Audio service when available. API / auto mode can use configured ElevenLabs, Stability AI, fal Stable Audio, or other local sidecar engines. keys stay server-side and are never sent to the dashboard.</p>
     <pre class="env-block">oram credentials set elevenlabs
 oram credentials set stability
 oram credentials status</pre>

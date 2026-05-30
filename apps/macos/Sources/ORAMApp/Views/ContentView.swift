@@ -18,7 +18,22 @@ struct ContentView: View {
     @State private var commandSearch = ""
     @State private var sampleRateDraft = 48000
     @State private var blockSizeDraft = 512
-    @State private var selectedModel = "local-mock"
+    @State private var inputDeviceDraft = -1
+    @State private var outputDeviceDraft = -1
+    @State private var selectedModel = "stable-audio-3-local"
+    @State private var runtimeMode = "local"
+    @State private var stableMode = "generate"
+    @State private var stableDuration = 8.0
+    @State private var stableLocalProvider = "stable_audio_mlx"
+    @State private var stableLocalModel = "sm-music"
+    @State private var stableServiceURL = "http://127.0.0.1:8765"
+    @State private var stableDecoder = "same-s"
+    @State private var stableChunkedDecode = true
+    @State private var stableSeed = ""
+    @State private var stableNegativePrompt = "voice, speech, vocals"
+    @State private var stableSteps = 8
+    @State private var stableCfgScale = 1.0
+    @State private var stableNoiseDepth = 0.55
 
     private let fxCommands: [(glyph: String, name: String, command: String, hint: String)] = [
         ("↺", "reverse", "reverse", "reverse the selected layer's audio"),
@@ -46,8 +61,6 @@ struct ContentView: View {
                     settingsPanel
                 }
 
-                promptModule
-
                 if showFX {
                     fxPalette
                 }
@@ -55,6 +68,8 @@ struct ContentView: View {
                 // summon palette removed — direct listen+generate action
 
                 layersPanel
+
+                promptModule
 
                 logPanel
             }
@@ -109,6 +124,7 @@ struct ContentView: View {
         .task {
             sampleRateDraft = store.state?.sampleRate ?? sampleRateDraft
             blockSizeDraft = store.state?.blockSize ?? blockSizeDraft
+            syncDeviceDrafts()
             ensureSelectedModel()
         }
         .onChange(of: store.state?.sampleRate) { newValue in
@@ -120,6 +136,12 @@ struct ContentView: View {
             if let newValue {
                 blockSizeDraft = newValue
             }
+        }
+        .onChange(of: store.devices?.currentInput) { _ in
+            syncDeviceDrafts()
+        }
+        .onChange(of: store.devices?.currentOutput) { _ in
+            syncDeviceDrafts()
         }
         .onChange(of: store.providers.map(\.id)) { _ in
             ensureSelectedModel()
@@ -185,7 +207,11 @@ struct ContentView: View {
                 HeaderGlyph("✦", role: .summon, theme: lightTheme) {
                     Task {
                         let sel = store.state?.selectedLayer ?? 1
-                        await store.generateFromLayer(sel, engine: selectedModel)
+                        if runtimeMode == "local" {
+                            await store.stableAudioRender(stableAudioLayerPayload(sourceLayer: sel))
+                        } else {
+                            await store.generateFromLayer(sel, engine: selectedModel)
+                        }
                     }
                 }
                 .onHoverHint("summon — listen to what's sounding and generate a new layer", $hint)
@@ -292,6 +318,22 @@ struct ContentView: View {
             }
 
             HStack(alignment: .bottom, spacing: 10) {
+                DeviceMenu(
+                    title: "input device",
+                    selection: $inputDeviceDraft,
+                    devices: inputDevices,
+                    defaultDeviceID: store.devices?.defaultInput,
+                    systemLabel: "system input",
+                    theme: lightTheme
+                )
+                DeviceMenu(
+                    title: "output device",
+                    selection: $outputDeviceDraft,
+                    devices: outputDevices,
+                    defaultDeviceID: store.devices?.defaultOutput,
+                    systemLabel: "system output",
+                    theme: lightTheme
+                )
                 SettingMenu(
                     title: "sample rate",
                     selection: $sampleRateDraft,
@@ -306,19 +348,44 @@ struct ContentView: View {
                     label: { "\($0)" },
                     theme: lightTheme
                 )
+                Button("apply") {
+                    Task {
+                        await store.updateAudioSettings(
+                            sampleRate: sampleRateDraft,
+                            blockSize: blockSizeDraft,
+                            inputDevice: inputDeviceDraft,
+                            outputDevice: outputDeviceDraft
+                        )
+                    }
+                }
+                .buttonStyle(ApplyButtonStyle(theme: lightTheme))
+                Spacer(minLength: 0)
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                StringSettingMenu(
+                    title: "runtime",
+                    selection: $runtimeMode,
+                    values: [
+                        ("api", "API / auto"),
+                        ("local", "Local SA3")
+                    ],
+                    theme: lightTheme
+                )
                 EngineMenu(
                     title: "generator",
                     selection: $selectedModel,
                     engines: generationEngines,
                     theme: lightTheme
                 )
+                .disabled(runtimeMode == "local")
+                .opacity(runtimeMode == "local" ? 0.58 : 1)
                 SettingBlock(title: "library", value: store.state?.libraryDir ?? "ORAM Library", theme: lightTheme)
-                Button("apply") {
-                    Task {
-                        await store.updateAudioSettings(sampleRate: sampleRateDraft, blockSize: blockSizeDraft)
-                    }
-                }
-                .buttonStyle(ApplyButtonStyle(theme: lightTheme))
+                Spacer(minLength: 0)
+            }
+
+            if runtimeMode == "local" {
+                stableAudioInlinePanel
             }
         }
         .padding(12)
@@ -404,7 +471,13 @@ struct ContentView: View {
                         Task { await store.sendCommand(command) }
                     },
                     onGenerate: {
-                        Task { await store.generateFromLayer(layer.slot, engine: selectedModel) }
+                        Task {
+                            if runtimeMode == "local" {
+                                await store.stableAudioRender(stableAudioLayerPayload(sourceLayer: layer.slot))
+                            } else {
+                                await store.generateFromLayer(layer.slot, engine: selectedModel)
+                            }
+                        }
                     },
                     onExport: {
                         Task { await store.exportLayer(layer.slot) }
@@ -499,7 +572,11 @@ struct ContentView: View {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         prompt = ""
-        if text.lowercased().contains("generate") || text.lowercased().contains("summon") || text.count > 40 {
+        if runtimeMode == "local" {
+            Task {
+                await store.stableAudioRender(stableAudioTextPayload(prompt: text))
+            }
+        } else if text.lowercased().contains("generate") || text.lowercased().contains("summon") || text.count > 40 {
             Task {
                 await store.generate(
                     prompt: text,
@@ -533,6 +610,31 @@ struct ContentView: View {
         }
     }
 
+    private var inputDevices: [AudioDevice] {
+        (store.devices?.devices ?? []).filter(\.isInput)
+    }
+
+    private var outputDevices: [AudioDevice] {
+        (store.devices?.devices ?? []).filter(\.isOutput)
+    }
+
+    private var stableModeRequiresSource: Bool {
+        stableAudioModeRequiresSource(stableMode)
+    }
+
+    private var stableAudioLayerMode: String {
+        stableModeRequiresSource ? stableMode : "morph"
+    }
+
+    private func stableAudioModeRequiresSource(_ mode: String) -> Bool {
+        mode == "morph" || mode == "continue" || mode == "inpaint" || mode == "latent"
+    }
+
+    private func syncDeviceDrafts() {
+        inputDeviceDraft = store.devices?.currentInput ?? -1
+        outputDeviceDraft = store.devices?.currentOutput ?? -1
+    }
+
     private var selectedProvider: String {
         generationEngines.first { $0.id == selectedModel }?.provider ?? "auto"
     }
@@ -542,11 +644,139 @@ struct ContentView: View {
         if ids.contains(selectedModel) {
             return
         }
-        if ids.contains("local-mock") {
-            selectedModel = "local-mock"
+        if ids.contains("stable-audio-3-local") {
+            selectedModel = "stable-audio-3-local"
         } else if let first = generationEngines.first {
             selectedModel = first.id
         }
+    }
+
+    private var stableAudioInlinePanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 10) {
+                StringSettingMenu(
+                    title: "sa3 mode",
+                    selection: $stableMode,
+                    values: [
+                        ("generate", "Generate"),
+                        ("morph", "Morph"),
+                        ("continue", "Continue"),
+                        ("inpaint", "Inpaint"),
+                        ("lora_mixer", "LoRA")
+                    ],
+                    theme: lightTheme
+                )
+                StringSettingMenu(
+                    title: "runtime",
+                    selection: $stableLocalProvider,
+                    values: [
+                        ("stable_audio_mlx", "MLX"),
+                        ("stable_audio_python", "Python"),
+                        ("mock", "Mock")
+                    ],
+                    theme: lightTheme
+                )
+                StringSettingMenu(
+                    title: "model",
+                    selection: $stableLocalModel,
+                    values: [
+                        ("sm-music", "Small Music"),
+                        ("sm-sfx", "Small SFX"),
+                        ("medium", "Medium"),
+                        ("medium-mlx", "Medium MLX")
+                    ],
+                    theme: lightTheme
+                )
+                StringSettingMenu(
+                    title: "decoder",
+                    selection: $stableDecoder,
+                    values: [
+                        ("same-s", "same-s"),
+                        ("same-l", "same-l")
+                    ],
+                    theme: lightTheme
+                )
+                Toggle("chunked", isOn: $stableChunkedDecode)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(DashboardTheme.secondary(lightTheme))
+                    .frame(height: 30)
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                NumericSettingField(title: "duration", value: $stableDuration, suffix: "s", theme: lightTheme)
+                IntSettingField(title: "steps", value: $stableSteps, theme: lightTheme)
+                NumericSettingField(title: "cfg", value: $stableCfgScale, suffix: "", theme: lightTheme)
+                NumericSettingField(title: "noise", value: $stableNoiseDepth, suffix: "", theme: lightTheme)
+                TextSettingField(title: "seed", value: $stableSeed, placeholder: "-1", theme: lightTheme)
+                TextSettingField(title: "negative", value: $stableNegativePrompt, placeholder: "voice, speech", theme: lightTheme)
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                TextSettingField(title: "service", value: $stableServiceURL, placeholder: "http://127.0.0.1:8765", theme: lightTheme)
+                SettingBlock(
+                    title: "routing",
+                    value: "prompt text-to-audio / layer audio-to-audio",
+                    theme: lightTheme
+                )
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(10)
+        .background(DashboardTheme.inset(lightTheme), in: RoundedRectangle(cornerRadius: 5))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(DashboardTheme.border(lightTheme), lineWidth: 1)
+        )
+    }
+
+    private func stableAudioTextPayload(prompt text: String) -> StableAudioRenderPayload {
+        stableAudioPayload(prompt: text, mode: "generate", sourceLayer: nil)
+    }
+
+    private func stableAudioLayerPayload(sourceLayer: Int) -> StableAudioRenderPayload {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourcePrompt: String
+        if trimmedPrompt.isEmpty {
+            sourcePrompt = "transform layer \(sourceLayer) into a complementary texture"
+        } else {
+            sourcePrompt = trimmedPrompt
+        }
+        return stableAudioPayload(prompt: sourcePrompt, mode: stableAudioLayerMode, sourceLayer: sourceLayer)
+    }
+
+    private func stableAudioPayload(prompt text: String, mode: String, sourceLayer: Int?) -> StableAudioRenderPayload {
+        StableAudioRenderPayload(
+            prompt: text,
+            mode: mode,
+            duration: stableDuration,
+            provider: "local",
+            model: "stable-audio-3-local",
+            decoder: stableDecoder,
+            localProvider: stableLocalProvider,
+            localModel: stableLocalModel,
+            serviceURL: stableServiceURL,
+            chunkedDecode: stableChunkedDecode,
+            sourceLayer: sourceLayer,
+            targetLayer: "first_empty",
+            assignLayer: true,
+            tags: ["stable-audio", "mode:\(mode)", sourceLayer == nil ? "workflow:text-to-audio" : "workflow:audio-to-audio"],
+            negativePrompt: stableNegativePrompt,
+            seed: Int(stableSeed.trimmingCharacters(in: .whitespacesAndNewlines)),
+            steps: stableSteps,
+            cfgScale: stableCfgScale,
+            noiseDepth: mode == "generate" ? nil : stableNoiseDepth,
+            inpaintStart: nil,
+            inpaintEnd: nil,
+            variationCount: 1,
+            loraStack: [],
+            loraAPath: "",
+            loraAStrength: 0,
+            loraBPath: "",
+            loraBStrength: 0,
+            loraIntervalMin: 0,
+            loraIntervalMax: 1
+        )
     }
 
     private func logColor(_ line: String) -> Color {
@@ -1097,6 +1327,172 @@ private struct SettingMenu: View {
     }
 }
 
+private struct StringSettingMenu: View {
+    let title: String
+    @Binding var selection: String
+    let values: [(value: String, label: String)]
+    let theme: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            Picker(title, selection: $selection) {
+                ForEach(values, id: \.value) { item in
+                    Text(item.label).tag(item.value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(height: 30)
+            .frame(maxWidth: .infinity)
+            .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DashboardTheme.border(theme), lineWidth: 1)
+            )
+        }
+        .frame(minWidth: 120)
+    }
+}
+
+private struct NumericSettingField: View {
+    let title: String
+    @Binding var value: Double
+    let suffix: String
+    let theme: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            HStack(spacing: 4) {
+                TextField(title, value: $value, format: .number.precision(.fractionLength(2)))
+                    .labelsHidden()
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, design: .monospaced))
+                if !suffix.isEmpty {
+                    Text(suffix)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(DashboardTheme.dim(theme))
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DashboardTheme.border(theme), lineWidth: 1)
+            )
+        }
+        .frame(minWidth: 86)
+    }
+}
+
+private struct IntSettingField: View {
+    let title: String
+    @Binding var value: Int
+    let theme: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            TextField(title, value: $value, format: .number)
+                .labelsHidden()
+                .textFieldStyle(.plain)
+                .font(.system(size: 11, design: .monospaced))
+                .padding(.horizontal, 8)
+                .frame(height: 30)
+                .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(DashboardTheme.border(theme), lineWidth: 1)
+                )
+        }
+        .frame(minWidth: 76)
+    }
+}
+
+private struct TextSettingField: View {
+    let title: String
+    @Binding var value: String
+    let placeholder: String
+    let theme: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            TextField(placeholder, text: $value)
+                .labelsHidden()
+                .textFieldStyle(.plain)
+                .font(.system(size: 11, design: .monospaced))
+                .padding(.horizontal, 8)
+                .frame(height: 30)
+                .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(DashboardTheme.border(theme), lineWidth: 1)
+                )
+        }
+        .frame(minWidth: 100)
+    }
+}
+
+private struct DeviceMenu: View {
+    let title: String
+    @Binding var selection: Int
+    let devices: [AudioDevice]
+    let defaultDeviceID: Int?
+    let systemLabel: String
+    let theme: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(DashboardTheme.dim(theme))
+            Picker(title, selection: $selection) {
+                Text(systemLabel).tag(-1)
+                ForEach(devices) { device in
+                    Text(label(for: device)).tag(device.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(height: 30)
+            .frame(maxWidth: .infinity)
+            .background(DashboardTheme.inset(theme), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DashboardTheme.border(theme), lineWidth: 1)
+            )
+        }
+        .frame(minWidth: 190)
+    }
+
+    private func label(for device: AudioDevice) -> String {
+        let channelCount = device.isInput ? device.maxInputChannels : device.maxOutputChannels
+        let defaultSuffix = device.id == defaultDeviceID ? " · default" : ""
+        return "\(device.name) (\(channelCount) ch\(defaultSuffix))"
+    }
+}
+
 private struct EngineMenu: View {
     let title: String
     @Binding var selection: String
@@ -1112,7 +1508,7 @@ private struct EngineMenu: View {
                 .foregroundStyle(DashboardTheme.dim(theme))
             Picker(title, selection: $selection) {
                 if engines.isEmpty {
-                    Text("Local Mock").tag("local-mock")
+                    Text("Local SA3").tag("stable-audio-3-local")
                 } else {
                     ForEach(engines) { engine in
                         Text(label(for: engine))
@@ -1396,7 +1792,7 @@ private struct AboutOverlay: View {
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(DashboardTheme.secondary(theme))
 
-                Text("Local-first BYOK sound workstation. The macOS app controls the Python engine through a localhost daemon, stores provider keys in macOS Keychain, keeps Local Mock available, and writes generated sounds into the local ORAM Library.")
+                Text("Local-first BYOK sound workstation. The macOS app controls the Python engine through a localhost daemon, stores provider keys in macOS Keychain, opens with Local SA3, and writes generated sounds into the local ORAM Library.")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(DashboardTheme.dim(theme))
                     .fixedSize(horizontal: false, vertical: true)

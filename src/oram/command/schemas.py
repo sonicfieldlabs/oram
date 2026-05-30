@@ -42,7 +42,8 @@ VALID_ENGINES = frozenset({
     "elevenlabs-sfx", "elevenlabs-tts", "elevenlabs-music", "elevenlabs-scribe",
     "elevenlabs-voice-changer", "elevenlabs-voice-design", "elevenlabs-isolation",
     "stability-stable-audio-2", "stable-audio-2", "stable-audio-25",
-    "stability-stable-audio-25", "local", "local-mock",
+    "stability-stable-audio-25", "stability-stable-audio-3", "stable-audio-3",
+    "stable-audio-3-local", "local", "local-mock",
 })
 
 VALID_ENGINE_PREFIXES = ("elevenlabs-", "stability-", "stable-audio-", "local-")

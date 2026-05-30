@@ -130,7 +130,9 @@ juce::String OramAudioProcessor::generationModelForProvider (const juce::String&
     if (provider == "elevenlabs")
         return "elevenlabs-sfx";
     if (provider == "stability")
-        return "stability-stable-audio-25";
+        return "stability-stable-audio-3";
+    if (provider == "local")
+        return "stable-audio-3-local";
     return "local-mock";
 }
 

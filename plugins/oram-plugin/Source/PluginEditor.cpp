@@ -71,7 +71,9 @@ OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
         if (providerSelector.getText() == "elevenlabs")
             modelSelector.setText ("elevenlabs-sfx", juce::dontSendNotification);
         else if (providerSelector.getText() == "stability")
-            modelSelector.setText ("stability-stable-audio-25", juce::dontSendNotification);
+            modelSelector.setText ("stability-stable-audio-3", juce::dontSendNotification);
+        else if (providerSelector.getText() == "local")
+            modelSelector.setText ("stable-audio-3-local", juce::dontSendNotification);
         else
             modelSelector.setText ("local-mock", juce::dontSendNotification);
     };
@@ -79,7 +81,9 @@ OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
 
     modelSelector.addItem ("local-mock", 1);
     modelSelector.addItem ("elevenlabs-sfx", 2);
-    modelSelector.addItem ("stability-stable-audio-25", 3);
+    modelSelector.addItem ("stable-audio-3-local", 3);
+    modelSelector.addItem ("stability-stable-audio-3", 4);
+    modelSelector.addItem ("stability-stable-audio-25", 5);
     modelSelector.setText ("local-mock", juce::dontSendNotification);
     addAndMakeVisible (modelSelector);
 
@@ -159,7 +163,24 @@ void OramAudioProcessorEditor::resized()
     controls.removeFromLeft (6);
     clearButton.setBounds (controls.removeFromLeft (72));
 
-    bounds.removeFromTop (14);
+    bounds.removeFromTop (18);
+    auto sliderRow = bounds.removeFromTop (56);
+    auto inputArea = sliderRow.removeFromLeft ((sliderRow.getWidth() - 16) / 2);
+    sliderRow.removeFromLeft (16);
+    inputMonitorLabel.setBounds (inputArea.removeFromTop (18));
+    inputMonitorSlider.setBounds (inputArea);
+    loopLevelLabel.setBounds (sliderRow.removeFromTop (18));
+    loopLevelSlider.setBounds (sliderRow);
+
+    bounds.removeFromTop (18);
+    const auto labelHeight = 46;
+    for (auto& label : layerLabels)
+    {
+        label.setBounds (bounds.removeFromTop (labelHeight));
+        bounds.removeFromTop (8);
+    }
+
+    bounds.removeFromTop (6);
     auto promptRow = bounds.removeFromTop (rowHeight);
     generateButton.setBounds (promptRow.removeFromRight (110));
     promptRow.removeFromRight (8);
@@ -179,23 +200,6 @@ void OramAudioProcessorEditor::resized()
     commandButton.setBounds (commandRow.removeFromRight (110));
     commandRow.removeFromRight (8);
     commandEditor.setBounds (commandRow);
-
-    bounds.removeFromTop (18);
-    auto sliderRow = bounds.removeFromTop (56);
-    auto inputArea = sliderRow.removeFromLeft ((sliderRow.getWidth() - 16) / 2);
-    sliderRow.removeFromLeft (16);
-    inputMonitorLabel.setBounds (inputArea.removeFromTop (18));
-    inputMonitorSlider.setBounds (inputArea);
-    loopLevelLabel.setBounds (sliderRow.removeFromTop (18));
-    loopLevelSlider.setBounds (sliderRow);
-
-    bounds.removeFromTop (18);
-    const auto labelHeight = 46;
-    for (auto& label : layerLabels)
-    {
-        label.setBounds (bounds.removeFromTop (labelHeight));
-        bounds.removeFromTop (8);
-    }
 }
 
 void OramAudioProcessorEditor::timerCallback()

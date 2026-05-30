@@ -149,7 +149,6 @@ def export(session_path: str = typer.Argument(..., help="path to session folder"
 def dashboard(
     host: str = typer.Option("127.0.0.1", "--host", help="server host"),
     port: int = typer.Option(3333, "--port", help="server port"),
-    mock_audio: bool = typer.Option(False, "--mock-audio", help="use mock audio engine"),
     allow_lan: bool = typer.Option(False, "--allow-lan", help="bind to 0.0.0.0 (exposes on LAN)"),
 ) -> None:
     """launch the web dashboard."""
@@ -187,7 +186,7 @@ def dashboard(
 
     from oram.web.server import run_server
 
-    run_server(host=host, port=port, mock_audio=mock_audio, allow_lan=exposes_lan)
+    run_server(host=host, port=port, allow_lan=exposes_lan)
 
 
 @cli.command()

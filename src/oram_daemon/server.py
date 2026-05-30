@@ -17,9 +17,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from oram import __version__
 from oram.agent.controller import AgentController
 from oram.app import _build_gateway
 from oram.audio.engine import MockAudioEngine
+from oram.audio.importer import MAX_UPLOAD_BYTES, assign_imported_audio, decode_audio_bytes
 from oram.audio.layer import LayerManager
 from oram.command.router import ActionRouter
 from oram.command.schemas import (
@@ -48,7 +50,7 @@ def package_version() -> str:
     try:
         return version("oram")
     except PackageNotFoundError:
-        return "0.0.0"
+        return __version__
 
 
 class CommandRequest(BaseModel):
@@ -74,6 +76,48 @@ class PluginGenerateRequest(BaseModel):
     provider: str = "auto"
     model: str = "local-mock"
     tags: list[str] = Field(default_factory=list)
+
+
+class StableAudioLoraRequest(BaseModel):
+    name: str = ""
+    path: str = ""
+    strength: float = Field(default=1.0, ge=0.0, le=10.0)
+    conditioner_strength: float | None = Field(default=None, ge=0.0, le=10.0)
+    interval: list[float] | None = None
+    layer_filter: str = ""
+
+
+class StableAudioRenderRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    mode: str = Field(default="generate", pattern="^(generate|morph|continue|inpaint|latent|lora_mixer)$")
+    duration: float = 8.0
+    provider: str = "auto"
+    model: str = "auto"
+    decoder: str = "same-s"
+    local_provider: str = "stable_audio_mlx"
+    local_model: str = "sm-music"
+    service_url: str = ""
+    chunked_decode: bool = True
+    source_layer: int | str | None = None
+    target_layer: int | str | None = "first_empty"
+    assign_layer: bool = True
+    tags: list[str] = Field(default_factory=list)
+    negative_prompt: str = ""
+    seed: int | None = None
+    steps: int = Field(default=8, ge=1, le=100)
+    cfg_scale: float = Field(default=1.0, ge=0.0, le=20.0)
+    noise_depth: float | None = Field(default=None, ge=0.0, le=1.0)
+    inpaint_start: float | None = Field(default=None, ge=0.0)
+    inpaint_end: float | None = Field(default=None, ge=0.0)
+    variation_count: int = Field(default=1, ge=1, le=16)
+    lora_stack: list[StableAudioLoraRequest] = Field(default_factory=list)
+    lora_a_path: str = ""
+    lora_a_strength: float = Field(default=0.0, ge=0.0, le=10.0)
+    lora_b_path: str = ""
+    lora_b_strength: float = Field(default=0.0, ge=0.0, le=10.0)
+    lora_interval_min: float = Field(default=0.0, ge=0.0, le=1.0)
+    lora_interval_max: float = Field(default=1.0, ge=0.0, le=1.0)
+    init_audio_path: str | None = None
 
 
 class LayerTargetRequest(BaseModel):
@@ -171,6 +215,7 @@ class LocalOramService:
         mock_audio: bool = False,
     ):
         self.config = config
+        self.mock_audio = mock_audio or config.mock_audio
         self.library = library or OramLibrary()
         self.credential_store = credential_store or default_credential_store()
         self.logs: list[str] = []
@@ -194,7 +239,7 @@ class LocalOramService:
             else None
         )
         self.agent = AgentController(llm_adapter=None)
-        self.engine = self._build_audio_engine(mock_audio=mock_audio or config.mock_audio)
+        self.engine = self._build_audio_engine(mock_audio=self.mock_audio)
         self.router = ActionRouter(
             session=self.session,
             layer_manager=self.layers,
@@ -266,6 +311,15 @@ class LocalOramService:
             sample_rate=self.config.sample_rate,
             block_size=self.config.block_size,
         )
+
+    def _restart_audio_engine(self) -> str:
+        self.engine.stop()
+        self.engine = self._build_audio_engine(mock_audio=self.mock_audio)
+        self.router.engine = self.engine
+        self.engine.start()
+        if bool(getattr(self.engine, "has_input", lambda: True)()):
+            return "audio engine restarted"
+        return "audio engine restarted without input"
 
     def append_log(self, message: str) -> None:
         self.logs.append(redact_text(message))
@@ -473,6 +527,237 @@ class LocalOramService:
             "sound": record.as_dict(),
         }
 
+    def stable_audio_modes(self) -> dict[str, Any]:
+        """Return SA3 modes and control metadata for apps, plugins, and Max clients."""
+        return {
+            "modes": [
+                {
+                    "id": "generate",
+                    "label": "ORAM Generate",
+                    "requires_source": False,
+                    "controls": ["prompt", "duration", "seed", "variation_count"],
+                },
+                {
+                    "id": "morph",
+                    "label": "ORAM Morph",
+                    "requires_source": True,
+                    "controls": ["prompt", "duration", "seed", "noise_depth"],
+                },
+                {
+                    "id": "continue",
+                    "label": "ORAM Continue",
+                    "requires_source": True,
+                    "controls": ["prompt", "duration", "seed", "inpaint_range"],
+                },
+                {
+                    "id": "inpaint",
+                    "label": "ORAM Inpaint",
+                    "requires_source": True,
+                    "controls": ["prompt", "seed", "noise_depth", "inpaint_range"],
+                },
+                {
+                    "id": "lora_mixer",
+                    "label": "ORAM LoRA Mixer",
+                    "requires_source": False,
+                    "controls": ["prompt", "duration", "seed", "lora_stack", "lora_interval"],
+                },
+                {
+                    "id": "latent",
+                    "label": "ORAM Latent",
+                    "requires_source": True,
+                    "controls": ["prompt", "duration", "seed"],
+                    "status": "sidecar_required",
+                },
+            ],
+            "default_model": self._select_stable_audio_engine("auto", "auto"),
+            "available_engines": [
+                spec.id
+                for spec in self.engine_registry.list_engines()
+                if "stable-audio-3" in spec.id or spec.id.startswith("stability-stable-audio")
+            ],
+        }
+
+    def stable_audio_render(
+        self,
+        req: StableAudioRenderRequest,
+        *,
+        plugin_owned: bool = False,
+    ) -> dict[str, Any]:
+        """Render an ORAM Stable Audio mode and store the returned clip."""
+        self.refresh_provider_credentials()
+        audio_epoch = self.router.audio_kill_epoch
+        source_layer = self._stable_audio_source_layer(req)
+        duration = self.config.validate_duration(req.duration, kind="generated")
+        if req.mode == "continue" and source_layer is not None and duration <= source_layer.duration_seconds:
+            duration = self.config.validate_duration(source_layer.duration_seconds + req.duration, kind="generated")
+
+        params = self._stable_audio_params(req, source_layer=source_layer, duration=duration)
+        engine = self._select_stable_audio_engine(req.model, req.provider)
+        provider = _provider_for_engine(engine, req.provider)
+        intent = _stable_audio_intent(req.mode)
+
+        audio = self.router._call_engine(
+            engine,
+            req.prompt,
+            duration,
+            source_layer,
+            intent=intent,
+            provider=provider if req.provider != "auto" else "",
+            parameters=params,
+            allow_mock_fallback=False,
+        )
+        if audio is None:
+            return {
+                "status": "error",
+                "error": "generation_failed",
+                "message": f"Stable Audio {req.mode} failed or no SA3 engine is available",
+            }
+
+        if not self.router.is_audio_epoch_current(audio_epoch):
+            self.append_log("stable audio generation discarded after kill")
+            return {"status": "cancelled", "message": "generation discarded after kill"}
+
+        tags = _stable_audio_tags(req)
+        record = self.library.store_sound(
+            audio,
+            self.session.sample_rate,
+            prompt=req.prompt,
+            provider=provider,
+            model=engine,
+            session_id=self.session.id,
+            tags=tags,
+        )
+
+        layer_slot = None
+        if req.assign_layer and not plugin_owned:
+            target = self._stable_audio_target_layer(req, source_layer=source_layer)
+            if target is not None:
+                self.layers.assign_buffer(target, audio)
+                target.is_generated = True
+                target.source_type = SourceType.GENERATED
+                target.generation_prompt = req.prompt
+                target.engine_provider = provider
+                target.parent_layer_id = source_layer.id if source_layer is not None else target.parent_layer_id
+                target.generation_depth = (source_layer.generation_depth + 1) if source_layer is not None else 0
+                self.session.generated_bed_id = target.slot
+                layer_slot = target.slot + 1
+
+        self.session.mode = Mode.RECORD
+        self.append_log(f"stable audio {req.mode}: {record.id} via {provider}/{engine}")
+        return {
+            "status": "ok",
+            "sound": record.as_dict(),
+            "layer": layer_slot,
+            "mode": req.mode,
+            "engine": engine,
+        }
+
+    def _stable_audio_source_layer(self, req: StableAudioRenderRequest):
+        if req.init_audio_path:
+            return None
+        if req.mode in {"generate", "lora_mixer"} and req.source_layer is None:
+            return None
+        target = req.source_layer or "selected"
+        layer = self.layers.get_layer(target)
+        if layer.is_empty:
+            raise ValueError(f"source layer {layer.slot + 1} is empty")
+        return layer
+
+    def _stable_audio_target_layer(self, req: StableAudioRenderRequest, *, source_layer=None):
+        target = req.target_layer
+        if target is None or target == "none":
+            return None
+        if target == "source" and source_layer is not None:
+            return source_layer
+        if target == "first_empty":
+            return self.layers.find_empty_layer()
+        return self.layers.get_layer(target)
+
+    def _stable_audio_params(
+        self,
+        req: StableAudioRenderRequest,
+        *,
+        source_layer=None,
+        duration: float,
+    ) -> dict[str, Any]:
+        ranges = []
+        if req.inpaint_start is not None and req.inpaint_end is not None:
+            ranges.append({"start": req.inpaint_start, "end": req.inpaint_end})
+        elif source_layer is not None and req.mode in {"inpaint", "continue"} and source_layer.looper.enabled:
+            end = source_layer.looper.end_offset if source_layer.looper.end_offset > 0 else source_layer.length_samples
+            ranges.append({
+                "start": round(source_layer.looper.start_offset / source_layer.sample_rate, 4),
+                "end": round(end / source_layer.sample_rate, 4),
+            })
+        elif source_layer is not None and req.mode == "continue":
+            ranges.append({
+                "start": round(source_layer.duration_seconds, 4),
+                "end": round(duration, 4),
+            })
+
+        lora_stack = [lora.model_dump(exclude_none=True) for lora in req.lora_stack if lora.path]
+        if req.lora_a_path and req.lora_a_strength > 0:
+            lora_stack.append({
+                "name": "LoRA A",
+                "path": req.lora_a_path,
+                "strength": req.lora_a_strength,
+                "interval": [req.lora_interval_min, req.lora_interval_max],
+            })
+        if req.lora_b_path and req.lora_b_strength > 0:
+            lora_stack.append({
+                "name": "LoRA B",
+                "path": req.lora_b_path,
+                "strength": req.lora_b_strength,
+                "interval": [req.lora_interval_min, req.lora_interval_max],
+            })
+
+        params: dict[str, Any] = {
+            "stable_audio_mode": req.mode,
+            "decoder": req.decoder,
+            "steps": req.steps,
+            "cfg_scale": req.cfg_scale,
+            "seed": req.seed,
+            "negative_prompt": req.negative_prompt,
+            "variation_count": req.variation_count,
+            "inpaint_ranges": ranges,
+            "lora_stack": lora_stack,
+            "local_provider": req.local_provider,
+            "local_model": req.local_model,
+            "service_url": req.service_url,
+            "chunked_decode": req.chunked_decode,
+        }
+        if source_layer is not None:
+            params["source_duration"] = round(source_layer.duration_seconds, 4)
+        if req.noise_depth is not None:
+            params["init_noise_level"] = req.noise_depth
+        if req.init_audio_path:
+            params["init_audio_path"] = req.init_audio_path
+        return params
+
+    def _select_stable_audio_engine(self, model: str, provider: str) -> str:
+        aliases = {
+            "": "auto",
+            "auto": "auto",
+            "stable-audio-3": "stability-stable-audio-3",
+            "sa3": "stable-audio-3-local",
+            "local-sa3": "stable-audio-3-local",
+        }
+        requested = aliases.get(model, model)
+        if requested != "auto":
+            return requested
+        if provider == "local":
+            return "stable-audio-3-local"
+        if provider == "stability":
+            return "stability-stable-audio-3"
+
+        local = self.engine_registry.get("stable-audio-3-local")
+        if local is not None and local.is_available():
+            return "stable-audio-3-local"
+        stability = self.engine_registry.get("stability-stable-audio-3")
+        if stability is not None and stability.is_available():
+            return "stability-stable-audio-3"
+        return "stable-audio-3-local"
+
     def record_start(self, req: RecordStartRequest) -> dict[str, Any]:
         action = RecordAction(target=req.target, duration=req.duration)
         message = self.router.route(action, raw_text="daemon:record/start")
@@ -486,6 +771,20 @@ class LocalOramService:
         action = ClearLayerAction(target=req.target, confirmed=True)
         message = self.router.route(action, raw_text=f"daemon:clear-layer:{req.target}")
         return {"status": "ok", "message": message}
+
+    def upload_layer(self, *, target: int, filename: str, data: bytes) -> dict[str, Any]:
+        layer = self.layers.get_layer(target)
+        audio, sample_rate = decode_audio_bytes(data, target_sample_rate=self.session.sample_rate)
+        assign_imported_audio(self.layers, layer, audio, filename=filename, sample_rate=sample_rate)
+        self.append_log(f"uploaded {filename} -> layer {target}")
+        return {
+            "status": "ok",
+            "message": f"uploaded {filename} to layer {target}",
+            "layer": target,
+            "filename": filename,
+            "duration": round(float(audio.shape[0]) / sample_rate, 3),
+            "sample_rate": sample_rate,
+        }
 
     def export_layer(self, req: LayerTargetRequest) -> dict[str, Any]:
         try:
@@ -638,6 +937,10 @@ class LocalOramService:
     def update_settings(self, req: SettingsRequest) -> dict[str, Any]:
         changes = []
         has_audio = any(not layer.is_empty for layer in self.layers.layers)
+        restart_audio = False
+
+        requested_input = None if req.input_device == -1 else req.input_device
+        requested_output = None if req.output_device == -1 else req.output_device
 
         if req.sample_rate is not None and req.sample_rate in (22050, 44100, 48000, 96000):
             if req.sample_rate != self.config.sample_rate:
@@ -650,25 +953,32 @@ class LocalOramService:
                     for layer in self.layers.layers:
                         layer.sample_rate = req.sample_rate
                     changes.append(f"sample rate -> {req.sample_rate} Hz")
+                    restart_audio = True
 
         if req.block_size is not None and req.block_size in (64, 128, 256, 512, 1024, 2048):
             if req.block_size != self.config.block_size:
                 self.config.block_size = req.block_size
                 changes.append(f"block size -> {req.block_size}")
+                restart_audio = True
 
-        if req.input_device is not None and req.input_device != self.config.input_device:
-            self.config.input_device = req.input_device
-            changes.append(f"input device -> {req.input_device}")
+        if "input_device" in req.model_fields_set and requested_input != self.config.input_device:
+            self.config.input_device = requested_input
+            changes.append(f"input device -> {requested_input if requested_input is not None else 'system default'}")
+            restart_audio = True
 
-        if req.output_device is not None and req.output_device != self.config.output_device:
-            self.config.output_device = req.output_device
-            changes.append(f"output device -> {req.output_device}")
+        if "output_device" in req.model_fields_set and requested_output != self.config.output_device:
+            self.config.output_device = requested_output
+            changes.append(f"output device -> {requested_output if requested_output is not None else 'system default'}")
+            restart_audio = True
 
         if req.bit_depth is not None and req.bit_depth in (16, 24, 32):
             changes.append(f"bit depth -> {req.bit_depth}-bit")
 
         if req.rec_format is not None and req.rec_format in ("wav", "aiff", "flac"):
             changes.append(f"format -> {req.rec_format}")
+
+        if restart_audio:
+            changes.append(self._restart_audio_engine())
 
         message = "settings: " + ", ".join(changes) if changes else "no changes"
         self.append_log(message)
@@ -755,11 +1065,36 @@ def _provider_for_engine(engine: str, requested: str) -> str:
         return requested
     if engine.startswith("elevenlabs") or engine in {"sfx", "voice", "music"}:
         return "elevenlabs"
-    if engine.startswith("stability") or engine in {"stable-audio-2", "stable-audio-2.5"}:
+    if engine == "stable-audio-3-local":
+        return "local"
+    if engine.startswith("stability") or engine in {"stable-audio-2", "stable-audio-2.5", "stable-audio-3"}:
         return "stability"
     if engine.startswith("stable"):
         return "fal"
     return "local"
+
+
+def _stable_audio_intent(mode: str) -> str:
+    if mode == "generate" or mode == "lora_mixer":
+        return "music"
+    if mode == "morph":
+        return "transform"
+    if mode == "inpaint":
+        return "inpaint"
+    if mode == "continue":
+        return "continue"
+    if mode == "latent":
+        return "latent"
+    return "sound_effect"
+
+
+def _stable_audio_tags(req: StableAudioRenderRequest) -> list[str]:
+    tags = {tag.strip() for tag in req.tags if tag.strip()}
+    tags.add("stable-audio")
+    tags.add(f"mode:{req.mode}")
+    if req.lora_stack or req.lora_a_path or req.lora_b_path:
+        tags.add("lora")
+    return sorted(tags)
 
 
 def create_app(
@@ -816,6 +1151,34 @@ def create_app(
     async def plugin_generate(req: PluginGenerateRequest):
         return await asyncio.to_thread(service.plugin_generate, req)
 
+    @app.get("/stable-audio/modes")
+    async def stable_audio_modes():
+        return service.stable_audio_modes()
+
+    @app.post("/stable-audio/render")
+    async def stable_audio_render(req: StableAudioRenderRequest):
+        try:
+            payload = await asyncio.to_thread(service.stable_audio_render, req)
+        except ValueError as exc:
+            return JSONResponse(
+                {"status": "error", "error": "invalid_request", "message": redact_text(exc)},
+                status_code=400,
+            )
+        status = 400 if payload.get("status") == "error" else 200
+        return JSONResponse(payload, status_code=status)
+
+    @app.post("/plugin/stable-audio/render")
+    async def plugin_stable_audio_render(req: StableAudioRenderRequest):
+        try:
+            payload = await asyncio.to_thread(service.stable_audio_render, req, plugin_owned=True)
+        except ValueError as exc:
+            return JSONResponse(
+                {"status": "error", "error": "invalid_request", "message": redact_text(exc)},
+                status_code=400,
+            )
+        status = 400 if payload.get("status") == "error" else 200
+        return JSONResponse(payload, status_code=status)
+
     @app.post("/record/start")
     async def record_start(req: RecordStartRequest):
         return service.record_start(req)
@@ -827,6 +1190,29 @@ def create_app(
     @app.post("/layer/clear")
     async def clear_layer(req: LayerTargetRequest):
         return service.clear_layer(req)
+
+    @app.post("/layer/upload")
+    async def upload_layer(request: Request, target: int = 1, filename: str = "uploaded.wav"):
+        if target < 1 or target > len(service.layers.layers):
+            return JSONResponse(
+                {"status": "error", "error": "invalid_layer", "message": f"layer {target} not found"},
+                status_code=400,
+            )
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > MAX_UPLOAD_BYTES:
+            return JSONResponse(
+                {"status": "error", "error": "file_too_large", "message": "audio upload is larger than 100 MB"},
+                status_code=413,
+            )
+        try:
+            data = await request.body()
+            payload = await asyncio.to_thread(service.upload_layer, target=target, filename=filename, data=data)
+        except ValueError as exc:
+            return JSONResponse(
+                {"status": "error", "error": "invalid_audio", "message": redact_text(exc)},
+                status_code=400,
+            )
+        return payload
 
     @app.post("/layer/export")
     async def export_layer(req: LayerTargetRequest):

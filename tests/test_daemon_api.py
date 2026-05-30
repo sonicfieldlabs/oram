@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+from io import BytesIO
+
+import numpy as np
 from starlette.testclient import TestClient
 
 from oram.config import OramConfig
 from oram_daemon.server import LocalOramService, create_app
 from oram_library import OramLibrary
 from oram_security.credentials import MemoryCredentialStore
+
+
+def _wav_bytes(sample_rate: int = 48000) -> bytes:
+    import soundfile as sf
+
+    buf = BytesIO()
+    audio = np.zeros((sample_rate // 20, 2), dtype=np.float32)
+    sf.write(buf, audio, sample_rate, format="WAV")
+    return buf.getvalue()
 
 
 def test_daemon_health_state_and_generate_no_secrets(tmp_path):
@@ -121,6 +133,56 @@ def test_daemon_dashboard_control_endpoints(tmp_path):
         cleared = client.post("/layer/clear", json={"target": 1})
         assert cleared.status_code == 200
         assert client.get("/state").json()["layers"][0]["state"] == "empty"
+
+
+def test_daemon_settings_restart_audio_and_accept_default_devices(tmp_path):
+    cfg = OramConfig(mock_audio=True, session_dir=tmp_path / "sessions")
+    service = LocalOramService(
+        cfg,
+        library=OramLibrary(tmp_path / "library"),
+        credential_store=MemoryCredentialStore(),
+        mock_audio=True,
+    )
+    app = create_app(service, auth_token="")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/settings",
+            json={"input_device": -1, "output_device": -1, "block_size": 256},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "audio engine restarted" in data["changes"]
+        assert client.get("/state").json()["block_size"] == 256
+        devices = client.get("/devices").json()
+        assert devices["current_input"] is None
+        assert devices["current_output"] is None
+
+
+def test_daemon_upload_layer_imports_audio(tmp_path):
+    cfg = OramConfig(mock_audio=True, session_dir=tmp_path / "sessions")
+    service = LocalOramService(
+        cfg,
+        library=OramLibrary(tmp_path / "library"),
+        credential_store=MemoryCredentialStore(),
+        mock_audio=True,
+    )
+    app = create_app(service, auth_token="")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/layer/upload?target=3&filename=field_recording.wav",
+            content=_wav_bytes(),
+            headers={"Content-Type": "audio/wav"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["layer"] == 3
+
+        state = client.get("/state").json()
+        layer = state["layers"][2]
+        assert layer["state"] == "active"
+        assert layer["source_type"] == "imported"
+        assert layer["duration"] > 0
 
 
 def test_plugin_parse_does_not_mutate_daemon_state(tmp_path):

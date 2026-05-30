@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 import os
+from io import BytesIO
 
+import numpy as np
 import pytest
 
 os.environ.pop("ORAM_DASHBOARD_TOKEN", None)
+
+
+def _wav_bytes(sample_rate: int = 48000) -> bytes:
+    import soundfile as sf
+
+    buf = BytesIO()
+    audio = np.zeros((sample_rate // 20, 2), dtype=np.float32)
+    sf.write(buf, audio, sample_rate, format="WAV")
+    return buf.getvalue()
 
 
 @pytest.fixture(scope="module")
@@ -101,6 +112,32 @@ class TestDevicesEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert "devices" in data
+
+
+class TestUploadLayerEndpoint:
+    """POST /api/upload-layer imports user audio into a layer."""
+
+    def test_upload_wav_to_layer(self, client):
+        import oram.web.server as srv
+
+        resp = client.post(
+            "/api/upload-layer?target=2&filename=user_loop.wav",
+            content=_wav_bytes(),
+            headers={"Content-Type": "audio/wav"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["layer"] == 2
+
+        state = client.get("/api/state").json()
+        layer = state["layers"][1]
+        assert layer["state"] == "active"
+        assert layer["source_type"] == "imported"
+        assert layer["duration"] > 0
+
+        assert srv._layer_manager is not None
+        srv._layer_manager.clear(srv._layer_manager.layers[1])
 
 
 class TestTokenAuthOnPost:

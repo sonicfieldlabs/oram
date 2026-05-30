@@ -6,6 +6,7 @@ final class AppStore: ObservableObject {
     @Published var health: Health?
     @Published var state: EngineState?
     @Published var providers: [ProviderEngine] = []
+    @Published var devices: DevicesResponse?
     @Published var credentials: [String: CredentialStatus] = [:]
     @Published var sounds: [SoundRecord] = []
     @Published var waveforms: [Int: WaveformPeaks] = [:]
@@ -43,6 +44,7 @@ final class AppStore: ObservableObject {
             let nextState = try await client.state()
             state = nextState
             providers = try await client.providers().engines
+            devices = try await client.devices()
             credentials = try await client.credentialStatus()
             sounds = try await client.sounds().sounds
             await refreshWaveforms(for: nextState)
@@ -77,6 +79,21 @@ final class AppStore: ObservableObject {
                 tags: tags
             )
             let response = try await client.generate(payload)
+            if let sound = response.sound {
+                selectedSoundID = sound.id
+            }
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func stableAudioRender(_ payload: StableAudioRenderPayload) async {
+        guard !payload.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isGenerating = true
+        defer { isGenerating = false }
+        do {
+            let response = try await client.stableAudioRender(payload)
             if let sound = response.sound {
                 selectedSoundID = sound.id
             }
@@ -207,9 +224,14 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func updateAudioSettings(sampleRate: Int?, blockSize: Int?) async {
+    func updateAudioSettings(sampleRate: Int?, blockSize: Int?, inputDevice: Int? = nil, outputDevice: Int? = nil) async {
         do {
-            try await client.updateSettings(sampleRate: sampleRate, blockSize: blockSize)
+            try await client.updateSettings(
+                sampleRate: sampleRate,
+                blockSize: blockSize,
+                inputDevice: inputDevice,
+                outputDevice: outputDevice
+            )
             await refreshAll()
         } catch {
             errorMessage = error.localizedDescription

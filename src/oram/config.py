@@ -88,6 +88,13 @@ class OramConfig:
     engine_router_mode: str = "auto"  # "auto" | "manual"
     preferred_provider: str = ""      # user's preferred provider override
 
+    # Stable Audio 3 local/API integration.
+    stable_audio_service_url: str = ""  # local service, defaults to Germinator when loaded from env
+    stable_audio_api_url: str = ""      # override Stability API route when needed
+    stable_audio_local_provider: str = "stable_audio_mlx"
+    stable_audio_local_model: str = "sm-music"
+    stable_audio_decoder: str = "same-s"
+
     # v2: dashboard security
     dashboard_token: str = ""
 
@@ -135,6 +142,18 @@ class OramConfig:
             cfg.engine_router_mode = v
         if v := os.environ.get("ORAM_PREFERRED_PROVIDER"):
             cfg.preferred_provider = v
+        if v := os.environ.get("ORAM_STABLE_AUDIO_SERVICE_URL"):
+            cfg.stable_audio_service_url = v
+        elif not os.environ.get("PYTEST_CURRENT_TEST"):
+            cfg.stable_audio_service_url = "http://127.0.0.1:8765"
+        if v := os.environ.get("ORAM_STABLE_AUDIO_API_URL"):
+            cfg.stable_audio_api_url = v
+        if v := os.environ.get("ORAM_STABLE_AUDIO_LOCAL_PROVIDER"):
+            cfg.stable_audio_local_provider = v
+        if v := os.environ.get("ORAM_STABLE_AUDIO_LOCAL_MODEL"):
+            cfg.stable_audio_local_model = v
+        if v := os.environ.get("ORAM_STABLE_AUDIO_DECODER"):
+            cfg.stable_audio_decoder = v
 
         # boolean env vars
         cfg.auto_listen = _bool_env("ORAM_AUTO_LISTEN", cfg.auto_listen)

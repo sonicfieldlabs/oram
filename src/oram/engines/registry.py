@@ -120,35 +120,40 @@ class EngineRegistry:
         """
         registry = cls()
 
-        # elevenlabs — primary premium engine
-        if config.elevenlabs_api_key:
-            try:
-                from oram.engines.elevenlabs import (
-                    ElevenLabsIsolationEngine,
-                    ElevenLabsMusicEngine,
-                    ElevenLabsScribeEngine,
-                    ElevenLabsSFXEngine,
-                    ElevenLabsVoiceChangerEngine,
-                    ElevenLabsVoiceDesignEngine,
-                    ElevenLabsVoiceEngine,
-                )
+        # elevenlabs — always register so BYOK modes remain selectable in API mode.
+        try:
+            from oram.engines.elevenlabs import (
+                ElevenLabsIsolationEngine,
+                ElevenLabsMusicEngine,
+                ElevenLabsScribeEngine,
+                ElevenLabsSFXEngine,
+                ElevenLabsVoiceChangerEngine,
+                ElevenLabsVoiceDesignEngine,
+                ElevenLabsVoiceEngine,
+            )
 
-                registry.register(ElevenLabsSFXEngine(api_key=config.elevenlabs_api_key))
-                registry.register(ElevenLabsVoiceEngine(api_key=config.elevenlabs_api_key))
-                registry.register(ElevenLabsMusicEngine(api_key=config.elevenlabs_api_key))
-                registry.register(ElevenLabsScribeEngine(api_key=config.elevenlabs_api_key))
-                registry.register(ElevenLabsVoiceChangerEngine(api_key=config.elevenlabs_api_key))
-                registry.register(ElevenLabsVoiceDesignEngine(api_key=config.elevenlabs_api_key))
-                registry.register(ElevenLabsIsolationEngine(api_key=config.elevenlabs_api_key))
-            except Exception as e:
-                log.warning("failed to register ElevenLabs engines: %s", e)
+            registry.register(ElevenLabsSFXEngine(api_key=config.elevenlabs_api_key))
+            registry.register(ElevenLabsVoiceEngine(api_key=config.elevenlabs_api_key))
+            registry.register(ElevenLabsMusicEngine(api_key=config.elevenlabs_api_key))
+            registry.register(ElevenLabsScribeEngine(api_key=config.elevenlabs_api_key))
+            registry.register(ElevenLabsVoiceChangerEngine(api_key=config.elevenlabs_api_key))
+            registry.register(ElevenLabsVoiceDesignEngine(api_key=config.elevenlabs_api_key))
+            registry.register(ElevenLabsIsolationEngine(api_key=config.elevenlabs_api_key))
+        except Exception as e:
+            log.warning("failed to register ElevenLabs engines: %s", e)
 
         # stability — Stable Audio direct API
         if getattr(config, "stability_api_key", ""):
             try:
-                from oram.engines.stable_audio import StabilityStableAudioEngine
+                from oram.engines.stable_audio import StabilityStableAudio3Engine, StabilityStableAudioEngine
 
                 registry.register(StabilityStableAudioEngine(api_key=config.stability_api_key))
+                registry.register(
+                    StabilityStableAudio3Engine(
+                        api_key=config.stability_api_key,
+                        api_url=getattr(config, "stable_audio_api_url", ""),
+                    )
+                )
             except Exception as e:
                 log.warning("failed to register Stability engines: %s", e)
 
@@ -163,6 +168,22 @@ class EngineRegistry:
                 registry.register(FalStableAudioEngine(api_key=config.fal_key))
             except Exception as e:
                 log.warning("failed to register Stable Audio engine: %s", e)
+
+        # Stable Audio 3 local sidecar / MLX service
+        if getattr(config, "stable_audio_service_url", "") or os.environ.get("ORAM_STABLE_AUDIO_SERVICE_URL", ""):
+            try:
+                from oram.engines.stable_audio import LocalStableAudio3Engine
+
+                registry.register(
+                    LocalStableAudio3Engine(
+                        base_url=getattr(config, "stable_audio_service_url", ""),
+                        provider_backend=getattr(config, "stable_audio_local_provider", "stable_audio_mlx"),
+                        model=getattr(config, "stable_audio_local_model", "sm-music"),
+                        decoder=getattr(config, "stable_audio_decoder", "same-s"),
+                    )
+                )
+            except Exception as e:
+                log.warning("failed to register local Stable Audio 3 engine: %s", e)
 
         # replicate — future sprint
         if getattr(config, "replicate_api_token", ""):

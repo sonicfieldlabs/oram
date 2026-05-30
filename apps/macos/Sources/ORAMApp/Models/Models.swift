@@ -240,6 +240,48 @@ struct ProvidersResponse: Decodable {
     let available: Int
 }
 
+struct AudioDevice: Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let maxInputChannels: Int
+    let maxOutputChannels: Int
+    let defaultSamplerate: Double
+    let isInput: Bool
+    let isOutput: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case maxInputChannels = "max_input_channels"
+        case maxOutputChannels = "max_output_channels"
+        case defaultSamplerate = "default_samplerate"
+        case isInput = "is_input"
+        case isOutput = "is_output"
+    }
+}
+
+struct DevicesResponse: Decodable {
+    let devices: [AudioDevice]
+    let defaultInput: Int
+    let defaultOutput: Int
+    let currentInput: Int?
+    let currentOutput: Int?
+    let currentSampleRate: Int
+    let currentFormat: String
+    let currentBitDepth: Int
+
+    enum CodingKeys: String, CodingKey {
+        case devices
+        case defaultInput = "default_input"
+        case defaultOutput = "default_output"
+        case currentInput = "current_input"
+        case currentOutput = "current_output"
+        case currentSampleRate = "current_sample_rate"
+        case currentFormat = "current_format"
+        case currentBitDepth = "current_bit_depth"
+    }
+}
+
 struct SoundRecord: Decodable, Identifiable {
     let id: String
     let createdAt: String
@@ -291,6 +333,77 @@ struct GeneratePayload: Encodable {
         case model
         case targetLayer = "target_layer"
         case tags
+    }
+}
+
+struct StableAudioLoraPayload: Encodable {
+    let name: String
+    let path: String
+    let strength: Double
+    let interval: [Double]?
+}
+
+struct StableAudioRenderPayload: Encodable {
+    let prompt: String
+    let mode: String
+    let duration: Double
+    let provider: String
+    let model: String
+    let decoder: String
+    let localProvider: String
+    let localModel: String
+    let serviceURL: String
+    let chunkedDecode: Bool
+    let sourceLayer: Int?
+    let targetLayer: String?
+    let assignLayer: Bool
+    let tags: [String]
+    let negativePrompt: String
+    let seed: Int?
+    let steps: Int
+    let cfgScale: Double
+    let noiseDepth: Double?
+    let inpaintStart: Double?
+    let inpaintEnd: Double?
+    let variationCount: Int
+    let loraStack: [StableAudioLoraPayload]
+    let loraAPath: String
+    let loraAStrength: Double
+    let loraBPath: String
+    let loraBStrength: Double
+    let loraIntervalMin: Double
+    let loraIntervalMax: Double
+
+    enum CodingKeys: String, CodingKey {
+        case prompt
+        case mode
+        case duration
+        case provider
+        case model
+        case decoder
+        case localProvider = "local_provider"
+        case localModel = "local_model"
+        case serviceURL = "service_url"
+        case chunkedDecode = "chunked_decode"
+        case sourceLayer = "source_layer"
+        case targetLayer = "target_layer"
+        case assignLayer = "assign_layer"
+        case tags
+        case negativePrompt = "negative_prompt"
+        case seed
+        case steps
+        case cfgScale = "cfg_scale"
+        case noiseDepth = "noise_depth"
+        case inpaintStart = "inpaint_start"
+        case inpaintEnd = "inpaint_end"
+        case variationCount = "variation_count"
+        case loraStack = "lora_stack"
+        case loraAPath = "lora_a_path"
+        case loraAStrength = "lora_a_strength"
+        case loraBPath = "lora_b_path"
+        case loraBStrength = "lora_b_strength"
+        case loraIntervalMin = "lora_interval_min"
+        case loraIntervalMax = "lora_interval_max"
     }
 }
 
