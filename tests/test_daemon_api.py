@@ -116,6 +116,14 @@ def test_daemon_dashboard_control_endpoints(tmp_path):
         assert volume.status_code == 200
         assert client.get("/state").json()["layers"][0]["volume"] == 0.5
 
+        quiet_volume = client.post("/layer/volume", json={"target": 1, "volume": 0.009})
+        assert quiet_volume.status_code == 200
+        assert client.get("/state").json()["layers"][0]["volume"] == 0.009
+
+        mute_volume = client.post("/layer/volume", json={"target": 1, "volume": 0})
+        assert mute_volume.status_code == 200
+        assert client.get("/state").json()["layers"][0]["volume"] == 0.0
+
         exported = client.post("/layer/export", json={"target": 1})
         assert exported.status_code == 200
         assert exported.json()["status"] == "ok"

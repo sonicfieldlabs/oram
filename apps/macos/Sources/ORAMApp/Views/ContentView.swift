@@ -1726,7 +1726,7 @@ private struct VolumeStrip: View {
                     .fill(DashboardTheme.inset(theme))
                 Rectangle()
                     .fill(fillColor.opacity(0.72))
-                    .frame(height: geo.size.height * min(max(currentValue, 0), 2) / 2)
+                    .frame(height: geo.size.height * CGFloat(position(for: currentValue)))
                 Rectangle()
                     .fill(DashboardTheme.secondary(theme).opacity(0.45))
                     .frame(height: 1)
@@ -1758,7 +1758,13 @@ private struct VolumeStrip: View {
     private func valueFor(y: CGFloat, height: CGFloat) -> Double {
         let clamped = max(0, min(height, height - y))
         let normalized = Double(clamped / max(height, 1))
-        return pow(normalized, 0.65) * 2
+        return pow(normalized, 1.8) * 2
+    }
+
+    private func position(for volume: Double) -> Double {
+        let clamped = min(max(volume, 0), 2)
+        guard clamped > 0 else { return 0 }
+        return pow(clamped / 2, 1 / 1.8)
     }
 }
 

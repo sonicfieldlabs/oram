@@ -119,7 +119,7 @@ def _get_state_snapshot() -> dict[str, Any]:
             "source_type": layer.source_type.value,
             "layer_mode": layer.layer_mode.value,
             "duration": round(layer.duration_seconds, 2),
-            "volume": round(layer.volume, 2),
+            "volume": round(layer.volume, 3),
             "pan": round(layer.pan, 2),
             "muted": layer.muted,
             "solo": layer.solo,

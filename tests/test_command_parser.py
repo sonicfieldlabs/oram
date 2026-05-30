@@ -188,6 +188,17 @@ class TestMixCommands:
         assert result.target == 1
         assert result.volume == 0.5
 
+    def test_set_volume_preserves_quiet_and_mute(self):
+        quiet = parser.parse("set volume layer 1 0.009")
+        assert isinstance(quiet, SetVolumeAction)
+        assert quiet.target == 1
+        assert quiet.volume == 0.009
+
+        mute = parser.parse("set volume layer 1 0")
+        assert isinstance(mute, SetVolumeAction)
+        assert mute.target == 1
+        assert mute.volume == 0
+
     def test_set_volume_percent(self):
         result = parser.parse("volume layer two 50")
         assert isinstance(result, SetVolumeAction)

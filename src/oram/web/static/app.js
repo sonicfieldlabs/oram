@@ -437,7 +437,7 @@
     // volume strip — vertical fill column (skip updates while dragging OR during post-drag cooldown)
     const volStrip = row.querySelector('.vol-strip');
     if (volStrip && !volStrip._dragging && !volStrip._cooldown) {
-      const rawVol = Math.round(volumeToStripPos(layer.volume || 1));
+      const rawVol = Math.round(volumeToStripPos(layerVolume(layer)));
       volStrip.dataset.value = rawVol;
       updateVolStripVisual(volStrip);
     }
@@ -1135,7 +1135,7 @@
 
   // exponential curve: knob position 0-200 → volume 0-200%
   // gives much more resolution at low volumes for quiet layers
-  // pos 0 → vol 0 (true mute), pos 100 → vol 1.0 (unity), pos 200 → vol 2.0
+  // pos 0 → vol 0 (true mute), pos ~136 → vol 1.0 (unity), pos 200 → vol 2.0
   function stripPosToVolume(pos) {
     if (pos <= 0) return 0;              // true mute at zero
     const norm = pos / 200;              // 0..1
@@ -1151,22 +1151,43 @@
     return Math.round(uncurved * 200);
   }
 
+  function layerVolume(layer) {
+    const vol = Number(layer?.volume);
+    return Number.isFinite(vol) ? Math.max(0, Math.min(2, vol)) : 1;
+  }
+
+  function stripValue(strip, fallback = 100) {
+    const val = parseInt(strip?.dataset?.value ?? '', 10);
+    return Number.isFinite(val) ? Math.max(0, Math.min(200, val)) : fallback;
+  }
+
+  function formatVolume(vol) {
+    const clamped = Math.max(0, Math.min(2, vol));
+    return clamped < 0.1 ? clamped.toFixed(3) : clamped.toFixed(2);
+  }
+
+  function volumeLabel(vol) {
+    if (vol <= 0) return 'mute';
+    if (vol < 0.01) return Math.max(0.1, Math.round(vol * 1000) / 10) + '%';
+    return Math.round(vol * 100) + '%';
+  }
+
   function updateVolStripVisual(strip) {
-    const val = parseInt(strip.dataset.value) || 100;
+    const val = stripValue(strip);
     const pct = Math.max(0, Math.min(100, (val / 200) * 100));
     const fill = strip.querySelector('.vol-strip-fill');
     if (fill) fill.style.height = pct + '%';
     const vol = stripPosToVolume(val);
     strip.classList.toggle('hot', vol > 1.1);
-    strip.classList.toggle('silent', vol < 0.01);
+    strip.classList.toggle('silent', vol <= 0);
     strip.setAttribute('aria-valuenow', String(val));
-    strip.setAttribute('aria-valuetext', vol.toFixed(2) + '×');
-    strip.dataset.display = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+    strip.setAttribute('aria-valuetext', formatVolume(vol) + '×');
+    strip.dataset.display = volumeLabel(vol);
   }
 
   function commitStripValue(strip) {
-    const val = parseInt(strip.dataset.value) || 100;
-    const vol = stripPosToVolume(val).toFixed(2);
+    const val = stripValue(strip);
+    const vol = formatVolume(stripPosToVolume(val));
     sendCommand('set volume layer ' + strip.dataset.target + ' ' + vol);
   }
 
@@ -1197,7 +1218,7 @@
       didLongPress = false;
       strip.classList.add('dragging');
       startY = e.clientY;
-      startVal = parseInt(strip.dataset.value) || 100;
+      startVal = stripValue(strip);
       strip.setPointerCapture(e.pointerId);
       showFloatingValue();
 
@@ -1253,7 +1274,7 @@
       e.preventDefault();
       const step = e.shiftKey ? 1 : 4;
       const delta = e.deltaY < 0 ? step : -step;
-      const cur = parseInt(strip.dataset.value) || 100;
+      const cur = stripValue(strip);
       const newVal = Math.max(0, Math.min(200, cur + delta));
       strip.dataset.value = newVal;
       updateVolStripVisual(strip);
@@ -1270,7 +1291,7 @@
 
     strip.addEventListener('keydown', (e) => {
       const step = e.shiftKey ? 1 : 5;
-      const cur = parseInt(strip.dataset.value) || 100;
+      const cur = stripValue(strip);
       let newVal = cur;
       if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { newVal = Math.min(200, cur + step); e.preventDefault(); }
       else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { newVal = Math.max(0, cur - step); e.preventDefault(); }
@@ -1651,7 +1672,7 @@
       unity.className = 'mixer-fader-unity';
       fader.appendChild(fill);
       fader.appendChild(unity);
-      const vol = layer.volume || 1;
+      const vol = layerVolume(layer);
       const pos = volumeToStripPos(vol);
       const pct = Math.max(0, Math.min(100, (pos / 200) * 100));
       fill.style.height = pct + '%';
@@ -1663,7 +1684,7 @@
       // dB readout
       const dbLabel = document.createElement('div');
       dbLabel.className = 'mixer-fader-db';
-      dbLabel.textContent = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+      dbLabel.textContent = volumeLabel(vol);
       ch.appendChild(dbLabel);
 
       // pan track
@@ -1709,10 +1730,10 @@
 
       // mute/solo clicks
       muteBtn.addEventListener('click', () => {
-        sendCommand('mute ' + muteBtn.dataset.target);
+        sendCommand('mute layer ' + muteBtn.dataset.target);
       });
       soloBtn.addEventListener('click', () => {
-        sendCommand('solo ' + soloBtn.dataset.target);
+        sendCommand('solo layer ' + soloBtn.dataset.target);
       });
     });
 
@@ -1751,14 +1772,14 @@
       // update fader (if not dragging)
       const fader = ch.querySelector('.mixer-fader-wrap');
       if (fader && !fader._dragging && !fader._cooldown) {
-        const vol = layer.volume || 1;
+        const vol = layerVolume(layer);
         const pos = volumeToStripPos(vol);
         const pct = Math.max(0, Math.min(100, (pos / 200) * 100));
         const fill = fader.querySelector('.mixer-fader-fill');
         if (fill) fill.style.height = pct + '%';
         fader.classList.toggle('hot', vol > 1.1);
         const dbLabel = ch.querySelector('.mixer-fader-db');
-        if (dbLabel) dbLabel.textContent = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+        if (dbLabel) dbLabel.textContent = volumeLabel(vol);
       }
 
       // update mute/solo states
@@ -1791,7 +1812,7 @@
       fader._dragging = true;
       startY = e.clientY;
       const layerData = state.layers?.[target - 1];
-      startVal = volumeToStripPos(layerData?.volume || 1);
+      startVal = volumeToStripPos(layerVolume(layerData));
       fader.setPointerCapture(e.pointerId);
     });
 
@@ -1804,7 +1825,7 @@
       fill.style.height = pct + '%';
       fader.classList.toggle('hot', stripPosToVolume(newVal) > 1.1);
       const vol = stripPosToVolume(newVal);
-      dbLabel.textContent = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+      dbLabel.textContent = volumeLabel(vol);
       fader._currentVal = newVal;
     });
 
@@ -1812,7 +1833,7 @@
       if (!fader._dragging) return;
       fader._dragging = false;
       if (fader._currentVal != null) {
-        const vol = stripPosToVolume(fader._currentVal).toFixed(2);
+        const vol = formatVolume(stripPosToVolume(fader._currentVal));
         sendCommand('set volume layer ' + target + ' ' + vol);
         startCooldown();
         // sync the corresponding layer vol-strip
@@ -1830,7 +1851,7 @@
       if (fader._dragging) {
         fader._dragging = false;
         if (fader._currentVal != null) {
-          const vol = stripPosToVolume(fader._currentVal).toFixed(2);
+          const vol = formatVolume(stripPosToVolume(fader._currentVal));
           sendCommand('set volume layer ' + target + ' ' + vol);
           startCooldown();
         }
@@ -1918,7 +1939,7 @@
     muteBtn.className = 'vol-expanded-mute' + (layer.muted ? ' on' : '');
     muteBtn.textContent = layer.muted ? 'unmute' : 'mute';
     muteBtn.addEventListener('click', () => {
-      sendCommand('mute ' + target);
+      sendCommand('mute layer ' + target);
       muteBtn.classList.toggle('on');
       muteBtn.textContent = muteBtn.classList.contains('on') ? 'unmute' : 'mute';
     });
@@ -1928,13 +1949,13 @@
     document.body.appendChild(overlay);
 
     // sync initial value from strip
-    let currentVal = parseInt(strip.dataset.value) || 100;
+    let currentVal = stripValue(strip);
 
     function updateVisual() {
       const pct = Math.max(0, Math.min(100, (currentVal / 200) * 100));
       fill.style.height = pct + '%';
       const vol = stripPosToVolume(currentVal);
-      valueEl.textContent = vol < 0.01 ? 'mute' : Math.round(vol * 100) + '%';
+      valueEl.textContent = volumeLabel(vol);
     }
     updateVisual();
 
@@ -1961,7 +1982,7 @@
     fader.addEventListener('pointerup', () => {
       if (!isDragging) return;
       isDragging = false;
-      const vol = stripPosToVolume(currentVal).toFixed(2);
+      const vol = formatVolume(stripPosToVolume(currentVal));
       sendCommand('set volume layer ' + target + ' ' + vol);
       // sync back to layer strip
       strip.dataset.value = currentVal;

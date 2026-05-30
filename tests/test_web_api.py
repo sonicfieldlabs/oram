@@ -65,6 +65,15 @@ class TestCommandEndpoint:
         data = resp.json()
         assert data["action"]["action"] == "unknown"
 
+    def test_volume_command_preserves_quiet_and_mute(self, client):
+        quiet = client.post("/api/command", json={"text": "set volume layer 1 0.009"})
+        assert quiet.status_code == 200
+        assert client.get("/api/state").json()["layers"][0]["volume"] == 0.009
+
+        mute = client.post("/api/command", json={"text": "set volume layer 1 0"})
+        assert mute.status_code == 200
+        assert client.get("/api/state").json()["layers"][0]["volume"] == 0.0
+
 
 class TestClearLayerEndpoint:
     """POST /api/clear-layer with typed request."""
