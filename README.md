@@ -1,5 +1,6 @@
-# oram
+<img width="871" height="540" alt="oram 04" src="https://github.com/user-attachments/assets/b81f777c-437e-42b4-9a5f-04ea781bb176" />
 
+# ORAM
 a speech-operated terminal looper for synthetic sound studies.
 
 oram is not a DAW, not a chatbot, and not a prompt-to-song app. it is a minimal
