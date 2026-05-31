@@ -29,29 +29,58 @@ runtime environment under `~/Library/Application Support/ORAM`. A future fully
 offline package should replace first-run dependency resolution with an embedded
 Python runtime or a frozen daemon binary.
 
-## Signing Placeholders
+## Developer ID Signing
 
-Future signed builds should provide:
+Public distribution requires a Developer ID Application certificate. The local
+development package is ad-hoc signed and should not be shipped as the public
+download.
+
+Confirm your signing identity:
+
+```bash
+security find-identity -p codesigning -v
+```
+
+Then set:
 
 ```bash
 export ORAM_DEVELOPER_ID_APP="Developer ID Application: ..."
-export ORAM_DEVELOPER_ID_INSTALLER="Developer ID Installer: ..."
 export ORAM_NOTARY_PROFILE="oram-notary"
 ```
 
-Then sign:
+Create a signed DMG:
 
 ```bash
-codesign --force --deep --options runtime --sign "$ORAM_DEVELOPER_ID_APP" apps/macos/dist/ORAM.app
+apps/macos/script/package_signed.sh
 ```
 
-## Notarization Placeholder
+The script builds `apps/macos/dist/ORAM.app`, signs the nested `uv` helper,
+signs the app with hardened runtime and a secure timestamp, creates
+`apps/macos/dist/ORAM-signed.dmg`, signs the DMG, and notarizes/staples it when
+`ORAM_NOTARY_PROFILE` is set.
+
+Use `ORAM_COPY_RELEASES=1 apps/macos/script/package_signed.sh` only when you
+intentionally want to copy the signed DMG into `releases/macos`.
+
+## Notarization Setup
+
+Create the notarytool keychain profile once:
 
 ```bash
-xcrun notarytool submit apps/macos/dist/ORAM.dmg \
+xcrun notarytool store-credentials "$ORAM_NOTARY_PROFILE" \
+  --apple-id "you@example.com" \
+  --team-id "TEAMID" \
+  --password "app-specific-password"
+```
+
+Manual notarization commands, if needed:
+
+```bash
+xcrun notarytool submit apps/macos/dist/ORAM-signed.dmg \
   --keychain-profile "$ORAM_NOTARY_PROFILE" \
   --wait
-xcrun stapler staple apps/macos/dist/ORAM.dmg
+xcrun stapler staple apps/macos/dist/ORAM-signed.dmg
+xcrun stapler validate apps/macos/dist/ORAM-signed.dmg
 ```
 
 ## Do You Need Apple?

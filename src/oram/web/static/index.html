@@ -24,7 +24,7 @@
         <span class="hdr-sep"></span>
         <button class="hdr-btn hdr-fx" id="btn-fx" data-hint="dsp effects — open the texture transforms" aria-label="DSP effects" aria-haspopup="true" aria-expanded="false">fx</button>
         <span class="hdr-sep"></span>
-        <button class="hdr-btn" id="btn-summon" data-hint="summon — open the texture palette for prompt generation" aria-label="Summon texture">✦</button>
+        <button class="hdr-btn" id="btn-summon" data-hint="summon — listen to what's sounding and generate a new layer" aria-label="Summon from current layer">✦</button>
         <span class="hdr-sep"></span>
         <button class="hdr-btn" id="btn-master-rec" data-hint="export current mix — bounce all layers to a single WAV" aria-label="Export current mix">◉</button>
         <button class="hdr-btn hdr-mixer" id="btn-mixer" data-hint="mixer — volume, pan, mute, solo for all layers" aria-label="Open mixer" aria-haspopup="true" aria-expanded="false">☰</button>
@@ -194,8 +194,6 @@
       <!-- channels are rendered dynamically by JS -->
     </div>
   </section>
-
-  <!-- summon: direct listen+generate (no palette) -->
 
   <!-- ═══ LAYERS (3 visible by default, 4th hidden until "+") ═══ -->
   <section id="layers" class="layers-panel">

@@ -6,7 +6,6 @@ struct ContentView: View {
     @State private var hint = "hover over a button for details"
     @State private var showSettings = false
     @State private var showFX = false
-    @State private var showSummon = false
     @State private var showLog = false
     @State private var showLibrary = false
     @State private var showProvider = false
@@ -46,36 +45,36 @@ struct ContentView: View {
         ("≈", "stretch", "stretch until it breathes", "time stretch — slow and breathe")
     ]
 
-    // summon prompts removed — summon now triggers direct listen+generate
-
     var body: some View {
         ZStack {
             DashboardTheme.background(lightTheme)
                 .ignoresSafeArea()
 
-            VStack(spacing: 8) {
-                header
-                hintBar
+            ScrollView {
+                VStack(spacing: 8) {
+                    header
+                    hintBar
 
-                if showSettings {
-                    settingsPanel
+                    if showSettings {
+                        settingsPanel
+                    }
+
+                    if showFX {
+                        fxPalette
+                    }
+
+                    layersPanel
+
+                    promptModule
+
+                    logPanel
                 }
-
-                if showFX {
-                    fxPalette
-                }
-
-                // summon palette removed — direct listen+generate action
-
-                layersPanel
-
-                promptModule
-
-                logPanel
+                .frame(maxWidth: 880)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 18)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
-            .frame(maxWidth: 880)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             if showAbout {
                 AboutOverlay(theme: lightTheme, close: { showAbout = false }, openPrivacy: {
@@ -198,7 +197,6 @@ struct ContentView: View {
 
                 HeaderGlyph("fx", active: showFX, role: .fx, theme: lightTheme) {
                     showFX.toggle()
-                    if showFX { showSummon = false }
                 }
                 .onHoverHint("dsp effects — open the texture transforms", $hint)
 
@@ -454,8 +452,6 @@ struct ContentView: View {
         .padding(12)
         .dashboardPanel(theme: lightTheme)
     }
-
-    // summonPalette removed — summon button now triggers direct listen+generate
 
     private var layersPanel: some View {
         VStack(spacing: 0) {

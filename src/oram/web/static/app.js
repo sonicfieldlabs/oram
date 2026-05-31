@@ -1524,8 +1524,6 @@
     if (btn) btn.addEventListener('click', () => sendCommand(cmd));
   });
 
-  // summon palette
-  const palette = document.getElementById('summon-palette');
   const fxPalette = document.getElementById('fx-palette');
   const btnFx = document.getElementById('btn-fx');
 
@@ -1533,7 +1531,6 @@
   const btnMixer = document.getElementById('btn-mixer');
 
   function closeAllPalettes() {
-    palette?.classList.add('hidden');
     fxPalette?.classList.add('hidden');
     mixerPanel?.classList.add('hidden');
     btnFx?.setAttribute('aria-expanded', 'false');
@@ -2093,7 +2090,6 @@
       case 'Escape':
         if (state.recording) stopRecording();
         settingsPanel.classList.add('hidden');
-        palette?.classList.add('hidden');
         if (fxPalette) {
           fxPalette.classList.add('hidden');
           btnFx?.setAttribute('aria-expanded', 'false');

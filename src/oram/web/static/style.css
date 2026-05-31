@@ -875,15 +875,6 @@ h1 {
   color: var(--text-secondary);
 }
 
-/* ── summon palette ── */
-#summon-palette {
-  background: var(--bg-raised);
-  border: 1px solid var(--border-active);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  animation: slideIn 150ms ease;
-}
-#summon-palette.hidden { display: none; }
 .palette-header {
   display: flex;
   justify-content: space-between;
@@ -903,28 +894,6 @@ h1 {
   transition: color 150ms;
 }
 .palette-close-btn:hover { color: var(--text); }
-.palette-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.summon-chip {
-  font-family: var(--font);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: color 150ms, border-color 150ms, background 150ms;
-}
-.summon-chip:hover {
-  color: var(--summon);
-  border-color: var(--border-active);
-  background: var(--bg-hover);
-}
 
 /* ── fx chip (transport) — single button replacing 8 DSP buttons ── */
 .fx-chip {
@@ -2669,7 +2638,6 @@ ol.about-list li::before {
   to   { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 #settings-panel,
-#summon-palette,
 #fx-palette {
   animation: slideIn var(--dur-base) var(--ease-smooth);
 }
@@ -2722,7 +2690,7 @@ ol.about-list li::before {
 @media (prefers-reduced-motion: reduce) {
   .layer-row, .corner, .vol-strip, .vol-strip-fill,
   .mode-toggle, .oram-title, .transport-btn,
-  #settings-panel, #summon-palette, #fx-palette,
+  #settings-panel, #fx-palette,
   #about-overlay, #about-modal,
   #log-panel, .log-body,
   .layer-row.selected, .layer-row.recording,
