@@ -96,9 +96,9 @@
       </div>
       <div class="setting-group setting-engine-group">
         <label class="setting-label" for="runtime-mode-selector">runtime mode</label>
-        <select id="runtime-mode-selector" class="setting-select" aria-label="Runtime mode" data-hint="API keeps existing provider routing; Local SA3 uses the local Stable Audio runtime">
+        <select id="runtime-mode-selector" class="setting-select" aria-label="Runtime mode" data-hint="API keeps existing provider routing; local uses the configured local audio runtime">
           <option value="api">API / auto</option>
-          <option value="local" selected>Local SA3</option>
+          <option value="local" selected>Local</option>
         </select>
       </div>
       <div class="setting-group setting-engine-group">
@@ -113,7 +113,7 @@
     </div>
     <div id="stable-audio-panel" class="stable-audio-panel hidden">
       <div class="sa3-field">
-        <label class="setting-label" for="sa3-mode">sa3 mode</label>
+        <label class="setting-label" for="sa3-mode">mode</label>
         <select id="sa3-mode" class="setting-select">
           <option value="generate">generate</option>
           <option value="morph">morph</option>
@@ -292,7 +292,6 @@
   <!-- ═══ PROMPT MODULE — command input below layers ═══ -->
   <section id="prompt-module">
     <div class="prompt-frame prompt-frame-lg" id="prompt-frame">
-      <span class="prompt-mode" id="prompt-mode-label">prompt</span>
       <input type="text" id="cmd-input" name="oram-command" aria-label="Command prompt" placeholder="describe a sound or type a command…" autocomplete="off" spellcheck="false">
       <button id="btn-submit-command" class="prompt-submit" aria-label="Submit command">↵</button>
     </div>
@@ -364,7 +363,7 @@
     </ul>
 
     <h3>engines</h3>
-    <p>ORAM opens in Local SA3 mode and routes generation to the local Stable Audio service when available. API / auto mode can use configured ElevenLabs, Stability AI APIs. Keys stay server-side.</p>
+    <p>ORAM opens in local mode and routes generation to the configured local audio service when available. API / auto mode can use configured ElevenLabs and Stability AI APIs. Keys stay server-side.</p>
     <pre class="env-block">oram credentials set elevenlabs
 oram credentials set stability
 oram credentials status</pre>

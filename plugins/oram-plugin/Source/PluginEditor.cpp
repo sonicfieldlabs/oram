@@ -50,8 +50,8 @@ OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
     {
         audioProcessor.requestGenerate (
             promptEditor.getText(),
-            providerSelector.getText(),
-            modelSelector.getText(),
+            {},
+            {},
             durationSlider.getValue());
     };
     commandButton.onClick = [this] { audioProcessor.requestCommand (commandEditor.getText()); };
@@ -66,32 +66,6 @@ OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
     promptEditor.setColour (juce::TextEditor::textColourId, textColour());
     promptEditor.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (promptEditor);
-
-    providerSelector.addItem ("auto", 1);
-    providerSelector.addItem ("local", 2);
-    providerSelector.addItem ("elevenlabs", 3);
-    providerSelector.addItem ("stability", 4);
-    providerSelector.setSelectedId (1);
-    providerSelector.onChange = [this]
-    {
-        if (providerSelector.getText() == "elevenlabs")
-            modelSelector.setText ("elevenlabs-sfx", juce::dontSendNotification);
-        else if (providerSelector.getText() == "stability")
-            modelSelector.setText ("stability-stable-audio-3", juce::dontSendNotification);
-        else if (providerSelector.getText() == "local")
-            modelSelector.setText ("stable-audio-3-local", juce::dontSendNotification);
-        else
-            modelSelector.setText ("local-mock", juce::dontSendNotification);
-    };
-    addAndMakeVisible (providerSelector);
-
-    modelSelector.addItem ("local-mock", 1);
-    modelSelector.addItem ("elevenlabs-sfx", 2);
-    modelSelector.addItem ("stable-audio-3-local", 3);
-    modelSelector.addItem ("stability-stable-audio-3", 4);
-    modelSelector.addItem ("stability-stable-audio-25", 5);
-    modelSelector.setText ("local-mock", juce::dontSendNotification);
-    addAndMakeVisible (modelSelector);
 
     durationSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     durationSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 22);
@@ -196,10 +170,6 @@ void OramAudioProcessorEditor::resized()
 
     bounds.removeFromTop (10);
     auto generationOptions = bounds.removeFromTop (rowHeight);
-    providerSelector.setBounds (generationOptions.removeFromLeft (140));
-    generationOptions.removeFromLeft (8);
-    modelSelector.setBounds (generationOptions.removeFromLeft (220));
-    generationOptions.removeFromLeft (14);
     durationLabel.setBounds (generationOptions.removeFromLeft (70));
     durationSlider.setBounds (generationOptions);
 

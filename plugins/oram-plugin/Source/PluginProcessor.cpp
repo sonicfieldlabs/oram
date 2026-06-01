@@ -133,7 +133,7 @@ juce::String OramAudioProcessor::generationModelForProvider (const juce::String&
         return "stability-stable-audio-3";
     if (provider == "local")
         return "stable-audio-3-local";
-    return "local-mock";
+    return "auto";
 }
 
 void OramAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)

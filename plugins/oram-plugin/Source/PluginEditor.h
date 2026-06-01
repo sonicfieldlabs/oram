@@ -34,8 +34,6 @@ private:
     juce::TextButton commandButton { "Run" };
     juce::TextEditor promptEditor;
     juce::TextEditor commandEditor;
-    juce::ComboBox providerSelector;
-    juce::ComboBox modelSelector;
     juce::Slider durationSlider;
     juce::Label durationLabel;
     juce::Label titleLabel;

@@ -15,7 +15,7 @@ from rich.live import Live
 from oram import __version__
 from oram.agent.controller import AgentController
 from oram.agent.llm_adapter import LLMCliAdapter
-from oram.audio.engine import MockAudioEngine
+from oram.audio.engine import MockAudioEngine, UnavailableAudioEngine
 from oram.audio.layer import LayerManager
 from oram.command.keyboard import key_to_action
 from oram.command.push_to_talk import PushToTalk
@@ -92,7 +92,14 @@ def run(config: OramConfig) -> None:
 
     # audio engine
     use_mock = config.mock_audio
-    if not use_mock:
+    if use_mock:
+        engine = MockAudioEngine(
+            session=session,
+            layer_manager=layer_manager,
+            sample_rate=config.sample_rate,
+            block_size=config.block_size,
+        )
+    else:
         try:
             from oram.audio.realtime import RealAudioEngine
 
@@ -105,16 +112,14 @@ def run(config: OramConfig) -> None:
                 output_device=config.output_device,
             )
         except Exception as e:
-            console.print(f"audio: real failed ({e}), using mock", style="oram.status")
-            use_mock = True
-
-    if use_mock:
-        engine = MockAudioEngine(
-            session=session,
-            layer_manager=layer_manager,
-            sample_rate=config.sample_rate,
-            block_size=config.block_size,
-        )
+            console.print(f"audio: real unavailable ({e}); mock disabled", style="oram.status")
+            engine = UnavailableAudioEngine(
+                reason=str(e),
+                sample_rate=config.sample_rate,
+                block_size=config.block_size,
+                input_device=config.input_device,
+                output_device=config.output_device,
+            )
 
     # STT adapter
     stt = None
@@ -210,6 +215,9 @@ def run(config: OramConfig) -> None:
 
     # start engine
     engine.start()
+    if not use_mock and not engine.is_running():
+        reason = getattr(engine, "reason", "hardware stream did not start")
+        console.print(f"audio: unavailable ({reason}); use --mock-audio for test audio", style="oram.status")
 
     console.print("")
     console.print(f"oram {__version__} — agentic audio looper", style="oram.title")

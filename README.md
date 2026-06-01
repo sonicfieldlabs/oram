@@ -111,7 +111,7 @@ recorder → looper → sampler → engine router → local archive
   normalize, trim, fades, and spatial transforms.
 - Listens back — spectral analysis of pitch, BPM, key, harmonics, and frequency
   character through local FFT, LLM-based interpretation, or hybrid routes.
-- Generates sound through Local SA3 by default when the local service is
+- Generates sound through local audio routing by default when the local service is
   available, or summons textures through BYOK providers (ElevenLabs, Stability
   AI, fal Stable Audio).
 - Writes generated sounds into `~/Music/ORAM Library`.
@@ -271,7 +271,7 @@ workstation." That is the intended boundary:
 - No ORAM cloud account is required.
 - The app talks to a localhost daemon.
 - Provider keys are stored in macOS Keychain for the packaged app.
-- Local SA3 is the default local generation path; Local Mock remains available
+- Local audio generation is the default local path; Local Mock remains available
   only as an explicit fallback.
 - Telemetry is off by default.
 - Generated sounds and archives stay in the local ORAM Library.
@@ -316,7 +316,8 @@ oram --input-device 2             # select input device
 oram --session-name grey_chapel   # name this session
 oram --session-dir ./sessions     # choose archive directory
 oram --no-stt                     # keyboard only, no voice
-oram dashboard --mock-audio       # browser dashboard on localhost
+oram dashboard                    # browser dashboard with real audio by default
+oram dashboard --mock-audio       # browser dashboard without audio hardware
 oram daemon --mock-audio          # local app/plugin daemon on 127.0.0.1
 oram export ./oram_sessions/oram_0001
 ```
@@ -422,7 +423,7 @@ Current plugin features:
 - four native layers with record, overdub, mute, solo, clear, volume, and pan
 - loop regions and host-input monitoring
 - typed ORAM command parsing through the daemon
-- generation through Local SA3, ElevenLabs, or Stability routing, then WAV
+- generation through local audio, ElevenLabs, or Stability routing, then WAV
   import into native plugin layers
 - native state serialization for parameters and layer audio
 - basic plugin-side DSP actions including reverse, speed/pitch-ratio, filters,
@@ -527,7 +528,7 @@ To expose the dashboard on the local network:
 
 ```bash
 export ORAM_DASHBOARD_TOKEN=<local-token>
-oram dashboard --allow-lan --mock-audio
+oram dashboard --allow-lan
 ```
 
 - Token authentication: when `ORAM_DASHBOARD_TOKEN` is set, all POST endpoints

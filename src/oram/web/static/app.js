@@ -243,13 +243,13 @@
     const payload = stableAudioPayload(layerNum, promptOverride, options);
     const workflow = payload.source_layer ? 'audio-to-audio' : 'text-to-audio';
     const origin = payload.source_layer ? ` from layer ${payload.source_layer}` : '';
-    addLog(`local SA3 ${workflow} ${payload.mode}${origin}…`, 'generated', '✦');
+    addLog(`local render ${workflow} ${payload.mode}${origin}…`, 'generated', '✦');
     const res = await apiPost('/api/stable-audio/render', payload);
     if (res && res.status === 'ok') {
-      addLog(`local SA3 → layer ${res.layer || 'library'} via ${res.engine || 'stable-audio-3-local'}`, 'generated', '✦');
+      addLog(`local render → layer ${res.layer || 'library'} via ${res.engine || 'stable-audio-3-local'}`, 'generated', '✦');
       return true;
     }
-    addLog('local SA3 failed: ' + (res?.message || 'unknown error'), 'error', '✕');
+    addLog('local render failed: ' + (res?.message || 'unknown error'), 'error', '✕');
     return false;
   }
 
@@ -282,11 +282,9 @@
     // record button
     btnRecord.classList.toggle('active', !!s.recording);
 
-    // prompt module — minimal context chips (just layer + mode)
+    // prompt module
     const promptFrame = document.getElementById('prompt-frame');
     if (promptFrame) promptFrame.classList.toggle('recording', !!s.recording);
-    const promptModeLabel = document.getElementById('prompt-mode-label');
-    if (promptModeLabel) promptModeLabel.textContent = localStableAudioEnabled() ? 'local sa3' : 'prompt';
     const selIdx = s.selected_layer != null ? s.selected_layer : 0;
     updateLayerBadge(selIdx);
 
@@ -2122,14 +2120,12 @@
     const local = localStableAudioEnabled();
     if (stableAudioPanel) stableAudioPanel.classList.toggle('hidden', !local);
     if (engineSelector) engineSelector.disabled = local;
-    const promptModeLabel = document.getElementById('prompt-mode-label');
-    if (promptModeLabel) promptModeLabel.textContent = local ? 'local sa3' : 'prompt';
   }
 
   if (runtimeModeSelector) {
     runtimeModeSelector.addEventListener('change', () => {
       syncRuntimeModeControls();
-      addLog(`runtime → ${runtimeModeSelector.value === 'local' ? 'local SA3' : 'API / auto'}`, 'system', '⚙');
+      addLog(`runtime → ${runtimeModeSelector.value === 'local' ? 'local' : 'API / auto'}`, 'system', '⚙');
     });
     syncRuntimeModeControls();
   }

@@ -294,6 +294,14 @@ class EngineRouter:
             if self._default_provider and spec.provider.value == self._default_provider:
                 s += 3.0
 
+            # Keep procedural generation as an explicit test/fallback engine.
+            if spec.id == "local-mock":
+                s -= 2.0
+
+            # Prefer real local synthesis over the procedural mock when both are available.
+            if spec.id.startswith("stable-audio") and spec.provider.value == "local":
+                s += 1.5
+
             # cloud for production, local for experimental
             if intent in (SonicIntent.VOICE, SonicIntent.MUSIC):
                 if spec.mode.value == "cloud":

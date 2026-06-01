@@ -35,7 +35,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from oram import __version__
 from oram.agent.controller import AgentController
 from oram.agent.llm_adapter import LLMCliAdapter
-from oram.audio.engine import MockAudioEngine
+from oram.audio.engine import MockAudioEngine, UnavailableAudioEngine
 from oram.audio.importer import MAX_UPLOAD_BYTES, assign_imported_audio, decode_audio_bytes
 from oram.audio.layer import LayerManager
 from oram.command.router import ActionRouter
@@ -347,38 +347,42 @@ def _on_record_complete(layer):
 def _build_audio_engine(config: OramConfig):
     """build the active audio engine for the dashboard.
 
-    Attempts real hardware first unless mock mode is explicitly requested, and
-    falls back to mock only when
-    sounddevice fails to initialise (e.g. no audio devices present).
+    Attempts real hardware first unless mock mode is explicitly requested.
+    If real audio cannot be created, keep the dashboard mounted with a silent
+    unavailable engine rather than generating procedural mock audio.
     """
     use_mock = getattr(app.state, "mock_audio", False) or config.mock_audio
-    if not use_mock:
-        try:
-            from oram.audio.realtime import RealAudioEngine
-
-            return RealAudioEngine(
-                session=_session,
-                layer_manager=_layer_manager,
-                sample_rate=config.sample_rate,
-                block_size=config.block_size,
-                input_device=config.input_device,
-                output_device=config.output_device,
-                on_record_complete=_on_record_complete,
-            )
-        except Exception as e:
-            _append_log(f"audio: real engine failed ({e}), falling back to mock")
-    else:
+    if use_mock:
         _append_log("audio: mock (configured)")
+        return MockAudioEngine(
+            session=_session,
+            layer_manager=_layer_manager,
+            sample_rate=config.sample_rate,
+            block_size=config.block_size,
+            on_record_complete=_on_record_complete,
+        )
 
-    if not use_mock:
-        _append_log("audio: mock (no hardware available)")
-    return MockAudioEngine(
-        session=_session,
-        layer_manager=_layer_manager,
-        sample_rate=config.sample_rate,
-        block_size=config.block_size,
-        on_record_complete=_on_record_complete,
-    )
+    try:
+        from oram.audio.realtime import RealAudioEngine
+
+        return RealAudioEngine(
+            session=_session,
+            layer_manager=_layer_manager,
+            sample_rate=config.sample_rate,
+            block_size=config.block_size,
+            input_device=config.input_device,
+            output_device=config.output_device,
+            on_record_complete=_on_record_complete,
+        )
+    except Exception as e:
+        _append_log(f"audio: real engine unavailable ({e}); mock disabled")
+        return UnavailableAudioEngine(
+            reason=str(e),
+            sample_rate=config.sample_rate,
+            block_size=config.block_size,
+            input_device=config.input_device,
+            output_device=config.output_device,
+        )
 
 
 def _start_audio_engine_or_fallback() -> None:
@@ -388,25 +392,17 @@ def _start_audio_engine_or_fallback() -> None:
         return
 
     _engine.start()
+    if isinstance(_engine, MockAudioEngine):
+        return
     if _engine.is_running():
-        if isinstance(_engine, MockAudioEngine):
-            return
         if bool(getattr(_engine, "has_input", lambda: False)()):
             _append_log("audio: real (input + speakers)")
         else:
             _append_log("audio: output only (no input device)")
         return
 
-    _append_log("audio: hardware failed to start, using mock")
-    _engine = MockAudioEngine(
-        session=_session,
-        layer_manager=_layer_manager,
-        sample_rate=_config.sample_rate,
-        block_size=_config.block_size,
-        on_record_complete=_on_record_complete,
-    )
-    _engine.start()
-    _append_log("audio: mock (no hardware)")
+    reason = getattr(_engine, "reason", "hardware stream did not start")
+    _append_log(f"audio: unavailable ({reason}); mock disabled")
 
 
 def _restart_audio_engine() -> str:
@@ -421,6 +417,8 @@ def _restart_audio_engine() -> str:
     _engine = _build_audio_engine(_config)
     _router.engine = _engine
     _start_audio_engine_or_fallback()
+    if not _engine.is_running() and not isinstance(_engine, MockAudioEngine):
+        return "audio engine unavailable"
     if bool(getattr(_engine, "has_input", lambda: True)()):
         return "audio engine restarted"
     return "audio engine restarted without input"
@@ -1346,11 +1344,17 @@ async def export_master():
         return {"error": str(e), "message": f"export failed: {e}"}
 
 
-def run_server(host: str = "127.0.0.1", port: int = 3333, allow_lan: bool = False):
+def run_server(
+    host: str = "127.0.0.1",
+    port: int = 3333,
+    allow_lan: bool = False,
+    mock_audio: bool = False,
+):
     """run the dashboard server."""
     import uvicorn
 
     app.state.allow_lan = allow_lan or host == "0.0.0.0"
+    app.state.mock_audio = mock_audio
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

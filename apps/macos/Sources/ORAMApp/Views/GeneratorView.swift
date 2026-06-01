@@ -56,11 +56,13 @@ struct GeneratorView: View {
                         .pickerStyle(.segmented)
 
                         Picker("Model", selection: $model) {
-                            Text("Local Mock").tag("local-mock")
+                            Text("Auto").tag("auto")
+                            Text("Local").tag("stable-audio-3-local")
                             Text("ElevenLabs SFX").tag("elevenlabs-sfx")
                             Text("ElevenLabs Music").tag("elevenlabs-music")
-                            Text("Stable Audio 3 API").tag("stability-stable-audio-3")
-                            Text("Stable Audio 2.5").tag("stability-stable-audio-25")
+                            Text("Stability Large").tag("stability-stable-audio-3")
+                            Text("Stability 2.5").tag("stability-stable-audio-25")
+                            Text("Local Mock").tag("local-mock")
                         }
                         .frame(width: 260)
                     }

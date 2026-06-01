@@ -8,7 +8,7 @@ import numpy as np
 from starlette.testclient import TestClient
 
 from oram.config import OramConfig
-from oram_daemon.server import LocalOramService, create_app
+from oram_daemon.server import GenerateRequest, LocalOramService, PluginGenerateRequest, create_app
 from oram_library import OramLibrary
 from oram_security.credentials import MemoryCredentialStore
 
@@ -20,6 +20,11 @@ def _wav_bytes(sample_rate: int = 48000) -> bytes:
     audio = np.zeros((sample_rate // 20, 2), dtype=np.float32)
     sf.write(buf, audio, sample_rate, format="WAV")
     return buf.getvalue()
+
+
+def test_daemon_generation_requests_default_to_auto_model():
+    assert GenerateRequest(prompt="quiet room tone").model == "auto"
+    assert PluginGenerateRequest(prompt="quiet room tone").model == "auto"
 
 
 def test_daemon_health_state_and_generate_no_secrets(tmp_path):

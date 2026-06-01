@@ -150,6 +150,7 @@ def dashboard(
     host: str = typer.Option("127.0.0.1", "--host", help="server host"),
     port: int = typer.Option(3333, "--port", help="server port"),
     allow_lan: bool = typer.Option(False, "--allow-lan", help="bind to 0.0.0.0 (exposes on LAN)"),
+    mock_audio: bool = typer.Option(False, "--mock-audio", help="use mock audio engine instead of hardware"),
 ) -> None:
     """launch the web dashboard."""
     import os
@@ -186,7 +187,7 @@ def dashboard(
 
     from oram.web.server import run_server
 
-    run_server(host=host, port=port, allow_lan=exposes_lan)
+    run_server(host=host, port=port, allow_lan=exposes_lan, mock_audio=mock_audio)
 
 
 @cli.command()

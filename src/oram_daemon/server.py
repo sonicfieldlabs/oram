@@ -20,7 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from oram import __version__
 from oram.agent.controller import AgentController
 from oram.app import _build_gateway
-from oram.audio.engine import MockAudioEngine
+from oram.audio.engine import MockAudioEngine, UnavailableAudioEngine
 from oram.audio.importer import MAX_UPLOAD_BYTES, assign_imported_audio, decode_audio_bytes
 from oram.audio.layer import LayerManager
 from oram.command.router import ActionRouter
@@ -65,7 +65,7 @@ class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1)
     duration: float = 8.0
     provider: str = "auto"
-    model: str = "local-mock"
+    model: str = "auto"
     target_layer: int | str | None = "first_empty"
     tags: list[str] = Field(default_factory=list)
 
@@ -74,7 +74,7 @@ class PluginGenerateRequest(BaseModel):
     prompt: str = Field(min_length=1)
     duration: float = 8.0
     provider: str = "auto"
-    model: str = "local-mock"
+    model: str = "auto"
     tags: list[str] = Field(default_factory=list)
 
 
@@ -255,6 +255,7 @@ class LocalOramService:
             on_status=self.append_log,
         )
         self.engine.start()
+        self._append_audio_start_log()
         self.append_log("oram daemon ready")
 
     def refresh_provider_credentials(self) -> None:
@@ -290,33 +291,57 @@ class LocalOramService:
         self.append_log("provider engines refreshed")
 
     def _build_audio_engine(self, *, mock_audio: bool):
-        if not mock_audio:
-            try:
-                from oram.audio.realtime import RealAudioEngine
+        if mock_audio:
+            self.append_log("audio: mock (configured)")
+            return MockAudioEngine(
+                session=self.session,
+                layer_manager=self.layers,
+                sample_rate=self.config.sample_rate,
+                block_size=self.config.block_size,
+            )
 
-                engine = RealAudioEngine(
-                    session=self.session,
-                    layer_manager=self.layers,
-                    sample_rate=self.config.sample_rate,
-                    block_size=self.config.block_size,
-                    input_device=self.config.input_device,
-                    output_device=self.config.output_device,
-                )
-                return engine
-            except Exception as exc:
-                self.append_log(f"audio: real failed ({exc}), using mock")
-        return MockAudioEngine(
-            session=self.session,
-            layer_manager=self.layers,
-            sample_rate=self.config.sample_rate,
-            block_size=self.config.block_size,
-        )
+        try:
+            from oram.audio.realtime import RealAudioEngine
+
+            return RealAudioEngine(
+                session=self.session,
+                layer_manager=self.layers,
+                sample_rate=self.config.sample_rate,
+                block_size=self.config.block_size,
+                input_device=self.config.input_device,
+                output_device=self.config.output_device,
+            )
+        except Exception as exc:
+            self.append_log(f"audio: real unavailable ({exc}); mock disabled")
+            return UnavailableAudioEngine(
+                reason=str(exc),
+                sample_rate=self.config.sample_rate,
+                block_size=self.config.block_size,
+                input_device=self.config.input_device,
+                output_device=self.config.output_device,
+            )
+
+    def _append_audio_start_log(self) -> None:
+        if isinstance(self.engine, MockAudioEngine):
+            return
+        if self.engine.is_running():
+            if bool(getattr(self.engine, "has_input", lambda: False)()):
+                self.append_log("audio: real (input + speakers)")
+            else:
+                self.append_log("audio: output only (no input device)")
+            return
+
+        reason = getattr(self.engine, "reason", "hardware stream did not start")
+        self.append_log(f"audio: unavailable ({reason}); mock disabled")
 
     def _restart_audio_engine(self) -> str:
         self.engine.stop()
         self.engine = self._build_audio_engine(mock_audio=self.mock_audio)
         self.router.engine = self.engine
         self.engine.start()
+        self._append_audio_start_log()
+        if not self.engine.is_running() and not isinstance(self.engine, MockAudioEngine):
+            return "audio engine unavailable"
         if bool(getattr(self.engine, "has_input", lambda: True)()):
             return "audio engine restarted"
         return "audio engine restarted without input"
@@ -451,7 +476,7 @@ class LocalOramService:
         self.refresh_provider_credentials()
         audio_epoch = self.router.audio_kill_epoch
         duration = self.config.validate_duration(req.duration, kind="generated")
-        engine = req.model or "local-mock"
+        engine = req.model or "auto"
         audio = self.router._call_engine(engine, req.prompt, duration, provider=req.provider)
         if audio is None:
             action = GenerateLayerAction(prompt=req.prompt, duration=duration, engine=engine)
@@ -498,7 +523,7 @@ class LocalOramService:
         self.refresh_provider_credentials()
         audio_epoch = self.router.audio_kill_epoch
         duration = self.config.validate_duration(req.duration, kind="generated")
-        engine = req.model or "local-mock"
+        engine = req.model or "auto"
         audio = self.router._call_engine(engine, req.prompt, duration, provider=req.provider)
         if audio is None:
             return {

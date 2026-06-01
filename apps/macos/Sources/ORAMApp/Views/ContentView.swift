@@ -366,7 +366,7 @@ struct ContentView: View {
                     selection: $runtimeMode,
                     values: [
                         ("api", "API / auto"),
-                        ("local", "Local SA3")
+                        ("local", "Local")
                     ],
                     theme: lightTheme
                 )
@@ -396,12 +396,6 @@ struct ContentView: View {
 
     private var promptModule: some View {
         HStack(spacing: 10) {
-            Text(store.state?.recording == true ? "audio" : store.modeKey)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .tracking(1.2)
-                .foregroundStyle(store.state?.recording == true ? DashboardTheme.record : DashboardTheme.accent(lightTheme))
-                .frame(width: 64, alignment: .leading)
-
             TextField("describe a sound or type a command...", text: $prompt)
                 .textFieldStyle(.plain)
                 .font(.system(size: 18, design: .monospaced))
@@ -651,7 +645,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .bottom, spacing: 10) {
                 StringSettingMenu(
-                    title: "sa3 mode",
+                    title: "mode",
                     selection: $stableMode,
                     values: [
                         ("generate", "Generate"),
@@ -1504,7 +1498,7 @@ private struct EngineMenu: View {
                 .foregroundStyle(DashboardTheme.dim(theme))
             Picker(title, selection: $selection) {
                 if engines.isEmpty {
-                    Text("Local SA3").tag("stable-audio-3-local")
+                    Text("Local").tag("stable-audio-3-local")
                 } else {
                     ForEach(engines) { engine in
                         Text(label(for: engine))
@@ -1794,7 +1788,7 @@ private struct AboutOverlay: View {
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(DashboardTheme.secondary(theme))
 
-                Text("ORAM opens in Local SA3 mode and routes generation to the local Stable Audio service when available. API / auto mode can use configured ElevenLabs, Stability AI APIs. Keys stay server-side.")
+                Text("ORAM opens in local mode and routes generation to the configured local audio service when available. API / auto mode can use configured ElevenLabs and Stability AI APIs. Keys stay server-side.")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(DashboardTheme.dim(theme))
                     .fixedSize(horizontal: false, vertical: true)

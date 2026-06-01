@@ -24,8 +24,81 @@ class AudioEngine(Protocol):
     def has_input(self) -> bool: ...
     def get_input_level(self) -> float: ...
     def get_output_level(self) -> float: ...
+    def start_recording(
+        self,
+        target: int | None = None,
+        duration_seconds: float | None = None,
+        overdub: bool = False,
+    ) -> None: ...
+    def stop_recording(self) -> np.ndarray | None: ...
     def start_command_capture(self, max_duration_seconds: float = 10.0) -> None: ...
     def stop_command_capture(self) -> np.ndarray: ...
+
+
+class UnavailableAudioEngine:
+    """silent engine used when real audio cannot start.
+
+    This keeps UI/API surfaces mounted without generating procedural mock audio.
+    Mock audio should only be used when explicitly requested.
+    """
+
+    def __init__(
+        self,
+        reason: str,
+        sample_rate: int = 48000,
+        block_size: int = 512,
+        input_device: int | str | None = None,
+        output_device: int | str | None = None,
+    ):
+        self.reason = reason
+        self.sample_rate = sample_rate
+        self.block_size = block_size
+        self.input_device = input_device
+        self.output_device = output_device
+        self.command_queue: queue.Queue = queue.Queue()
+        self._recording = False
+        self._command_capture = False
+
+    def start(self) -> None:
+        """no-op: real audio is unavailable."""
+
+    def stop(self) -> None:
+        self.stop_all_audio()
+
+    def stop_all_audio(self) -> None:
+        self._recording = False
+        self._command_capture = False
+
+    def is_running(self) -> bool:
+        return False
+
+    def has_input(self) -> bool:
+        return False
+
+    def get_input_level(self) -> float:
+        return 0.0
+
+    def get_output_level(self) -> float:
+        return 0.0
+
+    def start_recording(
+        self,
+        target: int | None = None,
+        duration_seconds: float | None = None,
+        overdub: bool = False,
+    ) -> None:
+        raise RuntimeError(f"real audio unavailable: {self.reason}")
+
+    def stop_recording(self) -> np.ndarray | None:
+        self._recording = False
+        return None
+
+    def start_command_capture(self, max_duration_seconds: float = 10.0) -> None:
+        raise RuntimeError(f"real audio unavailable: {self.reason}")
+
+    def stop_command_capture(self) -> np.ndarray:
+        self._command_capture = False
+        return np.zeros((0, 1), dtype=np.float32)
 
 
 class MockAudioEngine:

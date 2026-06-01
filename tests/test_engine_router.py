@@ -104,6 +104,38 @@ def _local_sfx(available=True):
     )
 
 
+def _local_sa3(available=True):
+    return _MockEngine(
+        EngineSpec(
+            id="stable-audio-3-local",
+            provider=EngineProvider.LOCAL,
+            label="Local Engine",
+            mode=EngineMode.LOCAL,
+            capabilities=[AudioCapability.TEXT_TO_SOUND_EFFECT, AudioCapability.TEXT_TO_MUSIC],
+            requires_api_key=False,
+            cost_per_second=0,
+            latency_profile="slow",
+        ),
+        available=available,
+    )
+
+
+def _local_mock(available=True):
+    return _MockEngine(
+        EngineSpec(
+            id="local-mock",
+            provider=EngineProvider.LOCAL,
+            label="Local Mock",
+            mode=EngineMode.LOCAL,
+            capabilities=[AudioCapability.TEXT_TO_SOUND_EFFECT, AudioCapability.TEXT_TO_MUSIC],
+            requires_api_key=False,
+            cost_per_second=0,
+            latency_profile="fast",
+        ),
+        available=available,
+    )
+
+
 def _filled_registry() -> EngineRegistry:
     reg = EngineRegistry()
     reg.register(_sfx_engine())
@@ -188,6 +220,16 @@ class TestRouting:
         decision = router.route(req)
         # should have at least one alternative (local-sfx)
         assert "local-sfx" in decision.alternatives or "test-sfx" in decision.alternatives
+
+    def test_auto_routes_to_local_sa3_before_procedural_mock(self):
+        reg = EngineRegistry()
+        reg.register(_local_mock())
+        reg.register(_local_sa3())
+        router = EngineRouter(reg)
+        req = GenerationRequest(prompt="test", intent=SonicIntent.SOUND_EFFECT)
+        decision = router.route(req)
+        assert decision.engine_id == "stable-audio-3-local"
+        assert "local-mock" in decision.alternatives
 
     def test_analysis_aware_routing(self):
         """analysis data should influence routing — speech content boosts TTS."""

@@ -73,7 +73,7 @@ OramDaemonClient::GenerateResult OramDaemonClient::pluginGenerate (
     auto* body = new juce::DynamicObject();
     body->setProperty ("prompt", prompt);
     body->setProperty ("duration", durationSeconds);
-    body->setProperty ("model", model.isNotEmpty() ? model : "local-mock");
+    body->setProperty ("model", model.isNotEmpty() ? model : "auto");
     body->setProperty ("provider", provider.isNotEmpty() ? provider : "auto");
     body->setProperty ("tags", juce::Array<juce::var>());
 
