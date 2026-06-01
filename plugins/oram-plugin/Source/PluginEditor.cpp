@@ -22,6 +22,12 @@ OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
     titleLabel.setFont (juce::FontOptions (26.0f, juce::Font::bold));
     addAndMakeVisible (titleLabel);
 
+    taglineLabel.setText ("agentic audio looper", juce::dontSendNotification);
+    taglineLabel.setJustificationType (juce::Justification::centredLeft);
+    taglineLabel.setColour (juce::Label::textColourId, mutedTextColour());
+    taglineLabel.setFont (juce::FontOptions (12.0f));
+    addAndMakeVisible (taglineLabel);
+
     statusLabel.setText (audioProcessor.status(), juce::dontSendNotification);
     statusLabel.setJustificationType (juce::Justification::centredRight);
     statusLabel.setColour (juce::Label::textColourId, mutedTextColour());
@@ -148,7 +154,9 @@ void OramAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds().reduced (margin);
     auto header = bounds.removeFromTop (44);
-    titleLabel.setBounds (header.removeFromLeft (220));
+    auto titleArea = header.removeFromLeft (220);
+    titleLabel.setBounds (titleArea.removeFromTop (27));
+    taglineLabel.setBounds (titleArea);
     statusLabel.setBounds (header);
 
     bounds.removeFromTop (10);

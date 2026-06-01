@@ -39,6 +39,7 @@ private:
     juce::Slider durationSlider;
     juce::Label durationLabel;
     juce::Label titleLabel;
+    juce::Label taglineLabel;
     juce::Label statusLabel;
     std::array<juce::Label, OramAudioCore::maxLayers> layerLabels;
 

@@ -1790,11 +1790,11 @@ private struct AboutOverlay: View {
                         .foregroundStyle(DashboardTheme.secondary(theme))
                 }
 
-                Text("recorder · looper · sampler · engine router · local archive")
+                Text("agentic audio looper")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(DashboardTheme.secondary(theme))
 
-                Text("Local-first BYOK sound workstation. The macOS app controls the Python engine through a localhost daemon, stores provider keys in macOS Keychain, opens with Local SA3, and writes generated sounds into the local ORAM Library.")
+                Text("ORAM opens in Local SA3 mode and routes generation to the local Stable Audio service when available. API / auto mode can use configured ElevenLabs, Stability AI APIs. Keys stay server-side.")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(DashboardTheme.dim(theme))
                     .fixedSize(horizontal: false, vertical: true)

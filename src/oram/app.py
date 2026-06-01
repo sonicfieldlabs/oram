@@ -212,7 +212,7 @@ def run(config: OramConfig) -> None:
     engine.start()
 
     console.print("")
-    console.print(f"oram {__version__} — local recursive audio workstation", style="oram.title")
+    console.print(f"oram {__version__} — agentic audio looper", style="oram.title")
     stt_label = "off" if config.no_stt else config.stt_backend
     gw_label = "elevenlabs" if gateway else "mock"
     console.print(

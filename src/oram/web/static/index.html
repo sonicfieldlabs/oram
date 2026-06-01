@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ORAM — local recursive audio workstation</title>
+<title>ORAM — agentic audio looper</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -325,7 +325,7 @@
       <img src="/static/logo-oram.png" alt="oram" class="about-logo">
     </div>
     <h2 id="about-title">oram</h2>
-    <p class="about-tagline">local-first recursive audio workstation.</p>
+    <p class="about-tagline">agentic audio looper</p>
     <blockquote class="about-epigraph">"We seem to have tuned circuits within us" <cite>— Daphne Oram</cite></blockquote>
     <p>record sound → ORAM listens for pitch, tempo, key and spectral shape → the engine router creates a complementary layer through the selected local or BYOK provider. layers stay editable as recorder, looper, sampler and archive material.</p>
 
@@ -364,7 +364,7 @@
     </ul>
 
     <h3>engines</h3>
-    <p>ORAM opens in Local SA3 mode and routes generation to the local Stable Audio service when available. API / auto mode can use configured ElevenLabs, Stability AI, fal Stable Audio, or other local sidecar engines. keys stay server-side and are never sent to the dashboard.</p>
+    <p>ORAM opens in Local SA3 mode and routes generation to the local Stable Audio service when available. API / auto mode can use configured ElevenLabs, Stability AI APIs. Keys stay server-side.</p>
     <pre class="env-block">oram credentials set elevenlabs
 oram credentials set stability
 oram credentials status</pre>
