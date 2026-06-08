@@ -72,6 +72,19 @@ def _build_gateway(config: OramConfig) -> dict | None:
 
 def run(config: OramConfig) -> None:
     """start the oram instrument."""
+    import os
+    from oram.engines.sa3_launcher import start_sa3_server, stop_sa3_server
+
+    # Force real audio unless testing
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        config.mock_audio = False
+
+    # Start Stable Audio 3 server automatically
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        sa3_url = start_sa3_server()
+        if sa3_url:
+            config.stable_audio_service_url = sa3_url
+
     console = Console(theme=ORAM_THEME)
 
     # create session
@@ -252,6 +265,8 @@ def run(config: OramConfig) -> None:
     finally:
         router.kill_all_audio()
         engine.stop()
+        if not os.environ.get("PYTEST_CURRENT_TEST"):
+            stop_sa3_server()
         console.print("\noram stopped.", style="oram.title")
 
 

@@ -53,7 +53,11 @@ def _run_app(
     if session_dir is not None:
         config.session_dir = session_dir
     config.no_stt = no_stt
-    config.mock_audio = mock_audio
+    import os
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        config.mock_audio = mock_audio
+    else:
+        config.mock_audio = False
     if sample_rate is not None:
         config.sample_rate = sample_rate
     if block_size is not None:
@@ -187,7 +191,8 @@ def dashboard(
 
     from oram.web.server import run_server
 
-    run_server(host=host, port=port, allow_lan=exposes_lan, mock_audio=mock_audio)
+    use_mock = mock_audio if os.environ.get("PYTEST_CURRENT_TEST") else False
+    run_server(host=host, port=port, allow_lan=exposes_lan, mock_audio=use_mock)
 
 
 @cli.command()
@@ -205,10 +210,11 @@ def daemon(
 
     from oram_daemon.server import run_daemon
 
+    use_mock = mock_audio if os.environ.get("PYTEST_CURRENT_TEST") else False
     run_daemon(
         host="127.0.0.1" if host == "localhost" else host,
         port=port,
-        mock_audio=mock_audio,
+        mock_audio=use_mock,
         session_dir=session_dir,
         auth_token="" if no_auth else None,
     )

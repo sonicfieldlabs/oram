@@ -1131,6 +1131,8 @@ def create_app(
     async def lifespan(app: FastAPI):
         yield
         app.state.service.shutdown()
+        from oram.engines.sa3_launcher import stop_sa3_server
+        stop_sa3_server()
 
     app = FastAPI(title="ORAM Local Daemon", lifespan=lifespan)
     app.state.service = service
@@ -1366,15 +1368,24 @@ def run_daemon(
     """Start the local daemon and write discovery metadata."""
 
     import uvicorn
+    from oram.engines.sa3_launcher import start_sa3_server
+
+    sa3_url = start_sa3_server()
 
     load_dotenv()
     config = OramConfig.from_env()
     library = OramLibrary()
+    if sa3_url and not os.environ.get("PYTEST_CURRENT_TEST"):
+        config.stable_audio_service_url = sa3_url
     if session_dir is not None:
         config.session_dir = session_dir.expanduser()
     elif config.session_dir == Path("./oram_sessions"):
         config.session_dir = library.sessions_dir
-    config.mock_audio = mock_audio or config.mock_audio
+
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        config.mock_audio = mock_audio or config.mock_audio
+    else:
+        config.mock_audio = False
 
     selected_port = find_available_port(host) if str(port) == "auto" else int(port)
     token = auth_token if auth_token is not None else secrets.token_urlsafe(24)

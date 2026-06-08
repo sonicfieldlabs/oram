@@ -75,7 +75,7 @@ class OramConfig:
     # v2: ElevenLabs gateway
     elevenlabs_api_key: str = ""
     default_listening_route: str = "hybrid"
-    default_engine: str = "auto"
+    default_engine: str = "stable-audio-3-local"
     auto_listen: bool = False  # safe default: off
 
     # v3: multi-provider engine keys
@@ -86,7 +86,7 @@ class OramConfig:
 
     # v3: engine router
     engine_router_mode: str = "auto"  # "auto" | "manual"
-    preferred_provider: str = ""      # user's preferred provider override
+    preferred_provider: str = "local"      # user's preferred provider override
 
     # Stable Audio 3 local/API integration.
     stable_audio_service_url: str = ""  # local service, defaults to Germinator when loaded from env

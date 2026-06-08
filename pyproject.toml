@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oram"
-version = "2.0.0"
+version = "0.1"
 description = "agentic recorder, looper, and sampler — recursive listening instrument"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,7 @@ dependencies = [
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
     "websockets>=11.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -46,7 +47,7 @@ midi = [
 oram = "oram.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/oram", "src/oram_daemon", "src/oram_security", "src/oram_library"]
+packages = ["src/oram", "src/oram_daemon", "src/oram_security", "src/oram_library", "src/oram_sa3_server"]
 
 [tool.ruff]
 src = ["src"]

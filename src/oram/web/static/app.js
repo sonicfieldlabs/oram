@@ -272,6 +272,14 @@
   }
 
   function render(s) {
+    // update sa3 service url setting from server config
+    const sa3ServiceUrlInput = document.getElementById('sa3-service-url');
+    if (sa3ServiceUrlInput && s.stable_audio_service_url && !sa3ServiceUrlInput._userEdited) {
+      if (sa3ServiceUrlInput.value !== s.stable_audio_service_url) {
+        sa3ServiceUrlInput.value = s.stable_audio_service_url;
+      }
+    }
+
     // auto-mode indicator — sync with server state
     const btnAutoMode = document.getElementById('btn-auto-mode');
     if (btnAutoMode) {
@@ -2194,6 +2202,13 @@
       const label = opt ? opt.textContent : val;
       if (engineChip) engineChip.textContent = label;
       addLog(`engine → ${label}`, 'system', '⚙');
+    });
+  }
+
+  const sa3ServiceUrlInputForListen = document.getElementById('sa3-service-url');
+  if (sa3ServiceUrlInputForListen) {
+    sa3ServiceUrlInputForListen.addEventListener('input', () => {
+      sa3ServiceUrlInputForListen._userEdited = true;
     });
   }
 

@@ -181,6 +181,7 @@ def _get_state_snapshot() -> dict[str, Any]:
         "engine_count": _engine_registry.available_count if _engine_registry else 0,
         "layers": layers,
         "log": list(_log_messages[-16:]),
+        "stable_audio_service_url": _config.stable_audio_service_url if _config else "",
         "timestamp": time.time(),
     }
 
@@ -352,6 +353,8 @@ def _build_audio_engine(config: OramConfig):
     unavailable engine rather than generating procedural mock audio.
     """
     use_mock = getattr(app.state, "mock_audio", False) or config.mock_audio
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        use_mock = False
     if use_mock:
         _append_log("audio: mock (configured)")
         return MockAudioEngine(
@@ -430,8 +433,13 @@ async def lifespan(app: FastAPI):
     global _session, _layer_manager, _engine, _router, _agent, _config, _DASHBOARD_TOKEN
     global _engine_registry, _engine_router
 
+    from oram.engines.sa3_launcher import start_sa3_server, stop_sa3_server
+    sa3_url = start_sa3_server()
+
     load_dotenv()
     _config = OramConfig.from_env()
+    if sa3_url and not os.environ.get("PYTEST_CURRENT_TEST"):
+        _config.stable_audio_service_url = sa3_url
     _DASHBOARD_TOKEN = _config.dashboard_token
 
     session_name = f"oram_{datetime.now().strftime('%H%M%S')}"
@@ -513,6 +521,7 @@ async def lifespan(app: FastAPI):
         _router.kill_all_audio()
     if _engine is not None:
         _engine.stop()
+    stop_sa3_server()
 
 
 # ── security ──
