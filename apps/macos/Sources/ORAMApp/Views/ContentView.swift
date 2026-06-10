@@ -175,18 +175,22 @@ struct ContentView: View {
                 .buttonStyle(HeaderButtonStyle(theme: lightTheme, active: true))
                 .onHoverHint("selected layer — click to cycle", $hint)
 
+                HeaderGlyph("↶", active: store.state?.canUndo == true, theme: lightTheme) {
+                    Task { await store.undo() }
+                }
+                .onHoverHint("undo last audio edit", $hint)
+
+                HeaderGlyph("↷", active: store.state?.canRedo == true, theme: lightTheme) {
+                    Task { await store.redo() }
+                }
+                .onHoverHint("redo last undone edit", $hint)
+
                 HeaderSeparator()
 
-                HeaderGlyph("⏺", active: store.state?.recording == true, role: .record, theme: lightTheme) {
-                    Task {
-                        if store.state?.recording == true {
-                            await store.stopRecording()
-                        } else {
-                            await store.startRecording()
-                        }
-                    }
+                HeaderGlyph(store.state?.masterRecording == true ? "■" : "●", active: store.state?.masterRecording == true, role: .record, theme: lightTheme) {
+                    Task { await store.toggleMasterRecording() }
                 }
-                .onHoverHint("record / stop — toggle recording from microphone (r)", $hint)
+                .onHoverHint(masterRecordHint, $hint)
 
                 HeaderGlyph("⊕", theme: lightTheme) {
                     Task { await store.sendCommand("overdub") }
@@ -216,15 +220,10 @@ struct ContentView: View {
 
                 HeaderSeparator()
 
-                HeaderGlyph("◉", theme: lightTheme) {
-                    Task { await store.sendCommand("export mix") }
-                }
-                .onHoverHint("export current mix — bounce all layers", $hint)
-
                 HeaderGlyph("⊘", role: .danger, theme: lightTheme) {
                     Task { await store.killAll() }
                 }
-                .onHoverHint("kill all sound — stop capture, mute layers, discard pending output", $hint)
+                .onHoverHint("nuke reset — stop audio and return to the initial state", $hint)
 
                 HeaderSeparator()
 
@@ -297,6 +296,13 @@ struct ContentView: View {
         }
         .frame(height: 18)
         .padding(.horizontal, 2)
+    }
+
+    private var masterRecordHint: String {
+        if store.state?.masterRecording == true {
+            return String(format: "stop master recording — %.1fs captured", store.state?.masterRecordingSeconds ?? 0)
+        }
+        return "record master output — click to start a custom-length capture"
     }
 
     private var settingsPanel: some View {
@@ -478,6 +484,14 @@ struct ContentView: View {
                     onVolume: { value in
                         Task { await store.setVolume(layer: layer.slot, volume: value) }
                     },
+                    onReversePlayback: {
+                        Task {
+                            await store.togglePlaybackReverse(
+                                layer: layer.slot,
+                                enabled: !(layer.playbackReverse ?? false)
+                            )
+                        }
+                    },
                     onLoopRegion: { start, end, enabled in
                         Task {
                             await store.setLoopRegion(
@@ -486,6 +500,16 @@ struct ContentView: View {
                                 endPct: end,
                                 enabled: enabled
                             )
+                        }
+                    },
+                    onLoopFades: { fadeIn, fadeOut in
+                        Task {
+                            await store.setLoopFades(layer: layer.slot, fadeInPct: fadeIn, fadeOutPct: fadeOut)
+                        }
+                    },
+                    onInpaintRegions: { regions in
+                        Task {
+                            await store.setInpaintRegions(layer: layer.slot, regions: regions)
                         }
                     }
                 )
@@ -790,7 +814,10 @@ private struct DashboardLayerRow: View {
     let onExport: () -> Void
     let onClear: () -> Void
     let onVolume: (Double) -> Void
+    let onReversePlayback: () -> Void
     let onLoopRegion: (Double, Double, Bool) -> Void
+    let onLoopFades: (Double, Double) -> Void
+    let onInpaintRegions: ([InpaintRegionPayload]) -> Void
 
     @State private var loopDragStart: Double?
     @State private var loopDragCurrent: Double?
@@ -853,6 +880,15 @@ private struct DashboardLayerRow: View {
             }
 
             corner(
+                "↶",
+                role: .reverse,
+                alignment: .topLeading,
+                hint: layer.playbackReverse == true ? "reverse playback on — click to play forward" : "reverse playback — non-destructive",
+                action: onReversePlayback
+            )
+            .offset(x: 52)
+
+            corner(
                 "↓",
                 role: .export,
                 alignment: .topTrailing,
@@ -900,6 +936,24 @@ private struct DashboardLayerRow: View {
                 if let range = visibleLoopRange {
                     LoopRangeOverlay(startPct: range.start, endPct: range.end, theme: theme)
                         .allowsHitTesting(false)
+                    FadeRampOverlay(
+                        loopStartPct: range.start,
+                        loopEndPct: range.end,
+                        fadeInPct: currentFadeInPct,
+                        fadeOutPct: currentFadeOutPct,
+                        theme: theme
+                    )
+                    .allowsHitTesting(false)
+                }
+
+                InpaintRegionsOverlay(regions: layer.inpaintRegions ?? [], theme: theme)
+                    .allowsHitTesting(false)
+
+                if layer.state != "empty", layer.loopEnabled == true, visibleLoopRange != nil {
+                    FadeHandle(kind: .in, pct: fadeInHandlePct, theme: theme)
+                        .highPriorityGesture(fadeGesture(kind: .in, width: geo.size.width))
+                    FadeHandle(kind: .out, pct: fadeOutHandlePct, theme: theme)
+                        .highPriorityGesture(fadeGesture(kind: .out, width: geo.size.width))
                 }
 
                 if layer.state != "empty" {
@@ -907,12 +961,25 @@ private struct DashboardLayerRow: View {
                         .fill(DashboardTheme.text(theme).opacity(0.62))
                         .frame(width: 1.4)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .offset(x: geo.size.width * CGFloat(min(max(layer.playheadPct ?? 0, 0), 100) / 100))
+                        .offset(x: geo.size.width * CGFloat(visualPlayheadPct / 100))
                         .allowsHitTesting(false)
                 }
             }
             .contentShape(Rectangle())
             .gesture(loopGesture(width: geo.size.width))
+            .contextMenu {
+                Button("Mark loop as inpaint") {
+                    if let range = persistedLoopRange {
+                        onInpaintRegions([InpaintRegionPayload(startPct: range.start, endPct: range.end)])
+                    }
+                }
+                .disabled(persistedLoopRange == nil)
+
+                Button("Clear inpaint regions") {
+                    onInpaintRegions([])
+                }
+                .disabled((layer.inpaintRegions ?? []).isEmpty)
+            }
         }
         .frame(height: 74)
         .frame(maxWidth: .infinity)
@@ -934,6 +1001,67 @@ private struct DashboardLayerRow: View {
             min(max(layer.loopStartPct ?? 0, 0), 100),
             min(max(layer.loopEndPct ?? 100, 0), 100)
         )
+    }
+
+    private var persistedLoopRange: (start: Double, end: Double)? {
+        guard layer.loopEnabled == true, layer.state != "empty" else {
+            return nil
+        }
+        let start = min(max(layer.loopStartPct ?? 0, 0), 100)
+        let end = min(max(layer.loopEndPct ?? 100, 0), 100)
+        guard end - start >= 1 else { return nil }
+        return (start, end)
+    }
+
+    private var loopLengthPct: Double {
+        guard let range = persistedLoopRange else { return 100 }
+        return max(0, range.end - range.start)
+    }
+
+    private var currentFadeInPct: Double {
+        min(max(layer.loopFadeInPct ?? 0, 0), loopLengthPct)
+    }
+
+    private var currentFadeOutPct: Double {
+        min(max(layer.loopFadeOutPct ?? 0, 0), loopLengthPct)
+    }
+
+    private var fadeInHandlePct: Double {
+        guard let range = persistedLoopRange else { return 0 }
+        return min(range.end, range.start + currentFadeInPct)
+    }
+
+    private var fadeOutHandlePct: Double {
+        guard let range = persistedLoopRange else { return 100 }
+        return max(range.start, range.end - currentFadeOutPct)
+    }
+
+    private var visualPlayheadPct: Double {
+        let raw = min(max(layer.playheadPct ?? 0, 0), 100)
+        guard layer.playbackReverse == true else { return raw }
+        if let range = persistedLoopRange {
+            return min(max(range.start + range.end - raw, range.start), range.end)
+        }
+        return 100 - raw
+    }
+
+    private func fadeGesture(kind: FadeHandle.Kind, width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onEnded { value in
+                guard let range = persistedLoopRange, width > 0 else { return }
+                let pct = pctFrom(x: value.location.x, width: width)
+                let fadeIn: Double
+                let fadeOut: Double
+                switch kind {
+                case .in:
+                    fadeIn = min(max(pct - range.start, 0), range.end - range.start)
+                    fadeOut = currentFadeOutPct
+                case .out:
+                    fadeIn = currentFadeInPct
+                    fadeOut = min(max(range.end - pct, 0), range.end - range.start)
+                }
+                onLoopFades(fadeIn, fadeOut)
+            }
     }
 
     private func loopGesture(width: CGFloat) -> some Gesture {
@@ -995,6 +1123,9 @@ private struct DashboardLayerRow: View {
         if layer.state == "empty" {
             return "empty"
         }
+        if layer.playbackReverse == true {
+            return "\(layer.layerMode ?? layer.sourceType) · reverse"
+        }
         return layer.layerMode ?? layer.sourceType
     }
 
@@ -1002,7 +1133,11 @@ private struct DashboardLayerRow: View {
         guard layer.loopEnabled == true, layer.state != "empty" else { return nil }
         let start = layer.loopStartSeconds ?? 0
         let end = layer.loopEndSeconds ?? layer.duration
-        return String(format: "%.2f-%.2f", start, end)
+        let fades = (layer.loopFadeInSeconds ?? 0) > 0 || (layer.loopFadeOutSeconds ?? 0) > 0
+            ? String(format: " · f %.2f/%.2f", layer.loopFadeInSeconds ?? 0, layer.loopFadeOutSeconds ?? 0)
+            : ""
+        let inpaint = (layer.inpaintRegions ?? []).isEmpty ? "" : " · ip \((layer.inpaintRegions ?? []).count)"
+        return String(format: "%.2f-%.2f", start, end) + fades + inpaint
     }
 
     private func corner(
@@ -1044,6 +1179,8 @@ private struct DashboardLayerRow: View {
             return DashboardTheme.summon
         case .clear:
             return DashboardTheme.record
+        case .reverse:
+            return layer.playbackReverse == true ? DashboardTheme.solo : DashboardTheme.accent(theme)
         }
     }
 
@@ -1103,6 +1240,7 @@ private struct DashboardLayerRow: View {
         case export
         case generate
         case clear
+        case reverse
     }
 }
 
@@ -1174,8 +1312,9 @@ private struct DashboardWaveformView: View {
                 let step = size.width / CGFloat(max(peaks.count - 1, 1))
                 for index in peaks.indices {
                     let pair = peaks[index]
-                    let minValue = pair.indices.contains(0) ? pair[0] : 0
-                    let maxValue = pair.indices.contains(1) ? pair[1] : 0
+                    let gain = fadeGain(at: Double(index) / Double(max(peaks.count - 1, 1)) * 100)
+                    let minValue = (pair.indices.contains(0) ? pair[0] : 0) * gain
+                    let maxValue = (pair.indices.contains(1) ? pair[1] : 0) * gain
                     let x = CGFloat(index) * step
                     var path = Path()
                     path.move(to: CGPoint(x: x, y: midY - CGFloat(maxValue) * amp))
@@ -1185,7 +1324,8 @@ private struct DashboardWaveformView: View {
             } else {
                 let barWidth = size.width / CGFloat(max(values.count, 1))
                 for index in values.indices {
-                    let normalized = CGFloat(max(0, min(1, values[index] / maxValue)))
+                    let gain = fadeGain(at: Double(index) / Double(max(values.count - 1, 1)) * 100)
+                    let normalized = CGFloat(max(0, min(1, (values[index] * gain) / maxValue)))
                     let height = max(1, normalized * (size.height - 6))
                     let rect = CGRect(
                         x: CGFloat(index) * barWidth + 0.5,
@@ -1211,6 +1351,23 @@ private struct DashboardWaveformView: View {
         }
         return DashboardTheme.secondary(theme)
     }
+
+    private func fadeGain(at pct: Double) -> Double {
+        guard layer.loopEnabled == true, layer.state != "empty" else { return 1 }
+        let start = min(max(layer.loopStartPct ?? 0, 0), 100)
+        let end = min(max(layer.loopEndPct ?? 100, 0), 100)
+        guard end > start else { return 1 }
+        let fadeIn = min(max(layer.loopFadeInPct ?? 0, 0), end - start)
+        let fadeOut = min(max(layer.loopFadeOutPct ?? 0, 0), end - start)
+        var gain = 1.0
+        if fadeIn > 0, pct >= start, pct <= start + fadeIn {
+            gain = min(gain, max(0, (pct - start) / fadeIn))
+        }
+        if fadeOut > 0, pct >= end - fadeOut, pct <= end {
+            gain = min(gain, max(0, (end - pct) / fadeOut))
+        }
+        return gain
+    }
 }
 
 private struct LoopRangeOverlay: View {
@@ -1226,6 +1383,83 @@ private struct LoopRangeOverlay: View {
                 .fill(DashboardTheme.accent(theme).opacity(0.14))
                 .frame(width: max(0, geo.size.width * (end - start)))
                 .offset(x: geo.size.width * start)
+        }
+    }
+}
+
+private struct FadeRampOverlay: View {
+    let loopStartPct: Double
+    let loopEndPct: Double
+    let fadeInPct: Double
+    let fadeOutPct: Double
+    let theme: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            let loopStart = CGFloat(min(max(loopStartPct, 0), 100)) / 100 * size.width
+            let loopEnd = CGFloat(min(max(loopEndPct, 0), 100)) / 100 * size.width
+            let fadeInEnd = min(loopEnd, loopStart + CGFloat(max(0, fadeInPct)) / 100 * size.width)
+            let fadeOutStart = max(loopStart, loopEnd - CGFloat(max(0, fadeOutPct)) / 100 * size.width)
+            let color = DashboardTheme.accent(theme).opacity(0.9)
+
+            if fadeInEnd - loopStart > 1 {
+                var path = Path()
+                path.move(to: CGPoint(x: loopStart, y: size.height - 4))
+                path.addLine(to: CGPoint(x: fadeInEnd, y: 4))
+                context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.5))
+            }
+
+            if loopEnd - fadeOutStart > 1 {
+                var path = Path()
+                path.move(to: CGPoint(x: fadeOutStart, y: 4))
+                path.addLine(to: CGPoint(x: loopEnd, y: size.height - 4))
+                context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.5))
+            }
+        }
+    }
+}
+
+private struct FadeHandle: View {
+    enum Kind {
+        case `in`
+        case out
+    }
+
+    let kind: Kind
+    let pct: Double
+    let theme: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            RoundedRectangle(cornerRadius: 2)
+                .fill(DashboardTheme.accent(theme))
+                .frame(width: 8, height: 18)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 2)
+                        .stroke(DashboardTheme.background(theme), lineWidth: 1)
+                )
+                .offset(
+                    x: geo.size.width * CGFloat(min(max(pct, 0), 100) / 100) - 4,
+                    y: kind == .in ? 4 : geo.size.height - 22
+                )
+        }
+    }
+}
+
+private struct InpaintRegionsOverlay: View {
+    let regions: [LayerInpaintRegion]
+    let theme: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            ForEach(Array(regions.enumerated()), id: \.offset) { _, region in
+                let start = CGFloat(min(max(region.startPct, 0), 100)) / 100
+                let end = CGFloat(min(max(region.endPct, 0), 100)) / 100
+                Rectangle()
+                    .fill(DashboardTheme.summon.opacity(0.17))
+                    .frame(width: max(1, geo.size.width * max(0, end - start)))
+                    .offset(x: geo.size.width * start)
+            }
         }
     }
 }

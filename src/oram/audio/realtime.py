@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import queue
 import threading
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
 
 from oram.audio.layer import LayerManager
+from oram.audio.master_recorder import MasterBusRecorder
 from oram.audio.mixer import Mixer, MixerWorkspace
 from oram.audio.playback import RingBuffer
 from oram.types import LayerState, OramSession
@@ -79,6 +81,7 @@ class RealAudioEngine:
             int(_MAX_COMMAND_SECONDS * sample_rate), channels=1,
         )
         self._command_mono_scratch = np.zeros((block_size, 1), dtype=np.float32)
+        self._master_recorder = MasterBusRecorder(sample_rate=sample_rate, channels=2)
 
         # auto-stop flag set by callback, processed by control thread
         self._auto_stop_pending = False
@@ -183,6 +186,7 @@ class RealAudioEngine:
             self._overdub_mode = False
             self._command_capture = False
             self._command_ring.reset()
+            self._master_recorder.abort()
             self._auto_stop_pending = False
             self._input_level = 0.0
             self._output_level = 0.0
@@ -246,6 +250,22 @@ class RealAudioEngine:
             self._command_capture = False
             buffer = self._command_ring.read()
         return buffer.astype(np.float32)
+
+    def start_master_recording(self, output_path: Path) -> None:
+        """begin recording the mixed master output to a WAV file."""
+        if not self._running:
+            raise RuntimeError("audio engine is not running")
+        self._master_recorder.start(output_path)
+
+    def stop_master_recording(self) -> dict:
+        """stop recording the mixed master output and return export metadata."""
+        return self._master_recorder.stop()
+
+    def is_master_recording(self) -> bool:
+        return self._master_recorder.active
+
+    def get_master_recording_seconds(self) -> float:
+        return self._master_recorder.elapsed_seconds
 
     def stop_recording(self) -> np.ndarray | None:
         with self._control_lock:
@@ -331,6 +351,9 @@ class RealAudioEngine:
             outdata[:] = 0.0
             self._output_level *= 0.95
 
+        if self._master_recorder.active:
+            self._master_recorder.write(outdata[:frames])
+
         # advance playheads
         self.mixer.advance_playheads(self.layers.layers, frames)
 
@@ -348,6 +371,9 @@ class RealAudioEngine:
         else:
             outdata[:] = 0.0
             self._output_level *= 0.95
+
+        if self._master_recorder.active:
+            self._master_recorder.write(outdata[:frames])
 
         self.mixer.advance_playheads(self.layers.layers, frames)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from io import BytesIO
 
 import numpy as np
@@ -212,6 +213,150 @@ class TestLoopRegionEndpoint:
         assert data.get("status") == "error"
         assert "invalid loop region" in data.get("message", "")
         srv._layer_manager.clear(layer)
+
+
+class TestLoopFadesEndpoint:
+    """POST /api/loop-fades."""
+
+    def test_loop_fades_set_and_clear(self, client):
+        import oram.web.server as srv
+
+        assert srv._layer_manager is not None
+        layer = srv._layer_manager.layers[0]
+        srv._layer_manager.assign_buffer(layer, np.zeros((48000, 2), dtype=np.float32))
+        srv._layer_manager.set_loop_region(layer, 12000, 36000)
+
+        resp = client.post(
+            "/api/loop-fades",
+            json={"target": 1, "fade_in_pct": 10, "fade_out_pct": 5},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        state = client.get("/api/state").json()
+        assert state["layers"][0]["loop_fade_in_seconds"] == 0.1
+        assert state["layers"][0]["loop_fade_out_seconds"] == 0.05
+
+        client.post("/api/loop-region", json={"target": 1, "enabled": False})
+        state = client.get("/api/state").json()
+        assert state["layers"][0]["loop_fade_in_seconds"] == 0.0
+        assert state["layers"][0]["loop_fade_out_seconds"] == 0.0
+        srv._layer_manager.clear(layer)
+
+
+class TestInpaintAndReverseEndpoints:
+    """POST /api/inpaint-regions and /api/playback-reverse."""
+
+    def test_inpaint_regions_and_reverse_state(self, client):
+        import oram.web.server as srv
+
+        assert srv._layer_manager is not None
+        layer = srv._layer_manager.layers[0]
+        srv._layer_manager.assign_buffer(layer, np.zeros((48000, 2), dtype=np.float32))
+
+        inpaint = client.post(
+            "/api/inpaint-regions",
+            json={"target": 1, "regions": [{"start_pct": 25, "end_pct": 50}]},
+        )
+        assert inpaint.status_code == 200
+        assert inpaint.json()["status"] == "ok"
+
+        reverse = client.post("/api/playback-reverse", json={"target": 1, "enabled": True})
+        assert reverse.status_code == 200
+        assert reverse.json()["enabled"] is True
+
+        state = client.get("/api/state").json()
+        layer_state = state["layers"][0]
+        assert layer_state["inpaint_regions"][0]["start_seconds"] == 0.25
+        assert layer_state["inpaint_regions"][0]["end_seconds"] == 0.5
+        assert layer_state["playback_reverse"] is True
+        srv._layer_manager.clear(layer)
+
+
+class TestUndoRedoAndResetEndpoints:
+    """POST /api/undo, /api/redo, and stronger /api/kill reset."""
+
+    def test_undo_redo_reverse_playback(self, client):
+        import oram.web.server as srv
+
+        assert srv._layer_manager is not None
+        srv._reset_to_initial_audio_state()
+        srv._undo_stack.clear()
+        srv._redo_stack.clear()
+        layer = srv._layer_manager.layers[0]
+        srv._layer_manager.assign_buffer(layer, np.zeros((48000, 2), dtype=np.float32))
+
+        reverse = client.post("/api/playback-reverse", json={"target": 1, "enabled": True})
+        assert reverse.status_code == 200
+        assert client.get("/api/state").json()["layers"][0]["playback_reverse"] is True
+        assert client.get("/api/state").json()["can_undo"] is True
+
+        undo = client.post("/api/undo")
+        assert undo.status_code == 200
+        assert undo.json()["status"] == "ok"
+        assert client.get("/api/state").json()["layers"][0]["playback_reverse"] is False
+
+        redo = client.post("/api/redo")
+        assert redo.status_code == 200
+        assert redo.json()["status"] == "ok"
+        assert client.get("/api/state").json()["layers"][0]["playback_reverse"] is True
+        srv._reset_to_initial_audio_state()
+        srv._undo_stack.clear()
+        srv._redo_stack.clear()
+
+    def test_kill_resets_audio_state_and_is_undoable(self, client):
+        import oram.web.server as srv
+
+        assert srv._layer_manager is not None
+        srv._reset_to_initial_audio_state()
+        srv._undo_stack.clear()
+        srv._redo_stack.clear()
+        layer = srv._layer_manager.layers[0]
+        srv._layer_manager.assign_buffer(layer, np.ones((48000, 2), dtype=np.float32))
+        srv._layer_manager.set_loop_region(layer, 12000, 36000)
+        srv._layer_manager.set_loop_fades(layer, 2400, 2400)
+        layer.volume = 0.5
+        srv._layer_manager.mute(layer)
+        srv._layer_manager.selected = 2
+
+        reset = client.post("/api/kill", json={})
+        assert reset.status_code == 200
+        state = client.get("/api/state").json()
+        assert state["layers"][0]["state"] == "empty"
+        assert state["layers"][0]["duration"] == 0
+        assert state["layers"][0]["loop_enabled"] is False
+        assert state["layers"][0]["volume"] == 1.0
+        assert state["layers"][0]["muted"] is False
+        assert state["selected_layer"] == 0
+        assert state["can_undo"] is True
+
+        undo = client.post("/api/undo")
+        assert undo.status_code == 200
+        restored = client.get("/api/state").json()
+        assert restored["layers"][0]["state"] == "muted"
+        assert restored["layers"][0]["duration"] == 1.0
+        assert restored["layers"][0]["loop_enabled"] is True
+        assert restored["layers"][0]["loop_fade_in_seconds"] == 0.05
+        assert restored["layers"][0]["volume"] == 0.5
+        assert restored["selected_layer"] == 2
+
+
+class TestMasterRecordEndpoint:
+    """POST /api/master-record."""
+
+    def test_master_record_start_stop_exports_file(self, client):
+        resp = client.post("/api/master-record", json={"action": "start"})
+        assert resp.status_code == 200
+        assert resp.json()["recording"] is True
+
+        time.sleep(0.05)
+
+        stop = client.post("/api/master-record", json={"action": "stop"})
+        assert stop.status_code == 200
+        data = stop.json()
+        assert data["recording"] is False
+        assert data["samples"] > 0
+        assert os.path.exists(data["path"])
 
 
 class TestWaveformEndpoint:

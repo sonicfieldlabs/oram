@@ -10,6 +10,7 @@ namespace
 {
 constexpr uint32_t processorStateMagic = 0x4f525053; // ORPS
 constexpr uint32_t processorStateVersion = 1;
+constexpr size_t historyLimit = 48;
 }
 
 class OramAudioProcessor::GenerateJob final : public juce::ThreadPoolJob
@@ -205,6 +206,11 @@ void OramAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
             parameterState.replaceState (juce::ValueTree::fromXml (*xml));
 
     core.readStateFromStream (stream);
+    {
+        const juce::ScopedLock lock (historyLock);
+        undoStack.clear();
+        redoStack.clear();
+    }
 }
 
 void OramAudioProcessor::selectLayer (int oneBasedLayer)
@@ -214,6 +220,7 @@ void OramAudioProcessor::selectLayer (int oneBasedLayer)
 
 void OramAudioProcessor::startRecordingSelected (bool shouldOverdub)
 {
+    pushUndo (shouldOverdub ? "overdub" : "record");
     core.startRecordingSelected (shouldOverdub);
     setStatus (shouldOverdub ? "overdubbing layer " + juce::String (core.selectedLayer())
                              : "recording layer " + juce::String (core.selectedLayer()));
@@ -227,8 +234,71 @@ void OramAudioProcessor::stopRecording()
 
 void OramAudioProcessor::clearSelectedLayer()
 {
+    pushUndo ("clear layer");
     core.clearSelectedLayer();
     setStatus ("cleared layer " + juce::String (core.selectedLayer()));
+}
+
+void OramAudioProcessor::undo()
+{
+    juce::MemoryBlock snapshot;
+    {
+        const juce::ScopedLock lock (historyLock);
+        if (undoStack.empty())
+        {
+            setStatus ("nothing to undo");
+            return;
+        }
+        snapshot = undoStack.back();
+        undoStack.pop_back();
+        redoStack.push_back (coreSnapshot());
+        if (redoStack.size() > historyLimit)
+            redoStack.erase (redoStack.begin());
+    }
+    restoreCoreSnapshot (snapshot);
+    setStatus ("undo");
+}
+
+void OramAudioProcessor::redo()
+{
+    juce::MemoryBlock snapshot;
+    {
+        const juce::ScopedLock lock (historyLock);
+        if (redoStack.empty())
+        {
+            setStatus ("nothing to redo");
+            return;
+        }
+        snapshot = redoStack.back();
+        redoStack.pop_back();
+        undoStack.push_back (coreSnapshot());
+        if (undoStack.size() > historyLimit)
+            undoStack.erase (undoStack.begin());
+    }
+    restoreCoreSnapshot (snapshot);
+    setStatus ("redo");
+}
+
+void OramAudioProcessor::resetAll()
+{
+    pushUndo ("nuke reset");
+    core.resetAll();
+    setStatus ("reset plugin audio");
+}
+
+void OramAudioProcessor::toggleReversePlaybackSelected()
+{
+    pushUndo ("reverse playback");
+    const auto enabled = ! core.selectedPlaybackReverse();
+    core.setSelectedPlaybackReverse (enabled);
+    setStatus (enabled ? "reverse playback on" : "reverse playback off");
+}
+
+void OramAudioProcessor::setSelectedLoopFades (float fadeInPct, float fadeOutPct)
+{
+    pushUndo ("loop fades");
+    core.setSelectedLoopFades (fadeInPct, fadeOutPct);
+    setStatus ("set loop fades");
 }
 
 void OramAudioProcessor::requestGenerate (
@@ -308,6 +378,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
 
     if (actionName == "mute_layer")
     {
+        pushUndo ("mute layer");
         core.toggleMuteSelected();
         setStatus ("toggled mute on layer " + juce::String (core.selectedLayer()));
         return true;
@@ -315,6 +386,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
 
     if (actionName == "solo_layer")
     {
+        pushUndo ("solo layer");
         core.toggleSoloSelected();
         setStatus ("toggled solo on layer " + juce::String (core.selectedLayer()));
         return true;
@@ -322,6 +394,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
 
     if (actionName == "set_volume")
     {
+        pushUndo ("set volume");
         core.setSelectedVolume ((float) (double) action.getProperty ("volume", juce::var (1.0)));
         setStatus ("set volume on layer " + juce::String (core.selectedLayer()));
         return true;
@@ -329,6 +402,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
 
     if (actionName == "set_pan")
     {
+        pushUndo ("set pan");
         core.setSelectedPan ((float) (double) action.getProperty ("pan", juce::var (0.0)));
         setStatus ("set pan on layer " + juce::String (core.selectedLayer()));
         return true;
@@ -336,8 +410,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
 
     if (actionName == "kill_audio")
     {
-        core.silenceAll();
-        setStatus ("killed plugin audio");
+        resetAll();
         return true;
     }
 
@@ -352,6 +425,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
 
     if (actionName == "set_loop_region")
     {
+        pushUndo ("loop region");
         const auto startPct = (float) (double) action.getProperty ("start_pct", juce::var (0.0));
         const auto endPct = (float) (double) action.getProperty ("end_pct", juce::var (100.0));
         const auto enabled = (bool) action.getProperty ("enabled", juce::var (true));
@@ -367,12 +441,14 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
 
         if (effect == "reverse")
         {
+            pushUndo ("reverse effect");
             core.reverseSelected();
             setStatus ("reversed layer " + juce::String (core.selectedLayer()));
             return true;
         }
         if (effect == "speed" || effect == "pitch")
         {
+            pushUndo (effect);
             auto speed = (float) (double) parameters.getProperty ("speed", juce::var (1.0));
             if (effect == "pitch")
             {
@@ -385,6 +461,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
         }
         if (effect == "lowpass" || effect == "highpass")
         {
+            pushUndo (effect);
             const auto cutoff = (float) (double) parameters.getProperty ("cutoff_hz", juce::var (effect == "lowpass" ? 2000.0 : 4000.0));
             core.filterSelected (effect == "highpass", cutoff);
             setStatus (effect + " layer " + juce::String (core.selectedLayer()));
@@ -392,6 +469,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
         }
         if (effect == "reverb" || effect == "spatial_far")
         {
+            pushUndo (effect);
             const auto wet = (float) (double) parameters.getProperty ("wet", juce::var (effect == "spatial_far" ? 0.65 : 0.4));
             core.reverbSelected (wet);
             setStatus (effect + " layer " + juce::String (core.selectedLayer()));
@@ -399,6 +477,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
         }
         if (effect == "fade_in" || effect == "fade_out")
         {
+            pushUndo (effect);
             const auto seconds = (double) parameters.getProperty ("fade_seconds", juce::var (1.0));
             core.fadeSelected (effect == "fade_in", seconds);
             setStatus (effect + " layer " + juce::String (core.selectedLayer()));
@@ -406,6 +485,7 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
         }
         if (effect == "trim_start" || effect == "trim_end")
         {
+            pushUndo (effect);
             core.trimSelected (effect == "trim_start", 0.25);
             setStatus (effect + " layer " + juce::String (core.selectedLayer()));
             return true;
@@ -445,8 +525,32 @@ bool OramAudioProcessor::importAudioFile (const juce::String& path, int& assigne
 
     juce::AudioBuffer<float> imported ((int) reader->numChannels, (int) reader->lengthInSamples);
     reader->read (&imported, 0, (int) reader->lengthInSamples, 0, true, true);
+    pushUndo ("import generated audio");
     assignedLayer = core.loadAudioToFirstEmpty (imported, reader->sampleRate);
     return assignedLayer > 0;
+}
+
+juce::MemoryBlock OramAudioProcessor::coreSnapshot() const
+{
+    juce::MemoryBlock block;
+    juce::MemoryOutputStream stream (block, false);
+    core.writeStateToStream (stream);
+    return block;
+}
+
+void OramAudioProcessor::restoreCoreSnapshot (const juce::MemoryBlock& snapshot)
+{
+    juce::MemoryInputStream stream (snapshot.getData(), snapshot.getSize(), false);
+    core.readStateFromStream (stream);
+}
+
+void OramAudioProcessor::pushUndo (const juce::String&)
+{
+    const juce::ScopedLock lock (historyLock);
+    undoStack.push_back (coreSnapshot());
+    if (undoStack.size() > historyLimit)
+        undoStack.erase (undoStack.begin());
+    redoStack.clear();
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

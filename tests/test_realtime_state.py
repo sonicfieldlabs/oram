@@ -152,6 +152,54 @@ class TestMixerPerformance:
         # 100 mixes of 4 layers at 512 should be well under 100ms
         assert elapsed < 0.5, f"mixer 4-layer mix took {elapsed:.3f}s for 100 blocks"
 
+    def test_one_shot_reverse_playback_is_non_destructive(self):
+        mixer = Mixer(sample_rate=48000, channels=2)
+        layer = Layer(
+            id="reverse-test",
+            name="reverse_test",
+            slot=0,
+            sample_rate=48000,
+            channels=2,
+        )
+        layer.buffer = np.column_stack([
+            np.arange(8, dtype=np.float32),
+            np.arange(8, dtype=np.float32),
+        ])
+        layer.duration_seconds = 8 / 48000
+        layer.state = LayerState.ACTIVE
+        layer.reverse = True
+
+        block = mixer._pull_block(layer, 4)
+
+        np.testing.assert_array_equal(block[:, 0], np.array([7, 6, 5, 4], dtype=np.float32))
+        np.testing.assert_array_equal(layer.buffer[:, 0], np.arange(8, dtype=np.float32))
+
+    def test_looper_fades_apply_to_loop_edges(self):
+        mixer = Mixer(sample_rate=48000, channels=2)
+        layer = Layer(
+            id="fade-test",
+            name="fade_test",
+            slot=0,
+            sample_rate=48000,
+            channels=2,
+        )
+        layer.buffer = np.ones((8, 2), dtype=np.float32)
+        layer.duration_seconds = 8 / 48000
+        layer.state = LayerState.ACTIVE
+        layer.layer_mode = "looper"
+        layer.looper.enabled = True
+        layer.looper.start_offset = 0
+        layer.looper.end_offset = 8
+        layer.looper.fade_in_samples = 4
+        layer.looper.fade_out_samples = 4
+
+        block = mixer._pull_block(layer, 8)
+
+        assert block[0, 0] == pytest.approx(0.0)
+        assert block[2, 0] == pytest.approx(0.5)
+        assert block[4, 0] == pytest.approx(1.0)
+        assert block[7, 0] == pytest.approx(0.25)
+
 
 class TestPanLaw:
     """constant-power pan law (§1.1)."""
@@ -198,4 +246,3 @@ class TestPanLaw:
         center_gain = float(np.cos(np.pi / 4.0))
         np.testing.assert_allclose(result[:, 0], center_gain, atol=1e-5)
         np.testing.assert_allclose(result[:, 1], center_gain, atol=1e-5)
-

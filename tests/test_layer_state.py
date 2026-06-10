@@ -220,6 +220,39 @@ class TestLayerState:
         assert layer.looper.end_offset == 24000
         assert layer.looper.enabled is True
 
+    def test_loop_fades_clamp_to_loop_length(self):
+        mgr = LayerManager()
+        layer = mgr.layers[0]
+        mgr.assign_buffer(layer, np.random.randn(48000, 2).astype(np.float32))
+        mgr.set_loop_region(layer, 12000, 24000)
+
+        mgr.set_loop_fades(layer, fade_in_samples=48000, fade_out_samples=48000)
+
+        assert layer.looper.fade_in_samples == 11999
+        assert layer.looper.fade_out_samples == 11999
+
+    def test_playback_reverse_updates_mode_flags(self):
+        mgr = LayerManager()
+        layer = mgr.layers[0]
+        mgr.assign_buffer(layer, np.random.randn(48000, 2).astype(np.float32))
+
+        mgr.set_playback_reverse(layer, True)
+
+        assert layer.reverse is True
+        assert layer.looper.reverse is True
+        assert layer.sampler.reverse is True
+
+    def test_inpaint_regions_clamp_and_clear_with_layer(self):
+        mgr = LayerManager()
+        layer = mgr.layers[0]
+        mgr.assign_buffer(layer, np.random.randn(48000, 2).astype(np.float32))
+
+        mgr.set_inpaint_regions(layer, [(-10, 12000), (47000, 96000)])
+
+        assert layer.inpaint_regions == [(0, 12000), (47000, 48000)]
+        mgr.clear(layer)
+        assert layer.inpaint_regions == []
+
     def test_clear_resets_loop_region(self):
         mgr = LayerManager()
         layer = mgr.layers[0]

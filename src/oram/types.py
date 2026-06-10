@@ -165,6 +165,7 @@ class Layer:
 
     # dsp state (carried from v1)
     reverse: bool = False
+    inpaint_regions: list[tuple[int, int]] = field(default_factory=list)
     speed: float = 1.0
     pitch_semitones: float = 0.0
     filter_type: str | None = None

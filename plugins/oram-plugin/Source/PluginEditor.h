@@ -26,10 +26,16 @@ private:
     OramAudioProcessor& audioProcessor;
 
     juce::ComboBox layerSelector;
+    juce::TextButton undoButton { "Undo" };
+    juce::TextButton redoButton { "Redo" };
     juce::TextButton recordButton { "Record" };
     juce::TextButton overdubButton { "Overdub" };
     juce::TextButton stopButton { "Stop" };
     juce::TextButton clearButton { "Clear" };
+    juce::TextButton resetButton { "Reset" };
+    juce::TextButton reversePlaybackButton { "Reverse Play" };
+    juce::TextButton fadeInButton { "Fade In" };
+    juce::TextButton fadeOutButton { "Fade Out" };
     juce::TextButton generateButton { "Generate" };
     juce::TextButton commandButton { "Run" };
     juce::TextEditor promptEditor;

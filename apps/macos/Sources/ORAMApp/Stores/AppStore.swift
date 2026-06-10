@@ -30,9 +30,6 @@ final class AppStore: ObservableObject {
     func bootstrap() async {
         isShuttingDown = false
         connectionStatus = await daemonManager.launchIfNeeded(client: client)
-        if connectionStatus == "connected", client.isConfigured {
-            try? await client.killAll()
-        }
         await refreshAll()
         connectWebSocket()
     }
@@ -121,9 +118,37 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func toggleMasterRecording() async {
+        do {
+            let action = state?.masterRecording == true ? "stop" : "start"
+            try await client.masterRecord(action: action)
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func sendCommand(_ text: String) async {
         do {
             try await client.sendCommand(text)
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func undo() async {
+        do {
+            try await client.undo()
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func redo() async {
+        do {
+            try await client.redo()
             await refreshAll()
         } catch {
             errorMessage = error.localizedDescription
@@ -160,6 +185,33 @@ final class AppStore: ObservableObject {
     func setLoopRegion(layer target: Int, startPct: Double, endPct: Double, enabled: Bool) async {
         do {
             try await client.setLoopRegion(layer: target, startPct: startPct, endPct: endPct, enabled: enabled)
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setLoopFades(layer target: Int, fadeInPct: Double, fadeOutPct: Double) async {
+        do {
+            try await client.setLoopFades(layer: target, fadeInPct: fadeInPct, fadeOutPct: fadeOutPct)
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setInpaintRegions(layer target: Int, regions: [InpaintRegionPayload]) async {
+        do {
+            try await client.setInpaintRegions(layer: target, regions: regions)
+            await refreshAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func togglePlaybackReverse(layer target: Int, enabled: Bool? = nil) async {
+        do {
+            try await client.setPlaybackReverse(layer: target, enabled: enabled)
             await refreshAll()
         } catch {
             errorMessage = error.localizedDescription

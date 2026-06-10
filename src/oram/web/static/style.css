@@ -35,6 +35,8 @@
   --generated-glow: rgba(77, 168, 130, 0.09);
   --summon: #b07aad;
   --summon-glow: rgba(176, 122, 173, 0.10);
+  --inpaint: #d07993;
+  --inpaint-glow: rgba(208, 121, 147, 0.12);
   --danger: #c45a55;
   --kill: #c05058;
 
@@ -1383,6 +1385,8 @@ input:focus-visible {
   --generated-glow: rgba(26, 96, 69, 0.09);
   --summon: #603860;
   --summon-glow: rgba(96, 56, 96, 0.10);
+  --inpaint: #914258;
+  --inpaint-glow: rgba(145, 66, 88, 0.10);
   --danger: #8c2825;
   --kill: #7a2228;
   --loop-start: #2a6070;
@@ -2722,10 +2726,18 @@ ol.about-list li::before {
   will-change: left, opacity;
 }
 .waveform-shell.has-audio .playhead { opacity: 0.6; }
+.waveform-shell.reverse-playback .playhead {
+  background: var(--solo-color);
+  box-shadow: 0 0 7px rgba(196, 165, 69, 0.32);
+}
 /* skip transition on backwards jumps (loop wraps, seeks) */
 .waveform-shell.playhead-jump .playhead { transition: none; }
 /* in light theme keep the playhead visible */
 [data-theme="light"] .playhead { background: var(--text); box-shadow: 0 0 4px rgba(0, 0, 0, 0.15); }
+[data-theme="light"] .waveform-shell.reverse-playback .playhead {
+  background: var(--solo-color);
+  box-shadow: 0 0 5px rgba(122, 92, 20, 0.25);
+}
 
 /* loop selection — keep visible during commit roundtrip */
 .loop-selection {
@@ -2885,6 +2897,16 @@ header {
   color: var(--text);
   background: var(--bg-hover);
 }
+.hdr-btn:disabled {
+  cursor: default;
+  color: var(--text-faint);
+  opacity: 0.38;
+  background: transparent;
+}
+.hdr-btn:disabled:hover {
+  color: var(--text-faint);
+  background: transparent;
+}
 .hdr-btn:active {
   transform: scale(0.92);
 }
@@ -2923,6 +2945,16 @@ header {
 /* kill button */
 .hdr-btn.hdr-kill:hover {
   color: var(--kill);
+}
+
+.hdr-btn.hdr-undo.available,
+.hdr-btn.hdr-redo.available {
+  color: var(--accent);
+}
+.hdr-btn.hdr-undo.available:hover,
+.hdr-btn.hdr-redo.available:hover {
+  color: var(--accent-bright);
+  text-shadow: 0 0 8px var(--active-glow);
 }
 
 /* summon button */
@@ -3473,4 +3505,212 @@ header {
   color: var(--muted-color);
   border-color: var(--muted-color);
   background: rgba(136, 112, 94, 0.15);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Loop fades, reverse playback, inpaint clone, master recording
+   ══════════════════════════════════════════════════════════════ */
+
+#btn-master-rec {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  gap: 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+}
+#btn-master-rec.recording {
+  width: auto;
+  min-width: 70px;
+  padding: 0 8px;
+  gap: 6px;
+  color: var(--record);
+  background: var(--record-glow);
+}
+#btn-master-rec .master-rec-icon {
+  line-height: 1;
+}
+#btn-master-rec .master-rec-timer {
+  display: none;
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--record);
+  min-width: 30px;
+}
+#btn-master-rec.recording .master-rec-timer {
+  display: inline-block;
+}
+
+.corner-tl,
+.corner-bl {
+  width: 50px;
+}
+.corner-tl2,
+.corner-bl2 {
+  width: 42px;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+  z-index: 5;
+}
+.corner-tl2 {
+  top: 0;
+  left: 50px;
+  border-top-left-radius: 0;
+  background: transparent;
+}
+.corner-tl2:hover,
+.corner-tl2.active {
+  background: radial-gradient(ellipse at top, rgba(196, 165, 69, 0.58) 0%, rgba(196, 165, 69, 0.15) 62%, transparent 96%);
+}
+.corner-tl2:hover .corner-glyph,
+.corner-tl2.active .corner-glyph {
+  opacity: 1;
+  color: var(--solo-color);
+  transform: none;
+  text-shadow: 0 0 8px rgba(196, 165, 69, 0.4);
+}
+.corner-tl2.is-empty {
+  opacity: 0.35;
+}
+.corner-bl2 {
+  bottom: 0;
+  left: 50px;
+  border-bottom-left-radius: 0;
+  background: transparent;
+  display: none;
+}
+body.stable-audio-local .corner-bl2 {
+  display: flex;
+}
+.corner-bl2:hover,
+.corner-bl2.generating {
+  background: radial-gradient(ellipse at bottom, rgba(208, 121, 147, 0.58) 0%, rgba(208, 121, 147, 0.15) 62%, transparent 96%);
+}
+.corner-bl2:hover .corner-glyph,
+.corner-bl2.generating .corner-glyph {
+  opacity: 1;
+  color: var(--inpaint);
+  transform: none;
+  text-shadow: 0 0 8px var(--inpaint-glow);
+}
+.corner-bl2.generating {
+  animation: pulse 1.2s infinite;
+}
+
+.loop-fade,
+.fade-handle,
+.inpaint-regions {
+  position: absolute;
+  pointer-events: none;
+}
+.loop-fade {
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  opacity: 0.7;
+  overflow: hidden;
+}
+.loop-fade.hidden,
+.fade-handle.hidden {
+  display: none;
+}
+.loop-fade-in {
+  background: linear-gradient(90deg, rgba(90, 171, 181, 0.34), rgba(90, 171, 181, 0.03));
+  border-left: 1px solid var(--loop-start);
+}
+.loop-fade-out {
+  background: linear-gradient(90deg, rgba(196, 150, 90, 0.03), rgba(196, 150, 90, 0.34));
+  border-right: 1px solid var(--loop-end);
+}
+.fade-handle {
+  top: 0;
+  width: 16px;
+  height: 18px;
+  margin-left: -8px;
+  border: 1px solid var(--border-active);
+  border-radius: 0 0 4px 4px;
+  background: var(--bg-raised);
+  cursor: ew-resize;
+  z-index: 6;
+  opacity: 0;
+  touch-action: none;
+  transition: opacity var(--dur-fast) var(--ease-smooth),
+              border-color var(--dur-fast) var(--ease-smooth),
+              background var(--dur-fast) var(--ease-smooth);
+  pointer-events: auto;
+}
+.fade-handle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 2px;
+  height: 10px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: currentColor;
+}
+.fade-in-handle {
+  color: var(--loop-start);
+}
+.fade-out-handle {
+  color: var(--loop-end);
+}
+.waveform-shell.loop-active:hover .fade-handle,
+.layer-row.dragging-fade .fade-handle {
+  opacity: 1;
+}
+.fade-handle:hover,
+.fade-handle:focus-visible {
+  opacity: 1;
+  border-color: currentColor;
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.inpaint-regions {
+  inset: 0;
+  z-index: 2;
+}
+body:not(.stable-audio-local) .inpaint-regions {
+  display: none;
+}
+.inpaint-region {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(208, 121, 147, 0.20) 0,
+      rgba(208, 121, 147, 0.20) 4px,
+      rgba(208, 121, 147, 0.08) 4px,
+      rgba(208, 121, 147, 0.08) 8px
+    );
+  border-left: 1px solid var(--inpaint);
+  border-right: 1px solid var(--inpaint);
+  box-shadow: inset 0 0 12px var(--inpaint-glow);
+}
+.waveform-shell.selecting-inpaint .inpaint-region:last-child {
+  background: rgba(208, 121, 147, 0.24);
+}
+
+@media (max-width: 680px) {
+  .corner-tl,
+  .corner-bl {
+    width: 40px;
+  }
+  .corner-tl2,
+  .corner-bl2 {
+    width: 34px;
+    height: 22px;
+    left: 40px;
+  }
+  #btn-master-rec.recording {
+    min-width: 62px;
+    padding: 0 6px;
+  }
 }

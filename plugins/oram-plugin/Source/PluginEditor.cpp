@@ -42,10 +42,26 @@ OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
     };
     addAndMakeVisible (layerSelector);
 
+    undoButton.onClick = [this] { audioProcessor.undo(); };
+    redoButton.onClick = [this] { audioProcessor.redo(); };
     recordButton.onClick = [this] { audioProcessor.startRecordingSelected (false); };
     overdubButton.onClick = [this] { audioProcessor.startRecordingSelected (true); };
     stopButton.onClick = [this] { audioProcessor.stopRecording(); };
     clearButton.onClick = [this] { audioProcessor.clearSelectedLayer(); };
+    resetButton.onClick = [this] { audioProcessor.resetAll(); };
+    reversePlaybackButton.onClick = [this] { audioProcessor.toggleReversePlaybackSelected(); };
+    fadeInButton.onClick = [this]
+    {
+        const auto snapshot = audioProcessor.audioCore().snapshot();
+        const auto index = juce::jlimit (0, OramAudioCore::maxLayers - 1, audioProcessor.audioCore().selectedLayer() - 1);
+        audioProcessor.setSelectedLoopFades (12.0f, (float) snapshot[(size_t) index].loopFadeOutPct);
+    };
+    fadeOutButton.onClick = [this]
+    {
+        const auto snapshot = audioProcessor.audioCore().snapshot();
+        const auto index = juce::jlimit (0, OramAudioCore::maxLayers - 1, audioProcessor.audioCore().selectedLayer() - 1);
+        audioProcessor.setSelectedLoopFades ((float) snapshot[(size_t) index].loopFadeInPct, 12.0f);
+    };
     generateButton.onClick = [this]
     {
         audioProcessor.requestGenerate (
@@ -56,7 +72,19 @@ OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
     };
     commandButton.onClick = [this] { audioProcessor.requestCommand (commandEditor.getText()); };
 
-    for (auto* button : { &recordButton, &overdubButton, &stopButton, &clearButton, &generateButton, &commandButton })
+    for (auto* button : {
+             &undoButton,
+             &redoButton,
+             &recordButton,
+             &overdubButton,
+             &stopButton,
+             &clearButton,
+             &resetButton,
+             &reversePlaybackButton,
+             &fadeInButton,
+             &fadeOutButton,
+             &generateButton,
+             &commandButton })
         addAndMakeVisible (*button);
 
     promptEditor.setMultiLine (false);
@@ -137,15 +165,29 @@ void OramAudioProcessorEditor::resized()
     auto controls = bounds.removeFromTop (rowHeight);
     layerSelector.setBounds (controls.removeFromLeft (120));
     controls.removeFromLeft (8);
-    recordButton.setBounds (controls.removeFromLeft (86));
+    undoButton.setBounds (controls.removeFromLeft (68));
     controls.removeFromLeft (6);
-    overdubButton.setBounds (controls.removeFromLeft (86));
+    redoButton.setBounds (controls.removeFromLeft (68));
+    controls.removeFromLeft (6);
+    recordButton.setBounds (controls.removeFromLeft (82));
+    controls.removeFromLeft (6);
+    overdubButton.setBounds (controls.removeFromLeft (82));
     controls.removeFromLeft (6);
     stopButton.setBounds (controls.removeFromLeft (72));
     controls.removeFromLeft (6);
     clearButton.setBounds (controls.removeFromLeft (72));
+    controls.removeFromLeft (6);
+    resetButton.setBounds (controls.removeFromLeft (72));
 
-    bounds.removeFromTop (18);
+    bounds.removeFromTop (8);
+    auto playbackControls = bounds.removeFromTop (rowHeight);
+    reversePlaybackButton.setBounds (playbackControls.removeFromLeft (132));
+    playbackControls.removeFromLeft (6);
+    fadeInButton.setBounds (playbackControls.removeFromLeft (86));
+    playbackControls.removeFromLeft (6);
+    fadeOutButton.setBounds (playbackControls.removeFromLeft (90));
+
+    bounds.removeFromTop (14);
     auto sliderRow = bounds.removeFromTop (56);
     auto inputArea = sliderRow.removeFromLeft ((sliderRow.getWidth() - 16) / 2);
     sliderRow.removeFromLeft (16);
@@ -211,6 +253,10 @@ void OramAudioProcessorEditor::refreshLayerLabels()
             text << juce::String (layer.durationSeconds, 2) << "s";
         if (layer.loopEnabled)
             text << "  loop " << juce::String (layer.loopStartPct, 0) << "-" << juce::String (layer.loopEndPct, 0) << "%";
+        if (layer.loopFadeInPct > 0.0 || layer.loopFadeOutPct > 0.0)
+            text << "  fade " << juce::String (layer.loopFadeInPct, 0) << "/" << juce::String (layer.loopFadeOutPct, 0) << "%";
+        if (layer.playbackReverse)
+            text << "  reverse";
         layerLabels[i].setText (text, juce::dontSendNotification);
     }
 }

@@ -6,7 +6,6 @@
   // ── websocket ──
   let ws = null;
   let state = {};
-  let masterRecording = false;
   const _urlParams = new URLSearchParams(location.search);
   const _authToken = _urlParams.get('token')
     || (document.querySelector('meta[name="oram-token"]') || {}).content
@@ -124,6 +123,15 @@
     return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
+  function formatElapsed(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
   // ── hint bar ──
   const hintText = document.getElementById('hint-text');
   const defaultHint = 'hover over a button for details';
@@ -154,6 +162,8 @@
   const meterDotIn = document.getElementById('meter-dot-in');
   const meterDotOut = document.getElementById('meter-dot-out');
   const btnRecord = document.getElementById('btn-record');
+  const btnUndo = document.getElementById('btn-undo');
+  const btnRedo = document.getElementById('btn-redo');
   const btnModeCycle = document.getElementById('btn-mode-cycle');
 
   let smoothedIn = 0;
@@ -215,6 +225,13 @@
     const sourceLayer = options.forceSource || stableAudioModeRequiresSource(mode) ? layerNum : null;
     const seedRaw = fieldValue('sa3-seed', '');
     const seed = seedRaw === '' ? null : Number(seedRaw);
+    let inpaintRanges = Array.isArray(options.inpaintRanges) ? options.inpaintRanges : [];
+    if (!inpaintRanges.length && mode === 'inpaint' && sourceLayer) {
+      const layer = state.layers?.[sourceLayer - 1];
+      inpaintRanges = (layer?.inpaint_regions || [])
+        .map(r => ({ start: r.start_seconds, end: r.end_seconds }))
+        .filter(r => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
+    }
     return {
       prompt: promptOverride || stableAudioPrompt(sourceLayer),
       mode,
@@ -235,6 +252,7 @@
       steps: numericField('sa3-steps', 8),
       cfg_scale: numericField('sa3-cfg', 1),
       noise_depth: mode === 'generate' ? null : numericField('sa3-noise', 0.55),
+      inpaint_ranges: inpaintRanges,
       variation_count: 1,
     };
   }
@@ -289,6 +307,17 @@
 
     // record button
     btnRecord.classList.toggle('active', !!s.recording);
+    if (btnUndo) {
+      btnUndo.disabled = !s.can_undo;
+      btnUndo.classList.toggle('available', !!s.can_undo);
+      btnUndo.setAttribute('data-hint', s.can_undo ? `undo ${s.undo_label || 'last audio edit'} (⌘Z)` : 'nothing to undo');
+    }
+    if (btnRedo) {
+      btnRedo.disabled = !s.can_redo;
+      btnRedo.classList.toggle('available', !!s.can_redo);
+      btnRedo.setAttribute('data-hint', s.can_redo ? `redo ${s.redo_label || 'last undone edit'} (⇧⌘Z)` : 'nothing to redo');
+    }
+    updateMasterRecordButton(!!s.master_recording, s.master_recording_seconds || 0);
 
     // prompt module
     const promptFrame = document.getElementById('prompt-frame');
@@ -386,6 +415,7 @@
 
     row.classList.toggle('selected', index === selectedIndex);
     row.classList.toggle('recording', layer.state === 'recording');
+    row.classList.toggle('stable-local', localStableAudioEnabled());
 
     // (mode tag and mode-btn removed in v3.1 — per-layer mode controls dropped)
 
@@ -438,6 +468,12 @@
       cornerTl.classList.toggle('solo', !!layer.solo);
       cornerTl.classList.toggle('is-empty', layer.state === 'empty');
       cornerTl.setAttribute('aria-pressed', !!layer.muted);
+    }
+    const reverseBtn = row.querySelector('.corner-tl2');
+    if (reverseBtn) {
+      reverseBtn.classList.toggle('active', !!layer.playback_reverse);
+      reverseBtn.classList.toggle('is-empty', layer.state === 'empty');
+      reverseBtn.setAttribute('aria-pressed', String(!!layer.playback_reverse));
     }
 
     // volume strip — vertical fill column (skip updates while dragging OR during post-drag cooldown)
@@ -497,6 +533,8 @@
           }
         }
       }
+      syncLoopFadeVisuals(shell, layer, loopEnabled);
+      syncInpaintVisuals(shell, layer);
       const readout = shell.querySelector('.loop-readout');
       if (readout) {
         if (!isEmpty && loopEnabled) {
@@ -509,15 +547,21 @@
         }
       }
 
-      // DOM playhead — smooth interpolation, skips transition on backwards jumps
+      // DOM playhead — smooth interpolation, skips transition on transport wraps
       const playhead = shell.querySelector('.playhead');
       if (playhead) {
-        const newPct = Math.max(0, Math.min(100, layer.playhead_pct || 0));
+        const newPct = visualPlayheadPct(layer);
         const isPlaying = !isEmpty && newPct > 0;
         shell.classList.toggle('has-audio', isPlaying);
+        shell.classList.toggle('reverse-playback', !!layer.playback_reverse);
         const oldPct = parseFloat(playhead.dataset.pct || '0');
-        // a backwards jump (loop wrap / seek / reset) shouldn't animate
-        if (Math.abs(newPct - oldPct) > 8 || newPct < oldPct - 1.5) {
+        const wasReverse = playhead.dataset.reverse === 'true';
+        const reverseChanged = wasReverse !== !!layer.playback_reverse;
+        const crossedWrap = layer.playback_reverse
+          ? newPct > oldPct + 1.5
+          : newPct < oldPct - 1.5;
+        // A loop wrap, seek/reset, or reverse toggle should not animate through the audio.
+        if (reverseChanged || Math.abs(newPct - oldPct) > 8 || crossedWrap) {
           shell.classList.add('playhead-jump');
           playhead.style.left = newPct + '%';
           // force reflow so the transition reset takes effect before next tick
@@ -527,6 +571,7 @@
           playhead.style.left = newPct + '%';
         }
         playhead.dataset.pct = String(newPct);
+        playhead.dataset.reverse = String(!!layer.playback_reverse);
       }
     }
 
@@ -595,6 +640,7 @@
     const loopEnabled = layer.loop_enabled;
     const loopStartPct = layer.loop_start_pct;
     const loopEndPct = layer.loop_end_pct;
+    const fadeEnvelope = loopFadeEnvelope(layer, canvas?.closest('.waveform-shell'));
 
     const ctx = canvas.getContext('2d');
     const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : canvas.getBoundingClientRect();
@@ -607,7 +653,10 @@
     // depends only on waveform appearance — we skip redraws unless a real change happened.
     const dataKey = (data && data.length > 0) ? data.join(',') : '';
     const hdKey = hdData ? `${hdData.revision}:${hdData.points}` : 'preview';
-    const stateKey = `${layerState}|${isGenerated}|${isMuted}|${loopEnabled}|${loopStartPct}|${loopEndPct}`;
+    const fadeKey = fadeEnvelope
+      ? `${fadeEnvelope.start}:${fadeEnvelope.end}:${fadeEnvelope.fadeIn}:${fadeEnvelope.fadeOut}`
+      : 'no-fade';
+    const stateKey = `${layerState}|${isGenerated}|${isMuted}|${loopEnabled}|${loopStartPct}|${loopEndPct}|${fadeKey}`;
     const cacheKey = `${cssW}x${cssH}|${themeKey}|${hdKey}|${dataKey}|${stateKey}`;
     if (canvas._waveformCache === cacheKey) {
       return;
@@ -679,8 +728,10 @@
       ctx.beginPath();
       peaks.forEach((pair, i) => {
         const x = i * step;
-        const yMin = h / 2 - pair[1] * amp;
-        const yMax = h / 2 - pair[0] * amp;
+        const pct = (i / Math.max(1, peaks.length - 1)) * 100;
+        const gain = fadeGainAtPct(pct, fadeEnvelope);
+        const yMin = h / 2 - pair[1] * amp * gain;
+        const yMax = h / 2 - pair[0] * amp * gain;
         ctx.moveTo(x, yMin);
         ctx.lineTo(x, yMax);
       });
@@ -689,7 +740,9 @@
       const barW = w / data.length;
       const maxVal = Math.max(...data, 0.001);
       data.forEach((val, i) => {
-        const norm = (val / maxVal);
+        const pct = (i / Math.max(1, data.length - 1)) * 100;
+        const gain = fadeGainAtPct(pct, fadeEnvelope);
+        const norm = (val / maxVal) * gain;
         const barH = Math.max(1, norm * (h - 4));
         const x = i * barW;
         const yTop = (h - barH) / 2;
@@ -700,8 +753,85 @@
       });
     }
 
+    drawFadeRamps(ctx, fadeEnvelope, w, h, cs);
+
     ctx.globalAlpha = 1;
     // playhead lives in a separate DOM element (.playhead) for smooth CSS interpolation
+  }
+
+  function clampPct(value, fallback = 0) {
+    const num = Number.isFinite(Number(value)) ? Number(value) : fallback;
+    return Math.max(0, Math.min(100, num));
+  }
+
+  function loopFadeEnvelope(layer, shell) {
+    if (!layer || layer.state === 'empty' || !layer.loop_enabled) return null;
+    const start = clampPct(layer.loop_start_pct, 0);
+    const end = Math.max(start, clampPct(layer.loop_end_pct, 100));
+    const loopLen = Math.max(0, end - start);
+    if (loopLen <= 0) return null;
+
+    let fadeIn = Math.max(0, Math.min(loopLen, Number(layer.loop_fade_in_pct || 0)));
+    let fadeOut = Math.max(0, Math.min(loopLen, Number(layer.loop_fade_out_pct || 0)));
+    if (shell?._optimisticFades && Date.now() - shell._optimisticFades.timestamp < 1200) {
+      fadeIn = Math.max(0, Math.min(loopLen, Number(shell._optimisticFades.fadeInPct ?? fadeIn)));
+      fadeOut = Math.max(0, Math.min(loopLen, Number(shell._optimisticFades.fadeOutPct ?? fadeOut)));
+    }
+    if (fadeIn <= 0 && fadeOut <= 0) return null;
+    return { start, end, fadeIn, fadeOut };
+  }
+
+  function fadeGainAtPct(pct, envelope) {
+    if (!envelope) return 1;
+    if (pct < envelope.start || pct > envelope.end) return 1;
+    let gain = 1;
+    if (envelope.fadeIn > 0 && pct < envelope.start + envelope.fadeIn) {
+      gain = Math.min(gain, Math.max(0, (pct - envelope.start) / envelope.fadeIn));
+    }
+    if (envelope.fadeOut > 0 && pct > envelope.end - envelope.fadeOut) {
+      gain = Math.min(gain, Math.max(0, (envelope.end - pct) / envelope.fadeOut));
+    }
+    return gain;
+  }
+
+  function drawFadeRamps(ctx, envelope, w, h, cs) {
+    if (!envelope) return;
+    const top = 5;
+    const bottom = h - 5;
+    const fadeInColor = cs.getPropertyValue('--loop-start').trim() || '#5aabb5';
+    const fadeOutColor = cs.getPropertyValue('--loop-end').trim() || '#c4965a';
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([]);
+    if (envelope.fadeIn > 0) {
+      ctx.strokeStyle = fadeInColor;
+      ctx.beginPath();
+      ctx.moveTo((envelope.start / 100) * w, bottom);
+      ctx.lineTo(((envelope.start + envelope.fadeIn) / 100) * w, top);
+      ctx.stroke();
+    }
+    if (envelope.fadeOut > 0) {
+      ctx.strokeStyle = fadeOutColor;
+      ctx.beginPath();
+      ctx.moveTo(((envelope.end - envelope.fadeOut) / 100) * w, top);
+      ctx.lineTo((envelope.end / 100) * w, bottom);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function visualPlayheadPct(layer) {
+    const raw = clampPct(layer?.playhead_pct || 0);
+    if (!layer?.playback_reverse) return raw;
+    if (layer.loop_enabled) {
+      const start = clampPct(layer.loop_start_pct, 0);
+      const end = Math.max(start, clampPct(layer.loop_end_pct, 100));
+      if (raw >= start && raw <= end) {
+        return clampPct(start + end - raw);
+      }
+    }
+    return clampPct(100 - raw);
   }
 
   // ── log ──
@@ -980,6 +1110,12 @@
         case 'auto-gen':
           autoGenerate(target);
           break;
+        case 'inpaint-gen':
+          inpaintGenerate(target);
+          break;
+        case 'playback-reverse':
+          togglePlaybackReverse(target);
+          break;
         case 'upload':
           openLayerUpload(target);
           break;
@@ -1098,6 +1234,44 @@
       addLog(`layer ${layerNum} ← generated via ${engineUsed}`, 'generated', '✦');
     } else {
       addLog('generate failed: ' + (res?.message || 'unknown error'), 'error', '✕');
+    }
+  }
+
+  async function inpaintGenerate(layerNum) {
+    if (!localStableAudioEnabled()) {
+      addLog('inpaint is available in local Stable Audio mode', 'error', '✕');
+      return;
+    }
+    const layer = state.layers?.[layerNum - 1];
+    const ranges = (layer?.inpaint_regions || [])
+      .map(r => ({ start: r.start_seconds, end: r.end_seconds }))
+      .filter(r => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
+    if (!ranges.length) {
+      addLog('right-drag on the waveform to mark an inpaint region first', 'error', '✕');
+      return;
+    }
+    const btn = document.querySelector(`[data-action="inpaint-gen"][data-target="${layerNum}"]`);
+    if (btn) btn.classList.add('generating');
+    const ok = await renderLocalStableAudio(layerNum, undefined, {
+      forceSource: true,
+      mode: 'inpaint',
+      inpaintRanges: ranges,
+    });
+    if (btn) btn.classList.remove('generating');
+    if (ok) addLog(`inpaint clone requested from layer ${layerNum}`, 'generated', '◒');
+  }
+
+  async function togglePlaybackReverse(layerNum) {
+    const layer = state.layers?.[layerNum - 1];
+    const enabled = !(layer?.playback_reverse);
+    const btn = document.querySelector(`[data-action="playback-reverse"][data-target="${layerNum}"]`);
+    btn?.classList.toggle('active', enabled);
+    const res = await apiPost('/api/playback-reverse', { target: layerNum, enabled });
+    if (res && res.status === 'ok') {
+      addLog(`reverse playback ${res.enabled ? 'on' : 'off'} → layer ${layerNum}`, 'system', '↶');
+    } else {
+      btn?.classList.toggle('active', !enabled);
+      addLog('reverse playback failed: ' + (res?.message || 'unknown'), 'error', '✕');
     }
   }
 
@@ -1311,7 +1485,7 @@
     });
   });
 
-  // ── loop handle drag ──
+  // ── loop fades + region selection ──
   async function commitLoopRegion(target, startPct, endPct, enabled) {
     const shell = document.querySelector(`.waveform-shell[data-target="${target}"]`);
     if (shell) {
@@ -1335,13 +1509,122 @@
     return res;
   }
 
-  // ── loop region: drag-to-select on the waveform (non-destructive) ──
-  // drag horizontally to set a loop region; quick tap clears the loop.
-  // the underlying audio is never modified — only the playback window changes.
+  async function commitLoopFades(target, fadeInPct, fadeOutPct) {
+    const shell = document.querySelector(`.waveform-shell[data-target="${target}"]`);
+    if (shell) {
+      shell._optimisticFades = {
+        fadeInPct,
+        fadeOutPct,
+        timestamp: Date.now(),
+      };
+    }
+    const body = { target: parseInt(target) };
+    if (fadeInPct != null) body.fade_in_pct = fadeInPct;
+    if (fadeOutPct != null) body.fade_out_pct = fadeOutPct;
+    const res = await apiPost('/api/loop-fades', body);
+    if (res && res.status === 'error') {
+      addLog(res.message || 'loop fade rejected', 'error', '✕');
+      if (shell) delete shell._optimisticFades;
+    }
+    return res;
+  }
+
+  async function commitInpaintRegions(target, regions) {
+    const shell = document.querySelector(`.waveform-shell[data-target="${target}"]`);
+    const clean = (regions || [])
+      .map(r => ({
+        start_pct: Math.max(0, Math.min(100, Math.min(r.start_pct, r.end_pct))),
+        end_pct: Math.max(0, Math.min(100, Math.max(r.start_pct, r.end_pct))),
+      }))
+      .filter(r => r.end_pct - r.start_pct >= 0.1);
+    if (shell) {
+      shell._optimisticInpaint = clean;
+      shell._optimisticInpaintTimestamp = Date.now();
+    }
+    const res = await apiPost('/api/inpaint-regions', {
+      target: parseInt(target),
+      regions: clean,
+    });
+    if (res && res.status === 'error') {
+      addLog(res.message || 'inpaint region rejected', 'error', '✕');
+      if (shell) delete shell._optimisticInpaint;
+    }
+    return res;
+  }
+
+  function layerInpaintRegionsPct(layer) {
+    return (layer?.inpaint_regions || [])
+      .map(r => ({ start_pct: r.start_pct || 0, end_pct: r.end_pct || 0 }))
+      .filter(r => r.end_pct > r.start_pct);
+  }
+
+  function syncInpaintVisuals(shell, layer) {
+    const container = shell?.querySelector('.inpaint-regions');
+    if (!container) return;
+    let regions = layerInpaintRegionsPct(layer);
+    if (shell._optimisticInpaint && Date.now() - (shell._optimisticInpaintTimestamp || 0) < 1200) {
+      regions = shell._optimisticInpaint;
+    } else {
+      delete shell._optimisticInpaint;
+    }
+    if (shell._inpaintDraft) {
+      regions = regions.concat([shell._inpaintDraft]);
+    }
+    container.innerHTML = '';
+    regions.forEach(region => {
+      const lo = Math.max(0, Math.min(100, Math.min(region.start_pct, region.end_pct)));
+      const hi = Math.max(0, Math.min(100, Math.max(region.start_pct, region.end_pct)));
+      if (hi - lo < 0.1) return;
+      const div = document.createElement('div');
+      div.className = 'inpaint-region';
+      div.style.left = lo + '%';
+      div.style.width = (hi - lo) + '%';
+      container.appendChild(div);
+    });
+    shell.classList.toggle('has-inpaint', regions.length > 0);
+  }
+
+  function syncLoopFadeVisuals(shell, layer, loopEnabled) {
+    const fadeIn = shell?.querySelector('.loop-fade-in');
+    const fadeOut = shell?.querySelector('.loop-fade-out');
+    const handleIn = shell?.querySelector('.fade-in-handle');
+    const handleOut = shell?.querySelector('.fade-out-handle');
+    if (!fadeIn || !fadeOut || !handleIn || !handleOut) return;
+
+    if (!loopEnabled || !layer || layer.state === 'empty') {
+      [fadeIn, fadeOut, handleIn, handleOut].forEach(el => el.classList.add('hidden'));
+      return;
+    }
+
+    const start = Math.max(0, Math.min(100, layer.loop_start_pct || 0));
+    const end = Math.max(start, Math.min(100, layer.loop_end_pct || 100));
+    const loopLen = Math.max(0, end - start);
+    let fadeInPct = Math.max(0, Math.min(loopLen, layer.loop_fade_in_pct || 0));
+    let fadeOutPct = Math.max(0, Math.min(loopLen, layer.loop_fade_out_pct || 0));
+    if (shell._optimisticFades && Date.now() - shell._optimisticFades.timestamp < 1200) {
+      fadeInPct = Math.max(0, Math.min(loopLen, shell._optimisticFades.fadeInPct ?? fadeInPct));
+      fadeOutPct = Math.max(0, Math.min(loopLen, shell._optimisticFades.fadeOutPct ?? fadeOutPct));
+    } else {
+      delete shell._optimisticFades;
+    }
+
+    const fadeInEdge = start + fadeInPct;
+    const fadeOutEdge = end - fadeOutPct;
+    fadeIn.style.left = start + '%';
+    fadeIn.style.width = fadeInPct + '%';
+    fadeOut.style.left = fadeOutEdge + '%';
+    fadeOut.style.width = fadeOutPct + '%';
+    handleIn.style.left = fadeInEdge + '%';
+    handleOut.style.left = fadeOutEdge + '%';
+    [fadeIn, fadeOut, handleIn, handleOut].forEach(el => el.classList.remove('hidden'));
+  }
+
+  // drag horizontally to set a loop region; right-drag marks Stable Audio inpaint regions.
   const DRAG_THRESHOLD_PX = 4;
   document.querySelectorAll('.waveform-shell').forEach(shell => {
     const target = shell.dataset.target;
     const overlay = shell.querySelector('.loop-selection');
+    const fadeHandles = shell.querySelectorAll('.fade-handle');
 
     function pctFromEvent(e) {
       const rect = shell.getBoundingClientRect();
@@ -1359,22 +1642,54 @@
     let startPct = 0;
     let currentPct = 0;
     let didDrag = false;
+    let inpaintStartPct = 0;
+    let inpaintCurrentPct = 0;
+    let didInpaintDrag = false;
 
     const row = shell.closest('.layer-row');
-    shell.addEventListener('pointerdown', (e) => {
-      // skip if the drag started on a corner button (those are their own actions)
-      if (e.target.closest && e.target.closest('.corner')) return;
-      // ignore if layer is empty
-      const layer = state.layers ? state.layers[parseInt(target) - 1] : null;
-      if (!layer || layer.state === 'empty') return;
-      e.preventDefault();
 
-      // auto-select this layer if not already selected (drag-to-loop implies focus)
+    function selectTargetLayer() {
       const targetNum = parseInt(target);
       const currentSelected = (state.selected_layer || 0) + 1;
       if (targetNum !== currentSelected) {
         apiPost('/api/command', { text: 'select layer ' + targetNum });
       }
+    }
+
+    function currentLayer() {
+      return state.layers ? state.layers[parseInt(target) - 1] : null;
+    }
+
+    function startInpaintSelection(e) {
+      if (!localStableAudioEnabled()) return;
+      const layer = currentLayer();
+      if (!layer || layer.state === 'empty') return;
+      e.preventDefault();
+      selectTargetLayer();
+      shell._inpaintSelecting = true;
+      didInpaintDrag = false;
+      startX = e.clientX;
+      inpaintStartPct = pctFromEvent(e);
+      inpaintCurrentPct = inpaintStartPct;
+      shell.setPointerCapture(e.pointerId);
+    }
+
+    shell.addEventListener('pointerdown', (e) => {
+      // skip if the drag started on a corner button (those are their own actions)
+      if (e.target.closest && e.target.closest('.corner')) return;
+      if (e.target.closest && e.target.closest('.fade-handle')) return;
+      // ignore if layer is empty
+      const layer = currentLayer();
+      if (!layer || layer.state === 'empty') return;
+      if (e.button === 2) {
+        startInpaintSelection(e);
+        return;
+      }
+      if (e.button !== 0) return;
+      e.preventDefault();
+
+      // auto-select this layer if not already selected (drag-to-loop implies focus)
+      selectTargetLayer();
 
       shell._selecting = true;
       didDrag = false;
@@ -1385,6 +1700,23 @@
     });
 
     shell.addEventListener('pointermove', (e) => {
+      if (shell._inpaintSelecting) {
+        const dx = Math.abs(e.clientX - startX);
+        if (!didInpaintDrag && dx > DRAG_THRESHOLD_PX) {
+          didInpaintDrag = true;
+          shell.classList.add('selecting-inpaint');
+          row?.classList.add('dragging-loop');
+        }
+        if (didInpaintDrag) {
+          inpaintCurrentPct = pctFromEvent(e);
+          shell._inpaintDraft = {
+            start_pct: Math.min(inpaintStartPct, inpaintCurrentPct),
+            end_pct: Math.max(inpaintStartPct, inpaintCurrentPct),
+          };
+          syncInpaintVisuals(shell, currentLayer());
+        }
+        return;
+      }
       if (!shell._selecting) return;
       const dx = Math.abs(e.clientX - startX);
       if (!didDrag && dx > DRAG_THRESHOLD_PX) {
@@ -1398,7 +1730,29 @@
       }
     });
 
-    function finalize() {
+    function finalizeInpaint() {
+      if (!shell._inpaintSelecting) return false;
+      shell._inpaintSelecting = false;
+      shell.classList.remove('selecting-inpaint');
+      row?.classList.remove('dragging-loop');
+      const layer = currentLayer();
+      if (didInpaintDrag) {
+        const lo = Math.min(inpaintStartPct, inpaintCurrentPct);
+        const hi = Math.max(inpaintStartPct, inpaintCurrentPct);
+        if (hi - lo >= 1) {
+          const existing = shell._optimisticInpaint || layerInpaintRegionsPct(layer);
+          const regions = existing.concat([{ start_pct: lo, end_pct: hi }]);
+          shell._optimisticInpaint = regions;
+          shell._optimisticInpaintTimestamp = Date.now();
+          commitInpaintRegions(target, regions);
+        }
+      }
+      delete shell._inpaintDraft;
+      syncInpaintVisuals(shell, layer);
+      return true;
+    }
+
+    function finalizeLoop() {
       if (!shell._selecting) return;
       shell._selecting = false;
       shell.classList.remove('selecting');
@@ -1412,7 +1766,7 @@
           commitLoopRegion(target, lo, hi, true);
         } else {
           // negligible drag — treat as tap
-          const layer = state.layers ? state.layers[parseInt(target) - 1] : null;
+          const layer = currentLayer();
           if (layer && layer.loop_enabled) {
             shell.classList.remove('loop-active');
             commitLoopRegion(target, 0, 100, false);
@@ -1421,7 +1775,7 @@
         }
       } else {
         // tap on the waveform — if a loop is active, clear it; full audio plays
-        const layer = state.layers ? state.layers[parseInt(target) - 1] : null;
+        const layer = currentLayer();
         if (layer && layer.loop_enabled) {
           shell.classList.remove('loop-active');
           commitLoopRegion(target, 0, 100, false);
@@ -1430,15 +1784,85 @@
       }
     }
 
-    shell.addEventListener('pointerup', finalize);
+    shell.addEventListener('pointerup', () => {
+      if (finalizeInpaint()) return;
+      finalizeLoop();
+    });
     shell.addEventListener('lostpointercapture', () => {
       if (shell._selecting) {
         shell._selecting = false;
         shell.classList.remove('selecting');
         row?.classList.remove('dragging-loop');
       }
+      if (shell._inpaintSelecting) {
+        finalizeInpaint();
+      }
+    });
+
+    shell.addEventListener('contextmenu', (e) => {
+      if (!e.target.closest('.corner')) e.preventDefault();
+    });
+
+    fadeHandles.forEach(handle => {
+      handle.addEventListener('pointerdown', (e) => {
+        const layer = currentLayer();
+        if (!layer || !layer.loop_enabled || layer.state === 'empty') return;
+        e.preventDefault();
+        e.stopPropagation();
+        selectTargetLayer();
+        const kind = handle.dataset.fade;
+        shell._fadeDrag = {
+          kind,
+          pointerId: e.pointerId,
+          fadeInPct: layer.loop_fade_in_pct || 0,
+          fadeOutPct: layer.loop_fade_out_pct || 0,
+        };
+        handle.setPointerCapture(e.pointerId);
+        row?.classList.add('dragging-fade');
+      });
+
+      handle.addEventListener('pointermove', (e) => {
+        if (!shell._fadeDrag) return;
+        e.preventDefault();
+        const layer = currentLayer();
+        if (!layer) return;
+        const start = Math.max(0, Math.min(100, layer.loop_start_pct || 0));
+        const end = Math.max(start, Math.min(100, layer.loop_end_pct || 100));
+        const loopLen = Math.max(0, end - start);
+        const pct = pctFromEvent(e);
+        if (shell._fadeDrag.kind === 'in') {
+          shell._fadeDrag.fadeInPct = Math.max(0, Math.min(loopLen, pct - start));
+        } else {
+          shell._fadeDrag.fadeOutPct = Math.max(0, Math.min(loopLen, end - pct));
+        }
+        shell._optimisticFades = {
+          fadeInPct: shell._fadeDrag.fadeInPct,
+          fadeOutPct: shell._fadeDrag.fadeOutPct,
+          timestamp: Date.now(),
+        };
+        syncLoopFadeVisuals(shell, layer, true);
+        redrawWaveformForShell(shell, layer);
+      });
+
+      function finishFadeDrag() {
+        const drag = shell._fadeDrag;
+        if (!drag) return;
+        row?.classList.remove('dragging-fade');
+        delete shell._fadeDrag;
+        commitLoopFades(target, drag.fadeInPct, drag.fadeOutPct);
+      }
+
+      handle.addEventListener('pointerup', finishFadeDrag);
+      handle.addEventListener('lostpointercapture', finishFadeDrag);
     });
   });
+
+  function redrawWaveformForShell(shell, layer) {
+    const canvas = shell?.querySelector('.waveform-canvas');
+    if (!canvas || !layer) return;
+    canvas._waveformCache = '';
+    drawWaveform(canvas, layer, getCachedWaveform(layer, canvas));
+  }
 
   async function startRecording() {
     if (state.recording) return;
@@ -1471,25 +1895,87 @@
     else await startRecording();
   });
 
+  async function performUndo() {
+    const res = await apiPost('/api/undo');
+    if (!res) return;
+    addLog(res.message || 'undo', res.status === 'ok' ? 'system' : 'error', '↶');
+    if (res.status === 'ok') {
+      state.can_undo = !!res.can_undo;
+      state.can_redo = !!res.can_redo;
+    }
+  }
 
+  async function performRedo() {
+    const res = await apiPost('/api/redo');
+    if (!res) return;
+    addLog(res.message || 'redo', res.status === 'ok' ? 'system' : 'error', '↷');
+    if (res.status === 'ok') {
+      state.can_undo = !!res.can_undo;
+      state.can_redo = !!res.can_redo;
+    }
+  }
 
-  // kill all sound
+  btnUndo?.addEventListener('click', performUndo);
+  btnRedo?.addEventListener('click', performRedo);
+
+  // nuke/reset all audio
   document.getElementById('btn-kill').addEventListener('click', async () => {
-    addLog('killing all audio…', 'error', '⊘');
+    addLog('resetting all audio…', 'error', '⊘');
     const res = await apiPost('/api/kill');
     if (res) addLog(res.message, 'error', '⊘');
   });
 
-  // master record — Option B: export current mix (no start/stop recording)
+  function updateMasterRecordButton(isRecording, seconds = 0) {
+    const btn = document.getElementById('btn-master-rec');
+    if (!btn) return;
+    const icon = btn.querySelector('.master-rec-icon');
+    const timer = btn.querySelector('.master-rec-timer');
+    btn.classList.toggle('active', !!isRecording);
+    btn.classList.toggle('recording', !!isRecording);
+    btn.setAttribute('aria-pressed', String(!!isRecording));
+    btn.setAttribute(
+      'data-hint',
+      isRecording ? 'stop master recording and export WAV' : 'record master bus — click to start/stop a timed WAV capture'
+    );
+    if (icon) icon.textContent = isRecording ? '■' : '●';
+    if (timer) {
+      timer.textContent = formatElapsed(seconds);
+      timer.classList.toggle('visible', !!isRecording);
+    }
+  }
+
+  async function startMasterRecording() {
+    if (state.master_recording) return;
+    state.master_recording = true;
+    updateMasterRecordButton(true, 0);
+    addLog('master recording started…', 'record', '●');
+    const res = await apiPost('/api/master-record', { action: 'start' });
+    if (res && res.status === 'ok' && res.recording) {
+      addLog('master recording active', 'record', '●');
+      return;
+    }
+    state.master_recording = false;
+    updateMasterRecordButton(false, 0);
+    addLog('master record failed: ' + (res?.message || 'unknown'), 'error', '✕');
+  }
+
+  async function stopMasterRecording() {
+    addLog('stopping master recording…', 'record', '■');
+    const res = await apiPost('/api/master-record', { action: 'stop' });
+    state.master_recording = false;
+    updateMasterRecordButton(false, 0);
+    if (res && res.status === 'ok') {
+      addLog('master recording exported → ' + (res.path || 'recording.wav'), 'export', '↓');
+    } else {
+      addLog('master stop failed: ' + (res?.message || 'unknown'), 'error', '✕');
+    }
+  }
+
+  // master record — start/stop a timed master-bus capture
   const btnMasterRec = document.getElementById('btn-master-rec');
   btnMasterRec.addEventListener('click', async () => {
-    addLog('exporting current mix…', 'export', '◉');
-    const res = await apiPost('/api/export-master');
-    if (res && res.status === 'ok') {
-      addLog('mix exported → ' + (res.path || 'mix.wav'), 'generated', '✦');
-    } else {
-      addLog('export failed: ' + (res?.message || 'unknown'), 'error', '✕');
-    }
+    if (state.master_recording) await stopMasterRecording();
+    else await startMasterRecording();
   });
 
   // master export
@@ -2033,9 +2519,25 @@
     if (document.activeElement === cmdInput) return;
     // don't intercept when palette is open
     if (!paletteOverlay.classList.contains('hidden') && document.activeElement === paletteInput) return;
+    const activeTag = document.activeElement?.tagName;
+    const isTextEditing = document.activeElement?.isContentEditable
+      || activeTag === 'INPUT'
+      || activeTag === 'TEXTAREA'
+      || activeTag === 'SELECT';
 
     // cmd/ctrl combos
     if (e.metaKey || e.ctrlKey) {
+      if (!isTextEditing && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) performRedo();
+        else performUndo();
+        return;
+      }
+      if (!isTextEditing && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        performRedo();
+        return;
+      }
       if (e.key === 's') { e.preventDefault(); sendCommand('save session'); return; }
       if (e.key === 'e') { e.preventDefault(); apiPost('/api/export-master'); addLog('exporting mix…', 'export', '◉'); return; }
       return; // don't process other cmd combos
@@ -2128,6 +2630,8 @@
     const local = localStableAudioEnabled();
     if (stableAudioPanel) stableAudioPanel.classList.toggle('hidden', !local);
     if (engineSelector) engineSelector.disabled = local;
+    document.body.classList.toggle('stable-audio-local', !!local);
+    if (state.layers) render(state);
   }
 
   if (runtimeModeSelector) {
@@ -2228,6 +2732,9 @@
     // transport
     { group: 'transport', label: 'Record', icon: '⏺', shortcut: 'r', action: () => startRecording() },
     { group: 'transport', label: 'Stop', icon: '⏹', action: () => stopRecording() },
+    { group: 'transport', label: 'Undo', icon: '↶', shortcut: '⌘Z', action: () => performUndo() },
+    { group: 'transport', label: 'Redo', icon: '↷', shortcut: '⇧⌘Z', action: () => performRedo() },
+    { group: 'transport', label: 'Master Record Start/Stop', icon: '●', action: () => { if (state.master_recording) stopMasterRecording(); else startMasterRecording(); } },
     { group: 'transport', label: 'Overdub', icon: '⊕', shortcut: 'o', action: () => sendCommand('overdub') },
     { group: 'transport', label: 'Kill All Sound', icon: '⊘', shortcut: 'k', action: () => { apiPost('/api/kill'); addLog('killed all audio', 'error', '⊘'); } },
     // layers
@@ -2239,6 +2746,7 @@
     { group: 'layers', label: 'Clear Selected', icon: '⌫', action: () => { const t = (state.selected_layer || 0) + 1; clearLayer(t); } },
     // dsp
     { group: 'dsp', label: 'Reverse', icon: '↺', action: () => sendCommand('reverse') },
+    { group: 'dsp', label: 'Reverse Playback Selected', icon: '↶', action: () => togglePlaybackReverse((state.selected_layer || 0) + 1) },
     { group: 'dsp', label: 'Slower (Half Speed)', icon: '½', action: () => sendCommand('make it slower') },
     { group: 'dsp', label: 'Faster (Double Speed)', icon: '2×', action: () => sendCommand('make it faster') },
     { group: 'dsp', label: 'Darken (Low-pass)', icon: '◐', action: () => sendCommand('make it darker') },

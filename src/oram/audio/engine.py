@@ -5,11 +5,13 @@ from __future__ import annotations
 import queue
 import threading
 import time
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
 
 from oram.audio.layer import LayerManager
+from oram.audio.master_recorder import MasterBusRecorder
 from oram.audio.mixer import Mixer
 from oram.types import LayerState, OramSession
 
@@ -33,6 +35,10 @@ class AudioEngine(Protocol):
     def stop_recording(self) -> np.ndarray | None: ...
     def start_command_capture(self, max_duration_seconds: float = 10.0) -> None: ...
     def stop_command_capture(self) -> np.ndarray: ...
+    def start_master_recording(self, output_path: Path) -> None: ...
+    def stop_master_recording(self) -> dict: ...
+    def is_master_recording(self) -> bool: ...
+    def get_master_recording_seconds(self) -> float: ...
 
 
 class UnavailableAudioEngine:
@@ -58,6 +64,7 @@ class UnavailableAudioEngine:
         self.command_queue: queue.Queue = queue.Queue()
         self._recording = False
         self._command_capture = False
+        self._master_recording = False
 
     def start(self) -> None:
         """no-op: real audio is unavailable."""
@@ -68,6 +75,7 @@ class UnavailableAudioEngine:
     def stop_all_audio(self) -> None:
         self._recording = False
         self._command_capture = False
+        self._master_recording = False
 
     def is_running(self) -> bool:
         return False
@@ -99,6 +107,19 @@ class UnavailableAudioEngine:
     def stop_command_capture(self) -> np.ndarray:
         self._command_capture = False
         return np.zeros((0, 1), dtype=np.float32)
+
+    def start_master_recording(self, output_path: Path) -> None:
+        raise RuntimeError(f"real audio unavailable: {self.reason}")
+
+    def stop_master_recording(self) -> dict:
+        self._master_recording = False
+        return {"path": "", "samples": 0, "duration": 0.0, "dropped_blocks": 0}
+
+    def is_master_recording(self) -> bool:
+        return False
+
+    def get_master_recording_seconds(self) -> float:
+        return 0.0
 
 
 class MockAudioEngine:
@@ -141,6 +162,7 @@ class MockAudioEngine:
         self._command_buffer: list[np.ndarray] = []
         self._command_max_samples: int | None = None
         self._command_samples: int = 0
+        self._master_recorder = MasterBusRecorder(sample_rate=sample_rate, channels=2)
 
     def start(self) -> None:
         """start the mock audio engine."""
@@ -172,6 +194,7 @@ class MockAudioEngine:
         self._command_buffer = []
         self._command_max_samples = None
         self._command_samples = 0
+        self._master_recorder.abort()
         self._input_level = 0.0
         self._output_level = 0.0
 
@@ -225,6 +248,20 @@ class MockAudioEngine:
         buffer = np.concatenate(self._command_buffer, axis=0)
         self._command_buffer = []
         return buffer.astype(np.float32)
+
+    def start_master_recording(self, output_path: Path) -> None:
+        """begin recording the mixed master output to a WAV file."""
+        self._master_recorder.start(output_path)
+
+    def stop_master_recording(self) -> dict:
+        """stop recording the mixed master output and return export metadata."""
+        return self._master_recorder.stop()
+
+    def is_master_recording(self) -> bool:
+        return self._master_recorder.active
+
+    def get_master_recording_seconds(self) -> float:
+        return self._master_recorder.elapsed_seconds
 
     def stop_recording(self) -> np.ndarray | None:
         """stop recording and return the captured buffer."""
@@ -317,7 +354,13 @@ class MockAudioEngine:
                 mixed = self.mixer.mix_block(active, self.block_size)
                 self._output_level = float(np.max(np.abs(mixed)))
             else:
+                mixed = None
                 self._output_level = max(0.0, self._output_level * 0.95)
+
+            if self._master_recorder.active:
+                if mixed is None:
+                    mixed = np.zeros((self.block_size, 2), dtype=np.float32)
+                self._master_recorder.write(mixed)
 
             # advance playheads
             self.mixer.advance_playheads(self.layers.layers, self.block_size)

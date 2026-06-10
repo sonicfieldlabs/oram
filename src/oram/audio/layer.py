@@ -159,6 +159,8 @@ class LayerManager:
         layer.muted = False
         layer.solo = False
         layer.reverse = False
+        layer.looper.reverse = False
+        layer.sampler.reverse = False
         layer.speed = 1.0
         layer.pitch_semitones = 0.0
         layer.filter_type = None
@@ -172,6 +174,7 @@ class LayerManager:
         layer.generation_depth = 0
         layer.is_generated = False
         layer.source_type = SourceType.RECORDED
+        layer.inpaint_regions = []
         self._reset_loop_region(layer)
         layer.waveform_revision += 1
 
@@ -296,8 +299,59 @@ class LayerManager:
         layer.looper.start_offset = start
         layer.looper.end_offset = end
         layer.looper.enabled = enabled
+        if not enabled:
+            layer.looper.fade_in_samples = 0
+            layer.looper.fade_out_samples = 0
+        self._clamp_loop_fades(layer)
         if enabled:
             layer.layer_mode = LayerMode.LOOPER
+
+    def set_loop_fades(
+        self,
+        layer: Layer,
+        fade_in_samples: int | None = None,
+        fade_out_samples: int | None = None,
+    ) -> None:
+        """set loop fade lengths in samples."""
+        length = layer.length_samples
+        if length <= 0:
+            layer.looper.fade_in_samples = 0
+            layer.looper.fade_out_samples = 0
+            return
+
+        if fade_in_samples is not None:
+            layer.looper.fade_in_samples = max(0, int(fade_in_samples))
+        if fade_out_samples is not None:
+            layer.looper.fade_out_samples = max(0, int(fade_out_samples))
+        self._clamp_loop_fades(layer)
+        if layer.looper.enabled:
+            layer.layer_mode = LayerMode.LOOPER
+
+    def set_playback_reverse(self, layer: Layer, enabled: bool) -> None:
+        """toggle non-destructive reverse playback for all layer playback modes."""
+        reverse = bool(enabled)
+        layer.reverse = reverse
+        layer.looper.reverse = reverse
+        layer.sampler.reverse = reverse
+
+    def set_inpaint_regions(
+        self,
+        layer: Layer,
+        regions: list[tuple[int, int]],
+    ) -> None:
+        """store non-destructive inpaint regions as sample ranges."""
+        length = layer.length_samples
+        if length <= 0:
+            layer.inpaint_regions = []
+            return
+
+        sanitized: list[tuple[int, int]] = []
+        for raw_start, raw_end in regions:
+            start = max(0, min(int(raw_start), length - 1))
+            end = max(start + 1, min(int(raw_end), length))
+            if end > start:
+                sanitized.append((start, end))
+        layer.inpaint_regions = sanitized
 
     @staticmethod
     def _reset_loop_region(layer: Layer) -> None:
@@ -305,6 +359,9 @@ class LayerManager:
         layer.looper.start_offset = 0
         layer.looper.end_offset = 0
         layer.looper.enabled = False
+        layer.looper.fade_in_samples = 0
+        layer.looper.fade_out_samples = 0
+        layer.inpaint_regions = []
 
     @staticmethod
     def _clamp_loop_region(layer: Layer) -> None:
@@ -318,6 +375,8 @@ class LayerManager:
             layer.looper.start_offset = max(0, min(int(layer.looper.start_offset), length - 1))
             if layer.looper.end_offset > 0:
                 layer.looper.end_offset = max(layer.looper.start_offset + 1, min(int(layer.looper.end_offset), length))
+            LayerManager._clamp_loop_fades(layer)
+            LayerManager._clamp_inpaint_regions(layer)
             return
 
         raw_start = int(layer.looper.start_offset)
@@ -330,6 +389,40 @@ class LayerManager:
             end = max(start + 1, min(raw_end, length))
         layer.looper.start_offset = start
         layer.looper.end_offset = end
+        LayerManager._clamp_loop_fades(layer)
+        LayerManager._clamp_inpaint_regions(layer)
+
+    @staticmethod
+    def _clamp_loop_fades(layer: Layer) -> None:
+        """keep loop fades inside the current loop length."""
+        length = layer.length_samples
+        if length <= 0:
+            layer.looper.fade_in_samples = 0
+            layer.looper.fade_out_samples = 0
+            return
+
+        start = max(0, min(int(layer.looper.start_offset), length - 1))
+        end = int(layer.looper.end_offset) if layer.looper.end_offset > 0 else length
+        end = min(max(start + 1, end), length)
+        loop_len = max(1, end - start)
+        max_fade = max(0, loop_len - 1)
+        layer.looper.fade_in_samples = max(0, min(int(layer.looper.fade_in_samples), max_fade))
+        layer.looper.fade_out_samples = max(0, min(int(layer.looper.fade_out_samples), max_fade))
+
+    @staticmethod
+    def _clamp_inpaint_regions(layer: Layer) -> None:
+        """keep inpaint ranges valid after audio length changes."""
+        length = layer.length_samples
+        if length <= 0:
+            layer.inpaint_regions = []
+            return
+        sanitized: list[tuple[int, int]] = []
+        for raw_start, raw_end in layer.inpaint_regions:
+            start = max(0, min(int(raw_start), length - 1))
+            end = max(start + 1, min(int(raw_end), length))
+            if end > start:
+                sanitized.append((start, end))
+        layer.inpaint_regions = sanitized
 
     def fork_layer(self, source: Layer) -> Layer | None:
         """clone a layer into an empty slot with a new ID."""
@@ -354,6 +447,9 @@ class LayerManager:
         target.looper.reverse = source.looper.reverse
         target.looper.half_speed = source.looper.half_speed
         target.looper.double_speed = source.looper.double_speed
+        target.reverse = source.reverse
+        target.sampler.reverse = source.sampler.reverse
+        target.inpaint_regions = source.inpaint_regions.copy()
         self._clamp_loop_region(target)
         target.effects_applied = source.effects_applied.copy()
         return target

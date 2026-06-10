@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -40,7 +41,7 @@ from oram.engines.registry import EngineRegistry
 from oram.engines.router import EngineRouter
 from oram.gateway.usage import UsageTracker
 from oram.summon.mock import MockSoundGenerator
-from oram.types import Mode, OramSession, SourceType
+from oram.types import GenerationEngine, Layer, LayerMode, LayerState, ListeningRoute, Mode, OramSession, SourceType
 from oram_daemon.metadata import find_available_port, write_daemon_metadata
 from oram_library import OramLibrary
 from oram_security import CredentialStore, default_credential_store, redact_mapping, redact_text
@@ -133,6 +134,29 @@ class LoopRegionRequest(BaseModel):
     enabled: bool = True
 
 
+class LoopFadeRequest(BaseModel):
+    target: int | str = "selected"
+    fade_in_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    fade_out_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    fade_in_seconds: float | None = Field(default=None, ge=0.0)
+    fade_out_seconds: float | None = Field(default=None, ge=0.0)
+
+
+class InpaintRegionPayload(BaseModel):
+    start_pct: float = Field(ge=0.0, le=100.0)
+    end_pct: float = Field(ge=0.0, le=100.0)
+
+
+class InpaintRegionsRequest(BaseModel):
+    target: int | str = "selected"
+    regions: list[InpaintRegionPayload] = Field(default_factory=list)
+
+
+class PlaybackReverseRequest(BaseModel):
+    target: int | str = "selected"
+    enabled: bool | None = None
+
+
 class GenerateFromRequest(BaseModel):
     target: int | str = "selected"
     route: str = "hybrid"
@@ -163,6 +187,10 @@ class SettingsRequest(BaseModel):
 class RecordStartRequest(BaseModel):
     target: int | str = "selected"
     duration: float | None = None
+
+
+class MasterRecordRequest(BaseModel):
+    action: str = Field(pattern="^(start|stop)$")
 
 
 class CredentialTestRequest(BaseModel):
@@ -206,6 +234,8 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 class LocalOramService:
     """Runtime state for the local daemon."""
 
+    HISTORY_LIMIT = 48
+
     def __init__(
         self,
         config: OramConfig,
@@ -219,6 +249,9 @@ class LocalOramService:
         self.library = library or OramLibrary()
         self.credential_store = credential_store or default_credential_store()
         self.logs: list[str] = []
+        self.undo_stack: list[dict[str, Any]] = []
+        self.redo_stack: list[dict[str, Any]] = []
+        self.history_lock = threading.Lock()
 
         session_name = config.session_name or f"oram_{datetime.now().strftime('%H%M%S')}"
         self.session = OramSession(
@@ -257,6 +290,190 @@ class LocalOramService:
         self.engine.start()
         self._append_audio_start_log()
         self.append_log("oram daemon ready")
+
+    def _snapshot_layer(self, layer: Layer) -> dict[str, Any]:
+        snapshot_state = layer.state
+        if snapshot_state == LayerState.RECORDING:
+            snapshot_state = LayerState.EMPTY if layer.is_empty else LayerState.ACTIVE
+        return {
+            "id": layer.id,
+            "name": layer.name,
+            "slot": layer.slot,
+            "source_type": layer.source_type.value,
+            "buffer": layer.buffer.copy(),
+            "waveform_data": list(layer.waveform_data),
+            "waveform_revision": layer.waveform_revision,
+            "sample_rate": layer.sample_rate,
+            "channels": layer.channels,
+            "duration_seconds": layer.duration_seconds,
+            "playhead": layer.playhead,
+            "volume": layer.volume,
+            "pan": layer.pan,
+            "muted": layer.muted,
+            "solo": layer.solo,
+            "state": snapshot_state.value,
+            "layer_mode": layer.layer_mode.value,
+            "looper": vars(layer.looper).copy(),
+            "sampler": {
+                "root_note": layer.sampler.root_note,
+                "mode": layer.sampler.mode,
+                "adsr": vars(layer.sampler.adsr).copy(),
+                "start_point": layer.sampler.start_point,
+                "end_point": layer.sampler.end_point,
+                "reverse": layer.sampler.reverse,
+                "transpose": layer.sampler.transpose,
+                "fine_tune": layer.sampler.fine_tune,
+                "polyphony": layer.sampler.polyphony,
+                "velocity_sensitivity": layer.sampler.velocity_sensitivity,
+            },
+            "reverse": layer.reverse,
+            "inpaint_regions": list(layer.inpaint_regions),
+            "speed": layer.speed,
+            "pitch_semitones": layer.pitch_semitones,
+            "filter_type": layer.filter_type,
+            "filter_cutoff_hz": layer.filter_cutoff_hz,
+            "reverb_amount": layer.reverb_amount,
+            "grain_density": layer.grain_density,
+            "grain_size_ms": layer.grain_size_ms,
+            "grain_jitter": layer.grain_jitter,
+            "effects_applied": list(layer.effects_applied),
+            "agent_listening": layer.agent_listening,
+            "listening_route": layer.listening_route.value,
+            "generation_engine": layer.generation_engine.value,
+            "engine_provider": layer.engine_provider,
+            "generation_prompt": layer.generation_prompt,
+            "parent_layer_id": layer.parent_layer_id,
+            "generation_depth": layer.generation_depth,
+            "is_generated": layer.is_generated,
+        }
+
+    def _restore_layer(self, layer: Layer, snapshot: dict[str, Any]) -> None:
+        with layer._buf_lock:
+            layer.id = snapshot["id"]
+            layer.name = snapshot["name"]
+            layer.slot = int(snapshot["slot"])
+            layer.source_type = SourceType(snapshot["source_type"])
+            layer.buffer = np.asarray(snapshot["buffer"], dtype=np.float32).copy()
+            layer.waveform_data = list(snapshot.get("waveform_data", []))
+            previous_revision = layer.waveform_revision
+            layer.sample_rate = int(snapshot["sample_rate"])
+            layer.channels = int(snapshot["channels"])
+            layer.duration_seconds = float(snapshot["duration_seconds"])
+            layer.playhead = min(int(snapshot["playhead"]), max(0, layer.length_samples - 1))
+            layer.volume = float(snapshot["volume"])
+            layer.pan = float(snapshot["pan"])
+            layer.muted = bool(snapshot["muted"])
+            layer.solo = bool(snapshot["solo"])
+            layer.state = LayerState(snapshot["state"])
+            layer.layer_mode = LayerMode(snapshot["layer_mode"])
+
+            for key, value in snapshot["looper"].items():
+                setattr(layer.looper, key, value)
+            sampler = snapshot["sampler"]
+            for key, value in sampler.items():
+                if key == "adsr":
+                    for adsr_key, adsr_value in value.items():
+                        setattr(layer.sampler.adsr, adsr_key, adsr_value)
+                else:
+                    setattr(layer.sampler, key, value)
+
+            layer.reverse = bool(snapshot["reverse"])
+            layer.inpaint_regions = [tuple(region) for region in snapshot.get("inpaint_regions", [])]
+            layer.speed = float(snapshot["speed"])
+            layer.pitch_semitones = float(snapshot["pitch_semitones"])
+            layer.filter_type = snapshot["filter_type"]
+            layer.filter_cutoff_hz = snapshot["filter_cutoff_hz"]
+            layer.reverb_amount = float(snapshot["reverb_amount"])
+            layer.grain_density = float(snapshot["grain_density"])
+            layer.grain_size_ms = float(snapshot["grain_size_ms"])
+            layer.grain_jitter = float(snapshot["grain_jitter"])
+            layer.effects_applied = list(snapshot["effects_applied"])
+            layer.agent_listening = bool(snapshot["agent_listening"])
+            layer.listening_route = ListeningRoute(snapshot["listening_route"])
+            layer.generation_engine = GenerationEngine(snapshot["generation_engine"])
+            layer.engine_provider = snapshot["engine_provider"]
+            layer.generation_prompt = snapshot["generation_prompt"]
+            layer.parent_layer_id = snapshot["parent_layer_id"]
+            layer.generation_depth = int(snapshot["generation_depth"])
+            layer.is_generated = bool(snapshot["is_generated"])
+            layer.waveform_revision = max(previous_revision + 1, int(snapshot["waveform_revision"]) + 1)
+
+        if layer.is_empty:
+            layer.waveform_data = [0.0] * 64
+        else:
+            layer.compute_waveform()
+
+    def _snapshot(self, label: str) -> dict[str, Any]:
+        return {
+            "label": label,
+            "selected": self.layers.selected,
+            "session": {
+                "mode": self.session.mode.value,
+                "selected_layer": self.session.selected_layer,
+                "listening": self.session.listening,
+                "auto_listen": self.session.auto_listen,
+                "input_mode": self.session.input_mode,
+                "bpm": self.session.bpm,
+                "generated_bed_id": self.session.generated_bed_id,
+            },
+            "layers": [self._snapshot_layer(layer) for layer in self.layers.layers],
+        }
+
+    def _push_undo(self, label: str) -> None:
+        with self.history_lock:
+            self.undo_stack.append(self._snapshot(label))
+            del self.undo_stack[:-self.HISTORY_LIMIT]
+            self.redo_stack.clear()
+
+    def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+        try:
+            self.router.kill_all_audio()
+        except Exception:
+            pass
+
+        for layer, layer_snapshot in zip(self.layers.layers, snapshot["layers"]):
+            self._restore_layer(layer, layer_snapshot)
+
+        session_data = snapshot["session"]
+        selected = max(0, min(len(self.layers.layers) - 1, int(snapshot["selected"])))
+        self.layers.selected = selected
+        self.session.layers = self.layers.layers
+        self.session.selected_layer = int(session_data.get("selected_layer", selected))
+        self.session.mode = Mode(session_data.get("mode", Mode.RECORD.value))
+        self.session.listening = bool(session_data.get("listening", False))
+        self.session.auto_listen = bool(session_data.get("auto_listen", False))
+        self.session.input_mode = session_data.get("input_mode", "prompt")
+        self.session.bpm = session_data.get("bpm")
+        self.session.generated_bed_id = session_data.get("generated_bed_id")
+
+    def _reset_to_initial_audio_state(self) -> list[str]:
+        results = self.router.kill_all_audio()
+        self.router._pending_clear_target = None
+        self.router._pending_clear_ts = 0.0
+
+        sample_rate = self.layers.sample_rate
+        channels = self.layers.channels
+        for slot, layer in enumerate(self.layers.layers):
+            fresh = Layer(
+                id=f"layer-{slot + 1:03d}",
+                name=f"layer_{slot + 1}",
+                slot=slot,
+                sample_rate=sample_rate,
+                channels=channels,
+            )
+            self._restore_layer(layer, self._snapshot_layer(fresh))
+
+        self.layers.selected = 0
+        self.session.layers = self.layers.layers
+        self.session.mode = Mode.RECORD
+        self.session.selected_layer = 0
+        self.session.listening = False
+        self.session.auto_listen = bool(self.config.auto_listen)
+        self.session.input_mode = "prompt"
+        self.session.bpm = None
+        self.session.generated_bed_id = None
+        results.append("cleared all layers")
+        return results
 
     def refresh_provider_credentials(self) -> None:
         """Refresh provider engines after credentials are added to Keychain."""
@@ -364,11 +581,18 @@ class LocalOramService:
                 playhead_pct = round((layer.playhead / layer.length_samples) * 100, 1)
 
             loop_end = layer.looper.end_offset if layer.looper.end_offset > 0 else layer.length_samples
+            inpaint_regions = []
             if layer.is_empty or layer.length_samples <= 0:
                 loop_start_pct = 0.0
                 loop_end_pct = 100.0
                 loop_start_seconds = 0.0
                 loop_end_seconds = 0.0
+                loop_fade_in_seconds = 0.0
+                loop_fade_out_seconds = 0.0
+                loop_fade_in_pct = 0.0
+                loop_fade_out_pct = 0.0
+                loop_fade_in_loop_pct = 0.0
+                loop_fade_out_loop_pct = 0.0
             else:
                 loop_start_pct = round(layer.looper.start_offset / layer.length_samples * 100, 2)
                 loop_end_pct = round(loop_end / layer.length_samples * 100, 2)
@@ -378,6 +602,28 @@ class LocalOramService:
                     else 0.0
                 )
                 loop_end_seconds = round(loop_end / layer.sample_rate, 3) if layer.sample_rate > 0 else 0.0
+                loop_len_samples = max(1, loop_end - layer.looper.start_offset)
+                loop_fade_in_seconds = (
+                    round(layer.looper.fade_in_samples / layer.sample_rate, 3)
+                    if layer.sample_rate > 0
+                    else 0.0
+                )
+                loop_fade_out_seconds = (
+                    round(layer.looper.fade_out_samples / layer.sample_rate, 3)
+                    if layer.sample_rate > 0
+                    else 0.0
+                )
+                loop_fade_in_pct = round(layer.looper.fade_in_samples / layer.length_samples * 100, 2)
+                loop_fade_out_pct = round(layer.looper.fade_out_samples / layer.length_samples * 100, 2)
+                loop_fade_in_loop_pct = round(layer.looper.fade_in_samples / loop_len_samples * 100, 2)
+                loop_fade_out_loop_pct = round(layer.looper.fade_out_samples / loop_len_samples * 100, 2)
+                for start, end in layer.inpaint_regions:
+                    inpaint_regions.append({
+                        "start_pct": round(start / layer.length_samples * 100, 2),
+                        "end_pct": round(end / layer.length_samples * 100, 2),
+                        "start_seconds": round(start / layer.sample_rate, 3) if layer.sample_rate > 0 else 0.0,
+                        "end_seconds": round(end / layer.sample_rate, 3) if layer.sample_rate > 0 else 0.0,
+                    })
 
             layers.append({
                 "id": layer.id,
@@ -392,6 +638,7 @@ class LocalOramService:
                 "volume": round(layer.volume, 3),
                 "pan": round(layer.pan, 3),
                 "reverse": layer.reverse,
+                "playback_reverse": bool(layer.reverse or layer.looper.reverse or layer.sampler.reverse),
                 "speed": round(layer.speed, 2),
                 "pitch_semitones": round(layer.pitch_semitones, 1),
                 "effects": list(layer.effects_applied),
@@ -409,6 +656,13 @@ class LocalOramService:
                 "loop_end_pct": loop_end_pct,
                 "loop_start_seconds": loop_start_seconds,
                 "loop_end_seconds": loop_end_seconds,
+                "loop_fade_in_pct": loop_fade_in_pct,
+                "loop_fade_out_pct": loop_fade_out_pct,
+                "loop_fade_in_loop_pct": loop_fade_in_loop_pct,
+                "loop_fade_out_loop_pct": loop_fade_out_loop_pct,
+                "loop_fade_in_seconds": loop_fade_in_seconds,
+                "loop_fade_out_seconds": loop_fade_out_seconds,
+                "inpaint_regions": inpaint_regions,
             })
         payload = {
             "version": package_version(),
@@ -422,11 +676,20 @@ class LocalOramService:
             "selected_layer": self.layers.selected + 1,
             "audio_running": bool(self.engine.is_running()),
             "recording": bool(getattr(self.engine, "_recording", False)),
+            "master_recording": bool(getattr(self.engine, "is_master_recording", lambda: False)()),
+            "master_recording_seconds": round(
+                float(getattr(self.engine, "get_master_recording_seconds", lambda: 0.0)()),
+                2,
+            ),
             "input_level": round(float(getattr(self.engine, "get_input_level", lambda: 0.0)()), 3),
             "output_level": round(float(getattr(self.engine, "get_output_level", lambda: 0.0)()), 3),
             "auto_listen": self.session.auto_listen,
             "gateway": self._active_gateway_label(),
             "engine_count": self.engine_registry.available_count,
+            "can_undo": bool(self.undo_stack),
+            "can_redo": bool(self.redo_stack),
+            "undo_label": self.undo_stack[-1]["label"] if self.undo_stack else "",
+            "redo_label": self.redo_stack[-1]["label"] if self.redo_stack else "",
             "layers": layers,
             "log": list(self.logs[-24:]),
         }
@@ -464,6 +727,7 @@ class LocalOramService:
 
     def command(self, text: str) -> dict[str, Any]:
         action = self.agent.process_command(text)
+        self._push_undo(text[:60] or "command")
         message = self.router.route(action, raw_text=redact_text(text))
         return redact_mapping({"status": "ok", "message": message, "action": action.model_dump()})
 
@@ -479,6 +743,7 @@ class LocalOramService:
         engine = req.model or "auto"
         audio = self.router._call_engine(engine, req.prompt, duration, provider=req.provider)
         if audio is None:
+            self._push_undo("generate")
             action = GenerateLayerAction(prompt=req.prompt, duration=duration, engine=engine)
             self.router.route(action, raw_text="daemon:generate")
             return {"status": "accepted", "message": "generation queued"}
@@ -500,6 +765,7 @@ class LocalOramService:
 
         target = self.layers.find_empty_layer()
         if target is not None:
+            self._push_undo("generate")
             self.layers.assign_buffer(target, audio)
             target.is_generated = True
             target.source_type = SourceType.GENERATED
@@ -657,6 +923,7 @@ class LocalOramService:
         if req.assign_layer and not plugin_owned:
             target = self._stable_audio_target_layer(req, source_layer=source_layer)
             if target is not None:
+                self._push_undo(f"stable audio {req.mode}")
                 self.layers.assign_buffer(target, audio)
                 target.is_generated = True
                 target.source_type = SourceType.GENERATED
@@ -708,6 +975,12 @@ class LocalOramService:
         ranges = []
         if req.inpaint_start is not None and req.inpaint_end is not None:
             ranges.append({"start": req.inpaint_start, "end": req.inpaint_end})
+        elif source_layer is not None and req.mode == "inpaint" and source_layer.inpaint_regions:
+            for start, end in source_layer.inpaint_regions:
+                ranges.append({
+                    "start": round(start / source_layer.sample_rate, 4),
+                    "end": round(end / source_layer.sample_rate, 4),
+                })
         elif source_layer is not None and req.mode in {"inpaint", "continue"} and source_layer.looper.enabled:
             end = source_layer.looper.end_offset if source_layer.looper.end_offset > 0 else source_layer.length_samples
             ranges.append({
@@ -784,6 +1057,7 @@ class LocalOramService:
         return "stable-audio-3-local"
 
     def record_start(self, req: RecordStartRequest) -> dict[str, Any]:
+        self._push_undo("recording")
         action = RecordAction(target=req.target, duration=req.duration)
         message = self.router.route(action, raw_text="daemon:record/start")
         return {"status": "ok", "message": message, "recording": bool(getattr(self.engine, "_recording", False))}
@@ -792,7 +1066,33 @@ class LocalOramService:
         message = self.router.route(StopRecordingAction(), raw_text="daemon:record/stop")
         return {"status": "ok", "message": message, "recording": bool(getattr(self.engine, "_recording", False))}
 
+    def master_record(self, req: MasterRecordRequest) -> dict[str, Any]:
+        if req.action == "start":
+            if getattr(self.engine, "is_master_recording", lambda: False)():
+                return {
+                    "status": "ok",
+                    "recording": True,
+                    "elapsed": round(float(self.engine.get_master_recording_seconds()), 2),
+                }
+            self.config.session_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = self.config.session_dir / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"master_recording_{datetime.now().strftime('%H%M%S')}.wav"
+            filepath = export_dir / filename
+            self.engine.start_master_recording(filepath)
+            self.append_log(f"master recording started -> {filepath}")
+            return {"status": "ok", "recording": True, "path": str(filepath), "filename": filename}
+
+        if not getattr(self.engine, "is_master_recording", lambda: False)():
+            return {"status": "error", "message": "master recording is not active", "recording": False}
+        result = self.engine.stop_master_recording()
+        path = result.get("path", "")
+        duration = float(result.get("duration", 0.0))
+        self.append_log(f"master recording exported -> {path} ({duration:.1f}s)")
+        return {"status": "ok", "recording": False, "message": "master recording exported", **result}
+
     def clear_layer(self, req: LayerTargetRequest) -> dict[str, Any]:
+        self._push_undo(f"clear layer {req.target}")
         action = ClearLayerAction(target=req.target, confirmed=True)
         message = self.router.route(action, raw_text=f"daemon:clear-layer:{req.target}")
         return {"status": "ok", "message": message}
@@ -800,6 +1100,7 @@ class LocalOramService:
     def upload_layer(self, *, target: int, filename: str, data: bytes) -> dict[str, Any]:
         layer = self.layers.get_layer(target)
         audio, sample_rate = decode_audio_bytes(data, target_sample_rate=self.session.sample_rate)
+        self._push_undo(f"upload layer {target}")
         assign_imported_audio(self.layers, layer, audio, filename=filename, sample_rate=sample_rate)
         self.append_log(f"uploaded {filename} -> layer {target}")
         return {
@@ -838,6 +1139,7 @@ class LocalOramService:
             }
 
     def generate_from_layer(self, req: GenerateFromRequest) -> dict[str, Any]:
+        self._push_undo("generate from layer")
         action = GenerateFromAction(
             target=req.target,
             route=req.route,
@@ -850,6 +1152,7 @@ class LocalOramService:
         return {"status": "ok", "message": message}
 
     def set_loop_region(self, req: LoopRegionRequest) -> dict[str, Any]:
+        self._push_undo("loop region")
         action = SetLoopRegionAction(
             target=req.target,
             start_pct=req.start_pct,
@@ -929,17 +1232,126 @@ class LocalOramService:
         }
 
     def set_volume(self, req: VolumeRequest) -> dict[str, Any]:
+        self._push_undo(f"volume layer {req.target}")
         action = SetVolumeAction(target=req.target, volume=req.volume)
         message = self.router.route(action, raw_text=f"daemon:volume:{req.target}:{req.volume:.3f}")
         return {"status": "ok", "message": message}
 
     def kill_all(self) -> dict[str, Any]:
-        results = self.router.kill_all_audio()
-        message = "killed all audio" if results else "audio already silent"
+        self._push_undo("nuke reset")
+        results = self._reset_to_initial_audio_state()
+        message = "reset all audio"
         self.append_log(message)
         return {"status": "ok", "message": message, "actions": results}
 
+    def undo(self) -> dict[str, Any]:
+        with self.history_lock:
+            if not self.undo_stack:
+                return {
+                    "status": "ok",
+                    "message": "nothing to undo",
+                    "can_undo": False,
+                    "can_redo": bool(self.redo_stack),
+                }
+            snapshot = self.undo_stack.pop()
+            self.redo_stack.append(self._snapshot("redo point"))
+            del self.redo_stack[:-self.HISTORY_LIMIT]
+        self._restore_snapshot(snapshot)
+        message = f"undo: {snapshot.get('label', 'last action')}"
+        self.append_log(message)
+        return {"status": "ok", "message": message, "can_undo": bool(self.undo_stack), "can_redo": bool(self.redo_stack)}
+
+    def redo(self) -> dict[str, Any]:
+        with self.history_lock:
+            if not self.redo_stack:
+                return {
+                    "status": "ok",
+                    "message": "nothing to redo",
+                    "can_undo": bool(self.undo_stack),
+                    "can_redo": False,
+                }
+            snapshot = self.redo_stack.pop()
+            self.undo_stack.append(self._snapshot("undo point"))
+            del self.undo_stack[:-self.HISTORY_LIMIT]
+        self._restore_snapshot(snapshot)
+        message = f"redo: {snapshot.get('label', 'last action')}"
+        self.append_log(message)
+        return {"status": "ok", "message": message, "can_undo": bool(self.undo_stack), "can_redo": bool(self.redo_stack)}
+
+    def set_loop_fades(self, req: LoopFadeRequest) -> dict[str, Any]:
+        layer = self.layers.get_layer(req.target)
+        if layer.is_empty or layer.length_samples <= 0:
+            return {"status": "error", "message": f"layer {layer.slot + 1} is empty - cannot set loop fades"}
+
+        fade_in_samples = None
+        fade_out_samples = None
+        if req.fade_in_seconds is not None:
+            fade_in_samples = int(req.fade_in_seconds * layer.sample_rate)
+        elif req.fade_in_pct is not None:
+            fade_in_samples = int((req.fade_in_pct / 100.0) * layer.length_samples)
+        if req.fade_out_seconds is not None:
+            fade_out_samples = int(req.fade_out_seconds * layer.sample_rate)
+        elif req.fade_out_pct is not None:
+            fade_out_samples = int((req.fade_out_pct / 100.0) * layer.length_samples)
+
+        self._push_undo("loop fades")
+        self.layers.set_loop_fades(layer, fade_in_samples, fade_out_samples)
+        self.append_log(
+            f"loop fades: layer {layer.slot + 1} "
+            f"in {layer.looper.fade_in_samples / layer.sample_rate:.2f}s "
+            f"out {layer.looper.fade_out_samples / layer.sample_rate:.2f}s"
+        )
+        return {
+            "status": "ok",
+            "target": layer.slot + 1,
+            "fade_in_seconds": round(layer.looper.fade_in_samples / layer.sample_rate, 3),
+            "fade_out_seconds": round(layer.looper.fade_out_samples / layer.sample_rate, 3),
+        }
+
+    def set_inpaint_regions(self, req: InpaintRegionsRequest) -> dict[str, Any]:
+        layer = self.layers.get_layer(req.target)
+        if layer.is_empty or layer.length_samples <= 0:
+            return {"status": "error", "message": f"layer {layer.slot + 1} is empty - cannot set inpaint regions"}
+
+        regions = []
+        for region in req.regions:
+            lo = min(region.start_pct, region.end_pct)
+            hi = max(region.start_pct, region.end_pct)
+            if hi - lo < 0.1:
+                continue
+            regions.append((
+                int((lo / 100.0) * layer.length_samples),
+                int((hi / 100.0) * layer.length_samples),
+            ))
+
+        self._push_undo("inpaint regions")
+        self.layers.set_inpaint_regions(layer, regions)
+        self.append_log(f"inpaint regions: layer {layer.slot + 1} x {len(layer.inpaint_regions)}")
+        return {
+            "status": "ok",
+            "target": layer.slot + 1,
+            "regions": [
+                {
+                    "start_seconds": round(start / layer.sample_rate, 3),
+                    "end_seconds": round(end / layer.sample_rate, 3),
+                }
+                for start, end in layer.inpaint_regions
+            ],
+        }
+
+    def set_playback_reverse(self, req: PlaybackReverseRequest) -> dict[str, Any]:
+        layer = self.layers.get_layer(req.target)
+        if layer.is_empty:
+            return {"status": "error", "message": f"layer {layer.slot + 1} is empty - cannot reverse playback"}
+        enabled = (not bool(layer.reverse or layer.looper.reverse or layer.sampler.reverse)) if req.enabled is None else bool(req.enabled)
+        self._push_undo("reverse playback")
+        self.layers.set_playback_reverse(layer, enabled)
+        state = "on" if enabled else "off"
+        self.append_log(f"reverse playback {state}: layer {layer.slot + 1}")
+        return {"status": "ok", "target": layer.slot + 1, "enabled": enabled}
+
     def set_input_mode(self, req: InputModeRequest) -> dict[str, Any]:
+        self._push_undo("input mode")
         if req.mode == "listen":
             self.session.input_mode = "prompt"
             self.session.auto_listen = True
@@ -955,6 +1367,7 @@ class LocalOramService:
         }
 
     def toggle_auto_listen(self) -> dict[str, Any]:
+        self._push_undo("auto listen")
         self.session.auto_listen = not self.session.auto_listen
         self.append_log(f"auto listen: {'on' if self.session.auto_listen else 'off'}")
         return {"status": "ok", "auto_listen": self.session.auto_listen}
@@ -1214,6 +1627,19 @@ def create_app(
     async def record_stop():
         return service.record_stop()
 
+    @app.post("/master-record")
+    async def master_record(req: MasterRecordRequest):
+        try:
+            payload = service.master_record(req)
+        except Exception as exc:
+            return JSONResponse(
+                {"status": "error", "message": f"master recording failed: {redact_text(exc)}"},
+                status_code=400,
+            )
+        if payload.get("status") == "error":
+            return JSONResponse(payload, status_code=400)
+        return payload
+
     @app.post("/layer/clear")
     async def clear_layer(req: LayerTargetRequest):
         return service.clear_layer(req)
@@ -1256,6 +1682,36 @@ def create_app(
             return JSONResponse(payload, status_code=400)
         return payload
 
+    @app.post("/layer/loop-fades")
+    async def loop_fades(req: LoopFadeRequest):
+        try:
+            payload = service.set_loop_fades(req)
+        except Exception as exc:
+            return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+        if payload.get("status") == "error":
+            return JSONResponse(payload, status_code=400)
+        return payload
+
+    @app.post("/layer/inpaint-regions")
+    async def inpaint_regions(req: InpaintRegionsRequest):
+        try:
+            payload = service.set_inpaint_regions(req)
+        except Exception as exc:
+            return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+        if payload.get("status") == "error":
+            return JSONResponse(payload, status_code=400)
+        return payload
+
+    @app.post("/layer/playback-reverse")
+    async def playback_reverse(req: PlaybackReverseRequest):
+        try:
+            payload = service.set_playback_reverse(req)
+        except Exception as exc:
+            return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+        if payload.get("status") == "error":
+            return JSONResponse(payload, status_code=400)
+        return payload
+
     @app.get("/waveform/{target}")
     async def waveform(target: int, points: int = 1024):
         return service.waveform(target=target, points=points)
@@ -1267,6 +1723,14 @@ def create_app(
     @app.post("/kill")
     async def kill_all():
         return service.kill_all()
+
+    @app.post("/undo")
+    async def undo():
+        return service.undo()
+
+    @app.post("/redo")
+    async def redo():
+        return service.redo()
 
     @app.post("/input-mode")
     async def input_mode(req: InputModeRequest):

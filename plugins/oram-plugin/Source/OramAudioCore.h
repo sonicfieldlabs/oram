@@ -18,10 +18,13 @@ public:
         bool recording = false;
         float volume = 1.0f;
         float pan = 0.0f;
+        bool playbackReverse = false;
         double durationSeconds = 0.0;
         bool loopEnabled = false;
         double loopStartPct = 0.0;
         double loopEndPct = 100.0;
+        double loopFadeInPct = 0.0;
+        double loopFadeOutPct = 0.0;
     };
 
     void prepare (double newSampleRate, int maxBlockSize, int channelCount);
@@ -39,6 +42,9 @@ public:
     void setSelectedVolume (float volume);
     void setSelectedPan (float pan);
     void setSelectedLoopRegion (float startPct, float endPct, bool enabled);
+    void setSelectedLoopFades (float fadeInPct, float fadeOutPct);
+    void setSelectedPlaybackReverse (bool enabled);
+    bool selectedPlaybackReverse() const;
     void reverseSelected();
     void changeSelectedSpeed (float speed);
     void filterSelected (bool highpass, float cutoffHz);
@@ -46,6 +52,7 @@ public:
     void fadeSelected (bool fadeIn, double seconds);
     void trimSelected (bool trimStart, double seconds);
     void silenceAll();
+    void resetAll();
 
     int loadAudioToFirstEmpty (const juce::AudioBuffer<float>& source, double sourceSampleRate);
     std::array<LayerView, maxLayers> snapshot() const;
@@ -65,6 +72,9 @@ private:
         bool loopEnabled = false;
         int loopStart = 0;
         int loopEnd = 0;
+        int loopFadeIn = 0;
+        int loopFadeOut = 0;
+        bool playbackReverse = false;
     };
 
     Layer* currentRecordingLayer() noexcept;
@@ -73,6 +83,9 @@ private:
     static int regionStart (const Layer& layer) noexcept;
     static int regionEnd (const Layer& layer) noexcept;
     static int regionLength (const Layer& layer) noexcept;
+    static float loopFadeGain (const Layer& layer, int phase) noexcept;
+    static void clampLoopFades (Layer& layer) noexcept;
+    static void resetLayerMetadata (Layer& layer) noexcept;
     static float panLeftGain (float pan) noexcept;
     static float panRightGain (float pan) noexcept;
 

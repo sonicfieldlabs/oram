@@ -9,7 +9,7 @@ namespace
 {
 constexpr double maxRecordSeconds = 120.0;
 constexpr uint32_t stateMagic = 0x4f52414d; // ORAM
-constexpr uint32_t stateVersion = 1;
+constexpr uint32_t stateVersion = 2;
 }
 
 void OramAudioCore::prepare (double newSampleRate, int, int channelCount)
@@ -27,6 +27,7 @@ void OramAudioCore::prepare (double newSampleRate, int, int channelCount)
         layer.playhead = layer.lengthSamples > 0 ? layer.playhead % layer.lengthSamples : 0;
         if (layer.loopEnd > layer.lengthSamples)
             layer.loopEnd = layer.lengthSamples;
+        clampLoopFades (layer);
     }
 
     selectedLayerIndex = juce::jlimit (0, maxLayers - 1, selectedLayerIndex);
@@ -40,11 +41,7 @@ void OramAudioCore::reset()
     {
         layer.lengthSamples = 0;
         layer.playhead = 0;
-        layer.muted = false;
-        layer.solo = false;
-        layer.loopEnabled = false;
-        layer.loopStart = 0;
-        layer.loopEnd = 0;
+        resetLayerMetadata (layer);
     }
 
     recordingLayerIndex = -1;
@@ -110,12 +107,15 @@ void OramAudioCore::process (juce::AudioBuffer<float>& buffer, float inputMonito
                 continue;
 
             const auto start = regionStart (layer);
+            const auto end = regionEnd (layer);
             const auto length = regionLength (layer);
-            const auto position = start + ((layer.playhead - start + sample) % length);
+            const auto phase = (layer.playhead - start + sample) % length;
+            const auto position = layer.playbackReverse ? end - 1 - phase : start + phase;
+            const auto fadeGain = loopFadeGain (layer, phase);
             const auto leftGain = panLeftGain (layer.pan) * layer.volume;
             const auto rightGain = panRightGain (layer.pan) * layer.volume;
-            loopLeft += layer.audio.getSample (0, position) * leftGain;
-            loopRight += layer.audio.getSample (1, position) * rightGain;
+            loopLeft += layer.audio.getSample (0, position) * leftGain * fadeGain;
+            loopRight += layer.audio.getSample (1, position) * rightGain * fadeGain;
         }
 
         left[sample] = left[sample] * inputMonitor + loopLeft * loopLevel;
@@ -156,11 +156,7 @@ void OramAudioCore::startRecordingSelected (bool shouldOverdub)
     {
         layer.lengthSamples = 0;
         layer.playhead = 0;
-        layer.muted = false;
-        layer.solo = false;
-        layer.loopEnabled = false;
-        layer.loopStart = 0;
-        layer.loopEnd = 0;
+        resetLayerMetadata (layer);
     }
 }
 
@@ -178,11 +174,7 @@ void OramAudioCore::clearSelectedLayer()
     auto& layer = layers[(size_t) selectedLayerIndex];
     layer.lengthSamples = 0;
     layer.playhead = 0;
-    layer.muted = false;
-    layer.solo = false;
-    layer.loopEnabled = false;
-    layer.loopStart = 0;
-    layer.loopEnd = 0;
+    resetLayerMetadata (layer);
 
     if (recordingLayerIndex == selectedLayerIndex)
     {
@@ -239,7 +231,40 @@ void OramAudioCore::setSelectedLoopRegion (float startPct, float endPct, bool en
     layer.loopStart = start;
     layer.loopEnd = end;
     layer.loopEnabled = enabled;
+    clampLoopFades (layer);
     layer.playhead = regionStart (layer);
+}
+
+void OramAudioCore::setSelectedLoopFades (float fadeInPct, float fadeOutPct)
+{
+    const juce::SpinLock::ScopedLockType lock (stateLock);
+    auto& layer = layers[(size_t) selectedLayerIndex];
+    if (layer.lengthSamples <= 0)
+        return;
+
+    layer.loopFadeIn = juce::roundToInt (juce::jlimit (0.0f, 100.0f, fadeInPct) * 0.01f * (float) layer.lengthSamples);
+    layer.loopFadeOut = juce::roundToInt (juce::jlimit (0.0f, 100.0f, fadeOutPct) * 0.01f * (float) layer.lengthSamples);
+    if (! layer.loopEnabled)
+    {
+        layer.loopStart = 0;
+        layer.loopEnd = layer.lengthSamples;
+        layer.loopEnabled = true;
+    }
+    clampLoopFades (layer);
+}
+
+void OramAudioCore::setSelectedPlaybackReverse (bool enabled)
+{
+    const juce::SpinLock::ScopedLockType lock (stateLock);
+    auto& layer = layers[(size_t) selectedLayerIndex];
+    if (layer.lengthSamples > 0)
+        layer.playbackReverse = enabled;
+}
+
+bool OramAudioCore::selectedPlaybackReverse() const
+{
+    const juce::SpinLock::ScopedLockType lock (stateLock);
+    return layers[(size_t) selectedLayerIndex].playbackReverse;
 }
 
 void OramAudioCore::reverseSelected()
@@ -287,6 +312,8 @@ void OramAudioCore::changeSelectedSpeed (float speed)
     layer.lengthSamples = newLength;
     layer.playhead = 0;
     layer.loopEnabled = false;
+    layer.loopFadeIn = 0;
+    layer.loopFadeOut = 0;
 }
 
 void OramAudioCore::filterSelected (bool highpass, float cutoffHz)
@@ -397,6 +424,8 @@ void OramAudioCore::trimSelected (bool trimStart, double seconds)
     layer.loopEnabled = false;
     layer.loopStart = 0;
     layer.loopEnd = 0;
+    layer.loopFadeIn = 0;
+    layer.loopFadeOut = 0;
 }
 
 void OramAudioCore::silenceAll()
@@ -413,6 +442,11 @@ void OramAudioCore::silenceAll()
         if (layer.lengthSamples > 0)
             layer.muted = true;
     }
+}
+
+void OramAudioCore::resetAll()
+{
+    reset();
 }
 
 int OramAudioCore::loadAudioToFirstEmpty (const juce::AudioBuffer<float>& source, double sourceSampleRate)
@@ -463,6 +497,9 @@ int OramAudioCore::loadAudioToFirstEmpty (const juce::AudioBuffer<float>& source
     target->loopEnabled = false;
     target->loopStart = 0;
     target->loopEnd = 0;
+    target->loopFadeIn = 0;
+    target->loopFadeOut = 0;
+    target->playbackReverse = false;
     return targetIndex + 1;
 }
 
@@ -482,10 +519,13 @@ std::array<OramAudioCore::LayerView, OramAudioCore::maxLayers> OramAudioCore::sn
         view.recording = recordingLayerIndex == i;
         view.volume = layer.volume;
         view.pan = layer.pan;
+        view.playbackReverse = layer.playbackReverse;
         view.durationSeconds = sampleRate > 0.0 ? (double) layer.lengthSamples / sampleRate : 0.0;
         view.loopEnabled = layer.loopEnabled;
         view.loopStartPct = layer.lengthSamples > 0 ? (double) regionStart (layer) / (double) layer.lengthSamples * 100.0 : 0.0;
         view.loopEndPct = layer.lengthSamples > 0 ? (double) regionEnd (layer) / (double) layer.lengthSamples * 100.0 : 100.0;
+        view.loopFadeInPct = layer.lengthSamples > 0 ? (double) layer.loopFadeIn / (double) layer.lengthSamples * 100.0 : 0.0;
+        view.loopFadeOutPct = layer.lengthSamples > 0 ? (double) layer.loopFadeOut / (double) layer.lengthSamples * 100.0 : 0.0;
     }
     return result;
 }
@@ -510,6 +550,9 @@ void OramAudioCore::writeStateToStream (juce::OutputStream& stream) const
         stream.writeBool (layer.loopEnabled);
         stream.writeInt (layer.loopStart);
         stream.writeInt (layer.loopEnd);
+        stream.writeInt (layer.loopFadeIn);
+        stream.writeInt (layer.loopFadeOut);
+        stream.writeBool (layer.playbackReverse);
         if (layer.lengthSamples > 0)
         {
             std::vector<float> silence ((size_t) layer.lengthSamples, 0.0f);
@@ -529,7 +572,8 @@ bool OramAudioCore::readStateFromStream (juce::InputStream& stream)
     const juce::SpinLock::ScopedLockType lock (stateLock);
     if ((uint32_t) stream.readInt() != stateMagic)
         return false;
-    if ((uint32_t) stream.readInt() != stateVersion)
+    const auto version = (uint32_t) stream.readInt();
+    if (version < 1 || version > stateVersion)
         return false;
 
     sampleRate = stream.readDouble();
@@ -551,6 +595,19 @@ bool OramAudioCore::readStateFromStream (juce::InputStream& stream)
         layer.loopEnabled = stream.readBool();
         layer.loopStart = stream.readInt();
         layer.loopEnd = stream.readInt();
+        if (version >= 2)
+        {
+            layer.loopFadeIn = stream.readInt();
+            layer.loopFadeOut = stream.readInt();
+            layer.playbackReverse = stream.readBool();
+        }
+        else
+        {
+            layer.loopFadeIn = 0;
+            layer.loopFadeOut = 0;
+            layer.playbackReverse = false;
+        }
+        clampLoopFades (layer);
         for (int channel = 0; channel < 2; ++channel)
             stream.read (layer.audio.getWritePointer (channel), (size_t) length * sizeof (float));
     }
@@ -595,6 +652,53 @@ int OramAudioCore::regionEnd (const Layer& layer) noexcept
 int OramAudioCore::regionLength (const Layer& layer) noexcept
 {
     return juce::jmax (1, regionEnd (layer) - regionStart (layer));
+}
+
+float OramAudioCore::loopFadeGain (const Layer& layer, int phase) noexcept
+{
+    const auto length = regionLength (layer);
+    auto gain = 1.0f;
+    if (layer.loopFadeIn > 0 && phase < layer.loopFadeIn)
+        gain = juce::jmin (gain, (float) phase / (float) juce::jmax (1, layer.loopFadeIn));
+    if (layer.loopFadeOut > 0)
+    {
+        const auto fadeOutStart = length - layer.loopFadeOut;
+        if (phase >= fadeOutStart)
+            gain = juce::jmin (gain, (float) juce::jmax (0, length - phase - 1) / (float) juce::jmax (1, layer.loopFadeOut));
+    }
+    return juce::jlimit (0.0f, 1.0f, gain);
+}
+
+void OramAudioCore::clampLoopFades (Layer& layer) noexcept
+{
+    const auto length = regionLength (layer);
+    layer.loopFadeIn = juce::jlimit (0, length, layer.loopFadeIn);
+    layer.loopFadeOut = juce::jlimit (0, length, layer.loopFadeOut);
+    if (layer.loopFadeIn + layer.loopFadeOut > length)
+    {
+        const auto excess = layer.loopFadeIn + layer.loopFadeOut - length;
+        if (layer.loopFadeOut >= excess)
+            layer.loopFadeOut -= excess;
+        else
+        {
+            layer.loopFadeIn = juce::jmax (0, layer.loopFadeIn - (excess - layer.loopFadeOut));
+            layer.loopFadeOut = 0;
+        }
+    }
+}
+
+void OramAudioCore::resetLayerMetadata (Layer& layer) noexcept
+{
+    layer.muted = false;
+    layer.solo = false;
+    layer.loopEnabled = false;
+    layer.loopStart = 0;
+    layer.loopEnd = 0;
+    layer.loopFadeIn = 0;
+    layer.loopFadeOut = 0;
+    layer.playbackReverse = false;
+    layer.volume = 1.0f;
+    layer.pan = 0.0f;
 }
 
 float OramAudioCore::panLeftGain (float pan) noexcept

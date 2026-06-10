@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -45,6 +46,11 @@ public:
     void startRecordingSelected (bool overdub);
     void stopRecording();
     void clearSelectedLayer();
+    void undo();
+    void redo();
+    void resetAll();
+    void toggleReversePlaybackSelected();
+    void setSelectedLoopFades (float fadeInPct, float fadeOutPct);
     void requestGenerate (
         const juce::String& prompt,
         const juce::String& provider,
@@ -64,6 +70,9 @@ private:
     bool applyAction (const juce::var& action);
     int targetLayerFromAction (const juce::var& action) const;
     bool importAudioFile (const juce::String& path, int& assignedLayer);
+    juce::MemoryBlock coreSnapshot() const;
+    void restoreCoreSnapshot (const juce::MemoryBlock& snapshot);
+    void pushUndo (const juce::String& label);
 
     OramAudioCore core;
     OramDaemonClient daemonClient;
@@ -73,6 +82,9 @@ private:
     juce::AudioProcessorValueTreeState parameterState;
     mutable juce::CriticalSection statusLock;
     juce::String statusText = "daemon not connected";
+    mutable juce::CriticalSection historyLock;
+    std::vector<juce::MemoryBlock> undoStack;
+    std::vector<juce::MemoryBlock> redoStack;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OramAudioProcessor)
 };

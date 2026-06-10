@@ -101,6 +101,7 @@ def test_daemon_dashboard_control_endpoints(tmp_path):
 
         state = client.get("/state").json()
         assert state["input_mode"] == "prompt"
+        assert state["can_undo"] is True
         assert "input_level" in state
         assert state["layers"][0]["waveform_revision"] >= 1
 
@@ -116,6 +117,31 @@ def test_daemon_dashboard_control_endpoints(tmp_path):
         loop_data = looped.json()
         assert loop_data["status"] == "ok"
         assert loop_data["loop_enabled"] is True
+
+        fades = client.post("/layer/loop-fades", json={"target": 1, "fade_in_pct": 10, "fade_out_pct": 12})
+        assert fades.status_code == 200
+        faded_state = client.get("/state").json()
+        assert faded_state["layers"][0]["loop_fade_in_pct"] == 10
+        assert faded_state["layers"][0]["loop_fade_out_pct"] == 12
+
+        reversed_playback = client.post("/layer/playback-reverse", json={"target": 1, "enabled": True})
+        assert reversed_playback.status_code == 200
+        assert client.get("/state").json()["layers"][0]["playback_reverse"] is True
+
+        inpaint = client.post(
+            "/layer/inpaint-regions",
+            json={"target": 1, "regions": [{"start_pct": 20, "end_pct": 35}]},
+        )
+        assert inpaint.status_code == 200
+        assert client.get("/state").json()["layers"][0]["inpaint_regions"][0]["start_pct"] == 20
+
+        undo = client.post("/undo", json={})
+        assert undo.status_code == 200
+        assert client.get("/state").json()["layers"][0]["inpaint_regions"] == []
+
+        redo = client.post("/redo", json={})
+        assert redo.status_code == 200
+        assert len(client.get("/state").json()["layers"][0]["inpaint_regions"]) == 1
 
         volume = client.post("/layer/volume", json={"target": 1, "volume": 0.5})
         assert volume.status_code == 200
@@ -141,7 +167,9 @@ def test_daemon_dashboard_control_endpoints(tmp_path):
 
         killed = client.post("/kill", json={})
         assert killed.status_code == 200
-        assert client.get("/state").json()["layers"][0]["muted"] is True
+        killed_state = client.get("/state").json()
+        assert all(layer["state"] == "empty" for layer in killed_state["layers"])
+        assert killed_state["selected_layer"] == 1
 
         cleared = client.post("/layer/clear", json={"target": 1})
         assert cleared.status_code == 200

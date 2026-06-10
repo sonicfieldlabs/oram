@@ -61,12 +61,18 @@ struct EngineState: Decodable {
     let selectedLayer: Int
     let audioRunning: Bool
     let recording: Bool
+    let masterRecording: Bool?
+    let masterRecordingSeconds: Double?
     let inputLevel: Double?
     let outputLevel: Double?
     let inputMode: String?
     let autoListen: Bool?
     let gateway: String
     let engineCount: Int
+    let canUndo: Bool?
+    let canRedo: Bool?
+    let undoLabel: String?
+    let redoLabel: String?
     let layers: [LayerState]
     let log: [String]
 
@@ -81,14 +87,34 @@ struct EngineState: Decodable {
         case selectedLayer = "selected_layer"
         case audioRunning = "audio_running"
         case recording
+        case masterRecording = "master_recording"
+        case masterRecordingSeconds = "master_recording_seconds"
         case inputLevel = "input_level"
         case outputLevel = "output_level"
         case inputMode = "input_mode"
         case autoListen = "auto_listen"
         case gateway
         case engineCount = "engine_count"
+        case canUndo = "can_undo"
+        case canRedo = "can_redo"
+        case undoLabel = "undo_label"
+        case redoLabel = "redo_label"
         case layers
         case log
+    }
+}
+
+struct LayerInpaintRegion: Decodable, Equatable {
+    let startPct: Double
+    let endPct: Double
+    let startSeconds: Double?
+    let endSeconds: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case startPct = "start_pct"
+        case endPct = "end_pct"
+        case startSeconds = "start_seconds"
+        case endSeconds = "end_seconds"
     }
 }
 
@@ -104,6 +130,7 @@ struct LayerState: Decodable, Identifiable {
     let solo: Bool
     let volume: Double
     let pan: Double
+    let playbackReverse: Bool?
     let effects: [String]?
     let isGenerated: Bool
     let generationPrompt: String?
@@ -119,6 +146,13 @@ struct LayerState: Decodable, Identifiable {
     let loopEndPct: Double?
     let loopStartSeconds: Double?
     let loopEndSeconds: Double?
+    let loopFadeInPct: Double?
+    let loopFadeOutPct: Double?
+    let loopFadeInLoopPct: Double?
+    let loopFadeOutLoopPct: Double?
+    let loopFadeInSeconds: Double?
+    let loopFadeOutSeconds: Double?
+    let inpaintRegions: [LayerInpaintRegion]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -132,6 +166,7 @@ struct LayerState: Decodable, Identifiable {
         case solo
         case volume
         case pan
+        case playbackReverse = "playback_reverse"
         case effects
         case isGenerated = "is_generated"
         case generationPrompt = "generation_prompt"
@@ -147,6 +182,13 @@ struct LayerState: Decodable, Identifiable {
         case loopEndPct = "loop_end_pct"
         case loopStartSeconds = "loop_start_seconds"
         case loopEndSeconds = "loop_end_seconds"
+        case loopFadeInPct = "loop_fade_in_pct"
+        case loopFadeOutPct = "loop_fade_out_pct"
+        case loopFadeInLoopPct = "loop_fade_in_loop_pct"
+        case loopFadeOutLoopPct = "loop_fade_out_loop_pct"
+        case loopFadeInSeconds = "loop_fade_in_seconds"
+        case loopFadeOutSeconds = "loop_fade_out_seconds"
+        case inpaintRegions = "inpaint_regions"
     }
 }
 
@@ -166,6 +208,7 @@ extension LayerState {
             solo: false,
             volume: 1,
             pan: 0,
+            playbackReverse: false,
             effects: [],
             isGenerated: false,
             generationPrompt: nil,
@@ -180,7 +223,14 @@ extension LayerState {
             loopStartPct: 0,
             loopEndPct: 100,
             loopStartSeconds: 0,
-            loopEndSeconds: 0
+            loopEndSeconds: 0,
+            loopFadeInPct: 0,
+            loopFadeOutPct: 0,
+            loopFadeInLoopPct: 0,
+            loopFadeOutLoopPct: 0,
+            loopFadeInSeconds: 0,
+            loopFadeOutSeconds: 0,
+            inpaintRegions: []
         )
     }
 }

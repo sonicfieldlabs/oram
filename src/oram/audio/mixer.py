@@ -89,7 +89,11 @@ class Mixer:
             return self._pull_sampler_block(layer, block_size)
 
         pos = layer.playhead % length
-        indices = (np.arange(block_size) + pos) % length
+        steps = np.arange(block_size) + pos
+        if getattr(layer, "reverse", False):
+            indices = length - 1 - (steps % length)
+        else:
+            indices = steps % length
         return buf[indices]
 
     def _pull_sampler_block(self, layer: LoopLayer, block_size: int) -> np.ndarray:
@@ -135,7 +139,43 @@ class Mixer:
             indices = end - 1 - (steps.astype(np.int64) % loop_len)
         else:
             indices = start + (steps.astype(np.int64) % loop_len)
-        return buf[indices]
+        block = buf[indices].copy()
+        self._apply_loop_fades_inplace(
+            block,
+            steps,
+            loop_len,
+            layer.looper.fade_in_samples,
+            layer.looper.fade_out_samples,
+        )
+        return block
+
+    @staticmethod
+    def _apply_loop_fades_inplace(
+        block: np.ndarray,
+        positions: np.ndarray,
+        loop_len: int,
+        fade_in_samples: int,
+        fade_out_samples: int,
+    ) -> None:
+        """apply non-destructive edge fades to a pulled looper block."""
+        if loop_len <= 1:
+            return
+        fade_in = max(0, min(int(fade_in_samples), loop_len - 1))
+        fade_out = max(0, min(int(fade_out_samples), loop_len - 1))
+        if fade_in == 0 and fade_out == 0:
+            return
+
+        pos = np.mod(positions, loop_len).astype(np.float32, copy=False)
+        gain = np.ones(block.shape[0], dtype=np.float32)
+        if fade_in > 0:
+            gain = np.minimum(gain, np.clip(pos / float(fade_in), 0.0, 1.0))
+        if fade_out > 0:
+            remaining = loop_len - pos
+            gain = np.minimum(gain, np.clip(remaining / float(fade_out), 0.0, 1.0))
+        if block.ndim == 1:
+            block *= gain
+        else:
+            block *= gain[:, np.newaxis]
 
     def advance_playhead(self, layer: LoopLayer, frames: int) -> None:
         """advance one layer's playhead according to its mode."""

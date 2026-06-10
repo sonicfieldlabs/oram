@@ -59,6 +59,14 @@ final class DaemonClient {
         let _: EmptyResponse = try await post("/command", payload: payload)
     }
 
+    func undo() async throws {
+        let _: EmptyResponse = try await post("/undo", payload: EmptyPayload())
+    }
+
+    func redo() async throws {
+        let _: EmptyResponse = try await post("/redo", payload: EmptyPayload())
+    }
+
     func generate(_ payload: GeneratePayload) async throws -> GenerateResponse {
         try await post("/generate", payload: payload)
     }
@@ -74,6 +82,10 @@ final class DaemonClient {
 
     func recordStop() async throws {
         let _: EmptyResponse = try await post("/record/stop", payload: EmptyPayload())
+    }
+
+    func masterRecord(action: String) async throws {
+        let _: EmptyResponse = try await post("/master-record", payload: MasterRecordPayload(action: action))
     }
 
     func clearLayer(_ target: Int) async throws {
@@ -97,6 +109,25 @@ final class DaemonClient {
             enabled: enabled
         )
         let _: EmptyResponse = try await post("/layer/loop-region", payload: payload)
+    }
+
+    func setLoopFades(layer target: Int, fadeInPct: Double, fadeOutPct: Double) async throws {
+        let payload = LoopFadePayload(
+            target: target,
+            fadeInPct: fadeInPct,
+            fadeOutPct: fadeOutPct
+        )
+        let _: EmptyResponse = try await post("/layer/loop-fades", payload: payload)
+    }
+
+    func setInpaintRegions(layer target: Int, regions: [InpaintRegionPayload]) async throws {
+        let payload = InpaintRegionsPayload(target: target, regions: regions)
+        let _: EmptyResponse = try await post("/layer/inpaint-regions", payload: payload)
+    }
+
+    func setPlaybackReverse(layer target: Int, enabled: Bool?) async throws {
+        let payload = PlaybackReversePayload(target: target, enabled: enabled)
+        let _: EmptyResponse = try await post("/layer/playback-reverse", payload: payload)
     }
 
     func setVolume(layer target: Int, volume: Double) async throws {
@@ -210,6 +241,10 @@ private struct GenerateFromPayload: Encodable {
     let duration: Double?
 }
 
+private struct MasterRecordPayload: Encodable {
+    let action: String
+}
+
 private struct LoopRegionPayload: Encodable {
     let target: Int
     let startPct: Double
@@ -222,6 +257,38 @@ private struct LoopRegionPayload: Encodable {
         case endPct = "end_pct"
         case enabled
     }
+}
+
+private struct LoopFadePayload: Encodable {
+    let target: Int
+    let fadeInPct: Double
+    let fadeOutPct: Double
+
+    enum CodingKeys: String, CodingKey {
+        case target
+        case fadeInPct = "fade_in_pct"
+        case fadeOutPct = "fade_out_pct"
+    }
+}
+
+struct InpaintRegionPayload: Encodable {
+    let startPct: Double
+    let endPct: Double
+
+    enum CodingKeys: String, CodingKey {
+        case startPct = "start_pct"
+        case endPct = "end_pct"
+    }
+}
+
+private struct InpaintRegionsPayload: Encodable {
+    let target: Int
+    let regions: [InpaintRegionPayload]
+}
+
+private struct PlaybackReversePayload: Encodable {
+    let target: Int
+    let enabled: Bool?
 }
 
 private struct VolumePayload: Encodable {
