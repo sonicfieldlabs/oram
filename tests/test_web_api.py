@@ -122,6 +122,8 @@ class TestDevicesEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert "devices" in data
+        assert data["current_sample_rate"] == 44100
+        assert data["current_bit_depth"] == 24
 
 
 class TestUploadLayerEndpoint:
@@ -222,9 +224,11 @@ class TestLoopFadesEndpoint:
         import oram.web.server as srv
 
         assert srv._layer_manager is not None
+        assert srv._session is not None
+        sr = srv._session.sample_rate
         layer = srv._layer_manager.layers[0]
-        srv._layer_manager.assign_buffer(layer, np.zeros((48000, 2), dtype=np.float32))
-        srv._layer_manager.set_loop_region(layer, 12000, 36000)
+        srv._layer_manager.assign_buffer(layer, np.zeros((sr, 2), dtype=np.float32))
+        srv._layer_manager.set_loop_region(layer, sr // 4, 3 * sr // 4)
 
         resp = client.post(
             "/api/loop-fades",
@@ -251,8 +255,10 @@ class TestInpaintAndReverseEndpoints:
         import oram.web.server as srv
 
         assert srv._layer_manager is not None
+        assert srv._session is not None
+        sr = srv._session.sample_rate
         layer = srv._layer_manager.layers[0]
-        srv._layer_manager.assign_buffer(layer, np.zeros((48000, 2), dtype=np.float32))
+        srv._layer_manager.assign_buffer(layer, np.zeros((sr, 2), dtype=np.float32))
 
         inpaint = client.post(
             "/api/inpaint-regions",
@@ -271,6 +277,46 @@ class TestInpaintAndReverseEndpoints:
         assert layer_state["inpaint_regions"][0]["end_seconds"] == 0.5
         assert layer_state["playback_reverse"] is True
         srv._layer_manager.clear(layer)
+
+    def test_stable_audio_inpaint_render_uses_source_duration(self, client, monkeypatch):
+        import oram.web.server as srv
+
+        assert srv._layer_manager is not None
+        assert srv._router is not None
+        assert srv._session is not None
+        srv._reset_to_initial_audio_state()
+        layer = srv._layer_manager.layers[0]
+        srv._layer_manager.assign_buffer(layer, np.zeros((12 * srv._session.sample_rate, 2), dtype=np.float32))
+
+        captured = {}
+
+        def fake_call_engine(engine, prompt, duration, source_layer=None, **kwargs):
+            captured["duration"] = duration
+            captured["parameters"] = kwargs.get("parameters") or {}
+            captured["source_layer"] = source_layer
+            return np.zeros((4800, 2), dtype=np.float32)
+
+        monkeypatch.setattr(srv._router, "_call_engine", fake_call_engine)
+        response = client.post(
+            "/api/stable-audio/render",
+            json={
+                "prompt": "replace the middle with bowed glass",
+                "mode": "inpaint",
+                "duration": 8.0,
+                "model": "stable-audio-3-local",
+                "source_layer": 1,
+                "target_layer": None,
+                "assign_layer": False,
+                "inpaint_start": 8.5,
+                "inpaint_end": 10.0,
+            },
+        )
+
+        assert response.status_code == 200
+        assert captured["duration"] == 12.0
+        assert captured["source_layer"] is layer
+        assert captured["parameters"]["inpaint_ranges"] == [{"start": 8.5, "end": 10.0}]
+        srv._reset_to_initial_audio_state()
 
 
 class TestUndoRedoAndResetEndpoints:
@@ -308,13 +354,15 @@ class TestUndoRedoAndResetEndpoints:
         import oram.web.server as srv
 
         assert srv._layer_manager is not None
+        assert srv._session is not None
         srv._reset_to_initial_audio_state()
         srv._undo_stack.clear()
         srv._redo_stack.clear()
         layer = srv._layer_manager.layers[0]
-        srv._layer_manager.assign_buffer(layer, np.ones((48000, 2), dtype=np.float32))
-        srv._layer_manager.set_loop_region(layer, 12000, 36000)
-        srv._layer_manager.set_loop_fades(layer, 2400, 2400)
+        sr = srv._session.sample_rate
+        srv._layer_manager.assign_buffer(layer, np.ones((sr, 2), dtype=np.float32))
+        srv._layer_manager.set_loop_region(layer, sr // 4, 3 * sr // 4)
+        srv._layer_manager.set_loop_fades(layer, int(0.05 * sr), int(0.05 * sr))
         layer.volume = 0.5
         srv._layer_manager.mute(layer)
         srv._layer_manager.selected = 2

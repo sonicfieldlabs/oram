@@ -5,10 +5,11 @@ namespace
 constexpr auto margin = 18;
 constexpr auto rowHeight = 30;
 
-juce::Colour backgroundColour() { return juce::Colour::fromRGB (20, 21, 22); }
-juce::Colour panelColour() { return juce::Colour::fromRGB (31, 33, 35); }
-juce::Colour textColour() { return juce::Colour::fromRGB (232, 229, 220); }
-juce::Colour mutedTextColour() { return juce::Colour::fromRGB (150, 148, 140); }
+juce::Colour backgroundColour() { return juce::Colour::fromRGB (20, 20, 20); }
+juce::Colour panelColour() { return juce::Colour::fromRGB (32, 32, 32); }
+juce::Colour textColour() { return juce::Colour::fromRGB (232, 232, 232); }
+juce::Colour mutedTextColour() { return juce::Colour::fromRGB (150, 150, 150); }
+juce::Colour accentColour() { return juce::Colour::fromRGB (182, 182, 182); }
 }
 
 OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
@@ -99,7 +100,7 @@ OramAudioProcessorEditor::OramAudioProcessorEditor (OramAudioProcessor& p)
     durationSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 22);
     durationSlider.setRange (0.5, 60.0, 0.5);
     durationSlider.setValue (8.0, juce::dontSendNotification);
-    durationSlider.setColour (juce::Slider::trackColourId, juce::Colour::fromRGB (106, 176, 147));
+    durationSlider.setColour (juce::Slider::trackColourId, accentColour());
     durationSlider.setColour (juce::Slider::backgroundColourId, panelColour());
     durationLabel.setText ("Duration", juce::dontSendNotification);
     durationLabel.setColour (juce::Label::textColourId, mutedTextColour());
@@ -148,7 +149,7 @@ OramAudioProcessorEditor::~OramAudioProcessorEditor()
 void OramAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (backgroundColour());
-    g.setColour (juce::Colour::fromRGB (58, 61, 62));
+    g.setColour (juce::Colour::fromRGB (58, 58, 58));
     g.drawRect (getLocalBounds(), 1);
 }
 
@@ -232,7 +233,7 @@ void OramAudioProcessorEditor::configureSlider (juce::Slider& slider)
 {
     slider.setSliderStyle (juce::Slider::LinearHorizontal);
     slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 22);
-    slider.setColour (juce::Slider::trackColourId, juce::Colour::fromRGB (106, 176, 147));
+    slider.setColour (juce::Slider::trackColourId, accentColour());
     slider.setColour (juce::Slider::backgroundColourId, panelColour());
     slider.setColour (juce::Slider::textBoxTextColourId, textColour());
     slider.setColour (juce::Slider::textBoxBackgroundColourId, panelColour());

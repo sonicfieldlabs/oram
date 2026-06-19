@@ -276,13 +276,22 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func updateAudioSettings(sampleRate: Int?, blockSize: Int?, inputDevice: Int? = nil, outputDevice: Int? = nil) async {
+    func updateAudioSettings(
+        sampleRate: Int?,
+        blockSize: Int?,
+        inputDevice: Int? = nil,
+        outputDevice: Int? = nil,
+        bitDepth: Int? = nil,
+        recFormat: String? = nil
+    ) async {
         do {
             try await client.updateSettings(
                 sampleRate: sampleRate,
                 blockSize: blockSize,
                 inputDevice: inputDevice,
-                outputDevice: outputDevice
+                outputDevice: outputDevice,
+                bitDepth: bitDepth,
+                recFormat: recFormat
             )
             await refreshAll()
         } catch {

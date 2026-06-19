@@ -23,7 +23,7 @@ struct RecorderView: View {
                 Spacer()
 
                 Text(store.state?.recording == true ? "recording" : "idle")
-                    .foregroundStyle(store.state?.recording == true ? .red : .secondary)
+                    .foregroundStyle(store.state?.recording == true ? Color.primary.opacity(0.75) : Color.secondary)
             }
 
             HStack {

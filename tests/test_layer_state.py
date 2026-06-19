@@ -32,7 +32,7 @@ class TestLayerState:
     def test_assign_buffer(self):
         mgr = LayerManager()
         layer = mgr.layers[0]
-        buf = np.random.randn(48000, 2).astype(np.float32)
+        buf = np.random.randn(mgr.sample_rate, 2).astype(np.float32)
         mgr.assign_buffer(layer, buf)
         assert layer.state == LayerState.ACTIVE
         assert not layer.is_empty
@@ -276,6 +276,28 @@ class TestLayerState:
         assert layer.looper.end_offset == 0
         assert layer.looper.enabled is False
 
+    def test_assign_buffer_resets_stale_playback_fx_state(self):
+        mgr = LayerManager()
+        layer = mgr.layers[0]
+        mgr.assign_buffer(layer, np.random.randn(48000, 2).astype(np.float32))
+        layer.reverse = True
+        layer.looper.reverse = True
+        layer.sampler.reverse = True
+        layer.speed = 0.5
+        layer.pitch_semitones = -12
+        layer.filter_type = "lowpass"
+        layer.effects_applied = ["speed", "lowpass"]
+
+        mgr.assign_buffer(layer, np.random.randn(2400, 2).astype(np.float32))
+
+        assert layer.reverse is False
+        assert layer.looper.reverse is False
+        assert layer.sampler.reverse is False
+        assert layer.speed == 1.0
+        assert layer.pitch_semitones == 0.0
+        assert layer.filter_type is None
+        assert layer.effects_applied == []
+
     def test_swap_buffer_clamps_loop_region(self):
         mgr = LayerManager()
         layer = mgr.layers[0]
@@ -287,3 +309,28 @@ class TestLayerState:
         assert layer.looper.start_offset == 0
         assert layer.looper.end_offset == 2400
         assert layer.looper.enabled is True
+
+    def test_swap_buffer_preserves_relative_playhead_when_resized(self):
+        mgr = LayerManager()
+        layer = mgr.layers[0]
+        mgr.assign_buffer(layer, np.ones((mgr.sample_rate, 2), dtype=np.float32))
+        layer.playhead = mgr.sample_rate // 2
+
+        mgr.swap_buffer(layer, np.ones((mgr.sample_rate // 2, 2), dtype=np.float32))
+
+        assert layer.playhead == mgr.sample_rate // 4
+        assert layer.duration_seconds == 0.5
+
+    def test_swap_buffer_sanitizes_bad_samples_and_rejects_empty_output(self):
+        mgr = LayerManager()
+        layer = mgr.layers[0]
+        mgr.assign_buffer(layer, np.ones((100, 2), dtype=np.float32))
+        dirty = np.array([[np.nan, np.inf], [4.0, -4.0]], dtype=np.float32)
+
+        mgr.swap_buffer(layer, dirty)
+
+        assert not np.any(np.isnan(layer.buffer))
+        assert not np.any(np.isinf(layer.buffer))
+        assert float(np.max(np.abs(layer.buffer))) <= 0.98 + 1e-6
+        with pytest.raises(ValueError, match="at least one sample"):
+            mgr.swap_buffer(layer, np.zeros((0, 2), dtype=np.float32))

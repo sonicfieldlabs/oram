@@ -9,8 +9,8 @@ else()
 endif()
 
 juce_add_plugin(ORAMPlugin
-    COMPANY_NAME "Momoto"
-    BUNDLE_ID "wtf.momoto.oram.plugin"
+    COMPANY_NAME "Sonic Field Labs"
+    BUNDLE_ID "com.sonicfieldlabs.oram.plugin"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -18,7 +18,7 @@ juce_add_plugin(ORAMPlugin
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE
-    PLUGIN_MANUFACTURER_CODE Momo
+    PLUGIN_MANUFACTURER_CODE Sflb
     PLUGIN_CODE Oram
     FORMATS AU VST3 Standalone
     PRODUCT_NAME "ORAM"

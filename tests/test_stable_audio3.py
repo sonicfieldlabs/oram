@@ -122,8 +122,9 @@ def test_stable_audio_morph_uses_source_layer_and_params(tmp_path):
 def test_stable_audio_inpaint_uses_loop_region_when_no_range_given(tmp_path):
     service, fake = _service_with_fake_sa3(tmp_path)
     layer = service.layers.layers[0]
-    service.layers.assign_buffer(layer, np.zeros((48000, 2), dtype=np.float32))
-    service.layers.set_loop_region(layer, start_sample=12000, end_sample=24000, enabled=True)
+    sr = service.session.sample_rate
+    service.layers.assign_buffer(layer, np.zeros((sr, 2), dtype=np.float32))
+    service.layers.set_loop_region(layer, start_sample=sr // 4, end_sample=sr // 2, enabled=True)
     app = create_app(service, auth_token="")
 
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -141,6 +142,33 @@ def test_stable_audio_inpaint_uses_loop_region_when_no_range_given(tmp_path):
     assert response.status_code == 200
     request = fake.requests[0]
     assert request.parameters["inpaint_ranges"] == [{"start": 0.25, "end": 0.5}]
+
+
+def test_stable_audio_inpaint_preserves_source_duration_when_request_is_shorter(tmp_path):
+    service, fake = _service_with_fake_sa3(tmp_path)
+    layer = service.layers.layers[0]
+    service.layers.assign_buffer(layer, np.zeros((12 * service.session.sample_rate, 2), dtype=np.float32))
+    app = create_app(service, auth_token="")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/stable-audio/render",
+            json={
+                "prompt": "replace the middle with bowed glass",
+                "mode": "inpaint",
+                "duration": 8.0,
+                "model": "stable-audio-3-local",
+                "source_layer": 1,
+                "inpaint_start": 8.5,
+                "inpaint_end": 10.0,
+            },
+        )
+
+    assert response.status_code == 200
+    request = fake.requests[0]
+    assert request.duration_seconds == 12.0
+    assert request.parameters["source_duration"] == 12.0
+    assert request.parameters["inpaint_ranges"] == [{"start": 8.5, "end": 10.0}]
 
 
 def test_plugin_stable_audio_render_does_not_assign_daemon_layer(tmp_path):
@@ -258,6 +286,36 @@ def test_local_sa3_payload_maps_to_germinator_audio_to_audio():
         assert body["batch_size"] == 2
         assert body["input_audio_path"]
         assert sf.info(body["input_audio_path"]).samplerate == 44100
+    finally:
+        for path in temp_paths:
+            path.unlink(missing_ok=True)
+
+
+def test_local_sa3_inpaint_payload_uses_source_duration_when_request_is_shorter():
+    source = np.zeros((12 * 48000, 2), dtype=np.float32)
+    request = GenerationRequest(
+        prompt="replace the center with ceramic shimmer",
+        duration_seconds=8.0,
+        source_audio=source,
+        source_sample_rate=48000,
+        parameters={
+            "stable_audio_mode": "inpaint",
+            "inpaint_ranges": [{"start": 8.5, "end": 10.0}],
+        },
+    )
+
+    payload = _build_stable_audio3_payload(
+        request,
+        provider_backend="local_mlx",
+        model="small-music",
+        decoder="same-s",
+        max_duration=380.0,
+    )
+    endpoint, body, temp_paths = _germinator_request_from_payload(payload)
+    try:
+        assert endpoint == "/inpaint"
+        assert body["duration"] == 12.0
+        assert body["inpaint_ranges"] == [[8.5, 10.0]]
     finally:
         for path in temp_paths:
             path.unlink(missing_ok=True)

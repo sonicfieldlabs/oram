@@ -19,7 +19,7 @@ if [[ ! -f "$VST3_PATH/Contents/Resources/moduleinfo.json" ]]; then
 fi
 
 if command -v auval >/dev/null 2>&1; then
-  if ! auval -v aufx Oram Momo; then
+  if ! auval -v aufx Oram Sflb; then
     if [[ "${ORAM_PLUGIN_ALLOW_AUVAL_FAILURE:-0}" == "1" ]]; then
       echo "auval failed; continuing because ORAM_PLUGIN_ALLOW_AUVAL_FAILURE=1" >&2
     else

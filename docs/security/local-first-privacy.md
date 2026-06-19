@@ -4,7 +4,7 @@ ORAM is open source, local-first, and BYOK.
 
 ## Defaults
 
-- No Momoto server is required.
+- No hosted ORAM server is required.
 - No telemetry is sent by default.
 - Mock generation is available without any cloud credential.
 - Provider keys are stored locally, with macOS Keychain as the packaged app
@@ -16,7 +16,7 @@ ORAM is open source, local-first, and BYOK.
 Provider keys are stored in macOS Keychain:
 
 ```text
-service: wtf.momoto.oram
+service: com.sonicfieldlabs.oram
 account: provider:elevenlabs
 account: provider:stability
 ```
@@ -30,7 +30,7 @@ Provider keys are sent only to the configured provider endpoint. ElevenLabs
 requests go to `https://api.elevenlabs.io`; Stability Stable Audio requests go
 to `https://api.stability.ai`.
 
-ORAM does not send provider keys to Momoto, ORAM infrastructure, or telemetry
+ORAM does not send provider keys to Sonic Field Labs, ORAM infrastructure, or telemetry
 services.
 
 ## Local Files

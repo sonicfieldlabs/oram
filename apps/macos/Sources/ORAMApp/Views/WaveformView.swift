@@ -18,7 +18,7 @@ struct WaveformView: View {
                     width: max(1, width - 1),
                     height: height
                 )
-                context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(.accentColor.opacity(0.65)))
+                context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(.primary.opacity(0.62)))
             }
         }
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))

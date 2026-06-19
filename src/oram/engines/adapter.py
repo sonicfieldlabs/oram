@@ -60,7 +60,7 @@ class GenerationRequest:
 
     # optional source audio for transform/analysis intents
     source_audio: np.ndarray | None = None
-    source_sample_rate: int = 48000
+    source_sample_rate: int = 44100
 
     # explicit overrides (bypass auto-router)
     engine_id: str | None = None               # specific engine, e.g. "elevenlabs-sfx"

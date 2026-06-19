@@ -342,7 +342,7 @@ class LocalStableAudio3Engine:
         base_url: str = "",
         *,
         provider_backend: str = "stable_audio_mlx",
-        model: str = "sm-music",
+        model: str = "medium-mlx",
         decoder: str = "same-s",
     ):
         self._base_url = (base_url or os.environ.get("ORAM_STABLE_AUDIO_SERVICE_URL", "")).rstrip("/")
@@ -618,13 +618,14 @@ def _normalize_local_provider(value: str) -> str:
 def _normalize_local_model(model: str, provider: str) -> str:
     value = str(model or "").strip()
     if not value:
-        return "sm-music" if provider == "stable_audio_mlx" else "small-music"
+        return "medium-mlx" if provider == "stable_audio_mlx" else "medium"
     if provider == "stable_audio_mlx":
         return {
             "small-music": "sm-music",
             "small-sfx": "sm-sfx",
             "small_music": "sm-music",
             "small_sfx": "sm-sfx",
+            "medium_mlx": "medium-mlx",
         }.get(value, value)
     if provider == "stable_audio_python":
         return {
@@ -633,6 +634,7 @@ def _normalize_local_model(model: str, provider: str) -> str:
             "small_music": "small-music",
             "small_sfx": "small-sfx",
             "medium-mlx": "medium",
+            "medium_mlx": "medium",
         }.get(value, value)
     return value
 
@@ -809,6 +811,17 @@ def _build_stable_audio3_payload(
         raise ValueError(f"Stable Audio mode '{mode}' requires source audio")
     if mode == "inpaint" and not inpaint_ranges:
         raise ValueError("Stable Audio inpaint mode requires an inpaint range")
+
+    source_duration = _coerce_optional_float(params.get("source_duration"))
+    if source_duration is None and request.source_audio is not None and request.source_sample_rate > 0:
+        source_duration = len(request.source_audio) / int(request.source_sample_rate)
+    if mode == "inpaint" and source_duration is not None:
+        if source_duration > float(max_duration):
+            raise ValueError(
+                f"Stable Audio inpaint source audio is {source_duration:.1f}s, "
+                f"over the {float(max_duration):.1f}s maximum duration"
+            )
+        duration = max(duration, source_duration)
 
     payload: dict[str, Any] = {
         "provider": provider_backend,

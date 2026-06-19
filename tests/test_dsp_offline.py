@@ -11,6 +11,7 @@ from oram.dsp.granular import granular, stretch_breathe
 from oram.dsp.pitch import pitch_shift
 from oram.dsp.reverb import reverb, spatial_far
 from oram.dsp.reverse import reverse
+from oram.dsp.safety import crossfade_from_reference, prepare_dsp_output
 from oram.dsp.speed import change_speed
 
 SR = 48000
@@ -59,6 +60,15 @@ class TestSpeed:
         result = change_speed(stereo_buffer, 2.0, SR)
         assert result.shape[0] == pytest.approx(stereo_buffer.shape[0] / 2, rel=0.01)
         assert_no_nans(result, "speed_double")
+
+    def test_common_fx_ratios_keep_exact_lengths(self, stereo_buffer):
+        slow = change_speed(stereo_buffer, 0.5, SR)
+        fast = change_speed(stereo_buffer, 2.0, SR)
+
+        assert slow.shape == (stereo_buffer.shape[0] * 2, 2)
+        assert fast.shape == (stereo_buffer.shape[0] // 2, 2)
+        np.testing.assert_allclose(slow[0], stereo_buffer[0], atol=1e-6)
+        np.testing.assert_allclose(fast[0], stereo_buffer[0], atol=1e-6)
 
     def test_unity_speed(self, stereo_buffer):
         result = change_speed(stereo_buffer, 1.0, SR)
@@ -172,3 +182,35 @@ class TestGranular:
         assert result.shape[0] > stereo_buffer.shape[0]
         assert result.shape[1] == 2
         assert_no_nans(result, "stretch_breathe")
+
+
+class TestDSPSafety:
+    def test_prepare_dsp_output_repairs_bad_samples_and_limits_peak(self):
+        buf = np.ones((1000, 2), dtype=np.float32) * 3.0
+        buf[20, 0] = np.nan
+        buf[21, 1] = np.inf
+
+        result = prepare_dsp_output(buf, sample_rate=SR)
+
+        assert result.shape == buf.shape
+        assert_no_nans(result, "prepared")
+        assert float(np.max(np.abs(result))) <= 0.98 + 1e-6
+        assert np.max(np.abs(result[0])) == pytest.approx(0.0)
+        assert np.max(np.abs(result[-1])) == pytest.approx(0.0)
+
+    def test_crossfade_from_reference_starts_with_old_audio(self):
+        processed = np.ones((100, 2), dtype=np.float32) * 0.8
+        reference = np.zeros((100, 2), dtype=np.float32)
+        reference[40:] = 0.2
+
+        result = crossfade_from_reference(
+            processed,
+            reference,
+            processed_start=40,
+            reference_start=40,
+            sample_rate=1000,
+            fade_ms=10.0,
+        )
+
+        np.testing.assert_allclose(result[40], reference[40], atol=1e-6)
+        np.testing.assert_allclose(result[49], processed[49], atol=1e-6)

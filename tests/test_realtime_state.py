@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 import numpy as np
 import pytest
 
-from oram.audio.mixer import Mixer
+from oram.audio.layer import LayerManager
+from oram.audio.mixer import Mixer, MixerWorkspace
 from oram.audio.playback import BufferSwap, LayerSnapshot, PlaybackSnapshot, RingBuffer
-from oram.types import Layer, LayerState
+from oram.types import Layer, LayerState, OramSession
 
 
 class TestRingBuffer:
@@ -199,6 +201,140 @@ class TestMixerPerformance:
         assert block[2, 0] == pytest.approx(0.5)
         assert block[4, 0] == pytest.approx(1.0)
         assert block[7, 0] == pytest.approx(0.25)
+
+    def test_workspace_pull_uses_linear_speed_without_allocating_output(self):
+        mixer = Mixer(sample_rate=48000, channels=2)
+        workspace = MixerWorkspace.create(8, channels=2)
+        layer = Layer(
+            id="speed-test",
+            name="speed_test",
+            slot=0,
+            sample_rate=48000,
+            channels=2,
+        )
+        layer.buffer = np.column_stack([
+            np.arange(8, dtype=np.float32),
+            np.arange(8, dtype=np.float32),
+        ])
+        layer.duration_seconds = 8 / 48000
+        layer.state = LayerState.ACTIVE
+        layer.speed = 0.5
+
+        block = mixer._pull_block(layer, 6, workspace=workspace)
+
+        np.testing.assert_allclose(
+            block[:, 0],
+            np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5], dtype=np.float32),
+        )
+        assert np.shares_memory(block, workspace.scratch)
+
+    def test_mix_and_advance_survives_concurrent_resized_swaps(self):
+        manager = LayerManager(sample_rate=48000, channels=2)
+        layer = manager.layers[0]
+        manager.assign_buffer(layer, np.ones((4096, 2), dtype=np.float32) * 0.2)
+        mixer = Mixer(sample_rate=48000, channels=2)
+        errors: list[BaseException] = []
+
+        def swapper():
+            try:
+                for idx in range(120):
+                    size = 2048 if idx % 2 == 0 else 8192
+                    manager.swap_buffer(
+                        layer,
+                        np.ones((size, 2), dtype=np.float32) * 0.1,
+                    )
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        thread = threading.Thread(target=swapper)
+        thread.start()
+        try:
+            for _ in range(240):
+                block = mixer.mix_block_and_advance(manager.layers, 512)
+                assert block.shape == (512, 2)
+                assert np.all(np.isfinite(block))
+        except BaseException as exc:
+            errors.append(exc)
+        thread.join()
+
+        assert errors == []
+        assert 0 <= layer.playhead < layer.length_samples
+
+    def test_mix_and_advance_survives_concurrent_generated_assignments(self):
+        manager = LayerManager(sample_rate=48000, channels=2)
+        layer = manager.layers[0]
+        manager.assign_buffer(layer, np.ones((4096, 2), dtype=np.float32) * 0.2)
+        target = manager.layers[1]
+        mixer = Mixer(sample_rate=48000, channels=2)
+        errors: list[BaseException] = []
+
+        def assigner():
+            try:
+                for idx in range(80):
+                    size = 2048 if idx % 2 == 0 else 8192
+                    manager.assign_generated_buffer(
+                        target,
+                        np.ones((size, 2), dtype=np.float32) * 0.1,
+                        prompt="test",
+                        parent=layer,
+                        engine="local-mock",
+                    )
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        thread = threading.Thread(target=assigner)
+        thread.start()
+        try:
+            for _ in range(160):
+                block = mixer.mix_block_and_advance(manager.layers, 512)
+                assert block.shape == (512, 2)
+                assert np.all(np.isfinite(block))
+        except BaseException as exc:
+            errors.append(exc)
+        thread.join()
+
+        assert errors == []
+        assert 0 <= target.playhead < target.length_samples
+
+    def test_output_callback_keeps_stream_alive_after_mixer_exception(self):
+        from oram.audio.realtime import RealAudioEngine
+
+        class BrokenMixer:
+            def mix_block_and_advance(self, *_args, **_kwargs):
+                raise RuntimeError("boom")
+
+        manager = LayerManager(sample_rate=48000, channels=2)
+        session = OramSession(id="cb-test", scene="cb-test", sample_rate=48000)
+        engine = RealAudioEngine(session, manager, sample_rate=48000, block_size=128)
+        engine.mixer = BrokenMixer()
+        out = np.ones((128, 2), dtype=np.float32)
+
+        engine._output_only_callback(out, 128, None, None)
+
+        assert np.all(out == 0.0)
+        assert engine._callback_error_count == 1
+        assert engine._last_callback_error == "boom"
+
+    def test_output_callback_handles_speed_fx_without_error(self):
+        from oram.audio.realtime import RealAudioEngine
+
+        manager = LayerManager(sample_rate=48000, channels=2)
+        layer = manager.layers[0]
+        ramp = np.linspace(-0.2, 0.2, 4096, dtype=np.float32)
+        manager.assign_buffer(layer, np.column_stack([ramp, ramp]))
+        layer.speed = 0.5
+        layer.effects_applied = ["speed"]
+        session = OramSession(id="speed-cb-test", scene="speed-cb-test", sample_rate=48000)
+        engine = RealAudioEngine(session, manager, sample_rate=48000, block_size=128)
+        out = np.zeros((128, 2), dtype=np.float32)
+
+        for _ in range(16):
+            engine._output_only_callback(out, 128, None, None)
+            assert np.all(np.isfinite(out))
+
+        assert engine._callback_error_count == 0
+        assert engine.get_output_level() > 0.0
+        assert 0 < layer.playhead < layer.length_samples
 
 
 class TestPanLaw:

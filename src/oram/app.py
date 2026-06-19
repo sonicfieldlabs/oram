@@ -6,6 +6,7 @@ wires together: engine, layers, parser, router, TUI, STT, gateway.
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime
 
@@ -72,7 +73,6 @@ def _build_gateway(config: OramConfig) -> dict | None:
 
 def run(config: OramConfig) -> None:
     """start the oram instrument."""
-    import os
     from oram.engines.sa3_launcher import start_sa3_server, stop_sa3_server
 
     # Force real audio unless testing

@@ -20,7 +20,7 @@ class AudioNormalizer:
 
     def __init__(
         self,
-        target_sr: int = 48000,
+        target_sr: int = 44100,
         target_lufs: float = -14.0,
         fade_ms: float = 10.0,
         trim_threshold: float = 0.005,
@@ -49,6 +49,8 @@ class AudioNormalizer:
 
         # 2. ensure stereo
         audio = self._ensure_stereo(audio)
+        if audio.shape[0] == 0:
+            return audio
 
         # 3. resample if needed
         if source_sr != target:
@@ -87,6 +89,8 @@ class AudioNormalizer:
 
         ratio = target_sr / source_sr
         new_length = int(audio.shape[0] * ratio)
+        if new_length <= 0:
+            return np.zeros((0, audio.shape[1]), dtype=np.float32)
 
         try:
             from scipy.signal import resample

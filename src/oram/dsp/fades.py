@@ -5,14 +5,21 @@ from __future__ import annotations
 import numpy as np
 
 
-def fade_in(buffer: np.ndarray, duration_seconds: float = 1.0, sample_rate: int = 48000) -> np.ndarray:
-    """apply a linear fade-in."""
+def _smooth_curve(length: int, reverse: bool = False) -> np.ndarray:
+    """Equal-slope curve for less zipper noise than a linear ramp."""
+    fade = np.linspace(0.0, 1.0, length, dtype=np.float32)
+    fade = fade * fade * (3.0 - 2.0 * fade)
+    return fade[::-1] if reverse else fade
+
+
+def fade_in(buffer: np.ndarray, duration_seconds: float = 1.0, sample_rate: int = 44100) -> np.ndarray:
+    """apply a smooth fade-in."""
     fade_samples = min(int(duration_seconds * sample_rate), buffer.shape[0])
     if fade_samples <= 0:
         return buffer.copy()
     result = buffer.copy()
 
-    fade = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+    fade = _smooth_curve(fade_samples)
     if result.ndim > 1:
         fade = fade[:, np.newaxis]
 
@@ -20,14 +27,14 @@ def fade_in(buffer: np.ndarray, duration_seconds: float = 1.0, sample_rate: int 
     return result
 
 
-def fade_out(buffer: np.ndarray, duration_seconds: float = 1.0, sample_rate: int = 48000) -> np.ndarray:
-    """apply a linear fade-out."""
+def fade_out(buffer: np.ndarray, duration_seconds: float = 1.0, sample_rate: int = 44100) -> np.ndarray:
+    """apply a smooth fade-out."""
     fade_samples = min(int(duration_seconds * sample_rate), buffer.shape[0])
     if fade_samples <= 0:
         return buffer.copy()
     result = buffer.copy()
 
-    fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+    fade = _smooth_curve(fade_samples, reverse=True)
     if result.ndim > 1:
         fade = fade[:, np.newaxis]
 

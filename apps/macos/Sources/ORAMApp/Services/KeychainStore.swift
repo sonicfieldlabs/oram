@@ -4,7 +4,7 @@ import Security
 final class KeychainStore {
     static let shared = KeychainStore()
 
-    private let service = "wtf.momoto.oram"
+    private let service = "com.sonicfieldlabs.oram"
 
     func setSecret(_ value: String, provider: String) throws {
         let data = Data(value.utf8)

@@ -178,7 +178,7 @@ class EngineRegistry:
                     LocalStableAudio3Engine(
                         base_url=getattr(config, "stable_audio_service_url", ""),
                         provider_backend=getattr(config, "stable_audio_local_provider", "stable_audio_mlx"),
-                        model=getattr(config, "stable_audio_local_model", "sm-music"),
+                        model=getattr(config, "stable_audio_local_model", "medium-mlx"),
                         decoder=getattr(config, "stable_audio_decoder", "same-s"),
                     )
                 )
@@ -193,7 +193,7 @@ class EngineRegistry:
         try:
             from oram.engines.local_runner import LocalMockEngine
             registry.register(
-                LocalMockEngine(sample_rate=getattr(config, "sample_rate", 48000))
+                LocalMockEngine(sample_rate=getattr(config, "sample_rate", 44100))
             )
         except Exception as e:
             log.warning("failed to register local mock engine: %s", e)

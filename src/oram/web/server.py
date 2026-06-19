@@ -43,6 +43,7 @@ from oram.command.router import ActionRouter
 from oram.command.schemas import (
     ForkLayerAction,
     GenerateFromAction,
+    GenerateLayerAction,
     ListenAction,
     SetLayerModeAction,
     SetLoopRegionAction,
@@ -198,13 +199,11 @@ def _restore_layer(layer: Layer, snapshot: dict[str, Any]) -> None:
         layer.waveform_data = [0.0] * 64
 
 
-def _session_snapshot(label: str) -> dict[str, Any] | None:
+def _session_metadata_snapshot() -> dict[str, Any] | None:
     if _session is None or _layer_manager is None:
         return None
     return {
-        "label": label,
-        "timestamp": time.time(),
-        "selected": _layer_manager.selected,
+        "selected": int(_layer_manager.selected),
         "session": {
             "mode": _session.mode.value,
             "selected_layer": _session.selected_layer,
@@ -214,7 +213,35 @@ def _session_snapshot(label: str) -> dict[str, Any] | None:
             "bpm": _session.bpm,
             "generated_bed_id": _session.generated_bed_id,
         },
+    }
+
+
+def _session_snapshot(label: str) -> dict[str, Any] | None:
+    if _layer_manager is None:
+        return None
+    metadata = _session_metadata_snapshot()
+    if metadata is None:
+        return None
+    return {
+        "kind": "session",
+        "label": label,
+        "timestamp": time.time(),
+        **metadata,
         "layers": [_snapshot_layer(layer) for layer in _layer_manager.layers],
+    }
+
+
+def _layer_history_snapshot(label: str, layer: Layer) -> dict[str, Any] | None:
+    metadata = _session_metadata_snapshot()
+    if metadata is None:
+        return None
+    return {
+        "kind": "layer",
+        "label": label,
+        "timestamp": time.time(),
+        **metadata,
+        "layer_slot": int(layer.slot),
+        "layer": _snapshot_layer(layer),
     }
 
 
@@ -228,18 +255,27 @@ def _push_undo(label: str) -> None:
         _redo_stack.clear()
 
 
-def _restore_session_snapshot(snapshot: dict[str, Any]) -> None:
+def _push_layer_undo(label: str, layer: Layer) -> None:
+    snapshot = _layer_history_snapshot(label, layer)
+    if snapshot is None:
+        return
+    with _history_lock:
+        _undo_stack.append(snapshot)
+        del _undo_stack[:-_UNDO_LIMIT]
+        _redo_stack.clear()
+
+
+def _current_snapshot_for(snapshot: dict[str, Any], label: str) -> dict[str, Any] | None:
+    if snapshot.get("kind") == "layer" and _layer_manager is not None:
+        slot = int(snapshot.get("layer_slot", snapshot.get("layer", {}).get("slot", -1)))
+        if 0 <= slot < len(_layer_manager.layers):
+            return _layer_history_snapshot(label, _layer_manager.layers[slot])
+    return _session_snapshot(label)
+
+
+def _restore_session_metadata(snapshot: dict[str, Any]) -> None:
     if _session is None or _layer_manager is None:
         return
-    if _router is not None:
-        try:
-            _router.kill_all_audio()
-        except Exception:
-            pass
-
-    for layer, layer_snapshot in zip(_layer_manager.layers, snapshot["layers"]):
-        _restore_layer(layer, layer_snapshot)
-
     session_data = snapshot["session"]
     selected = max(0, min(len(_layer_manager.layers) - 1, int(snapshot["selected"])))
     _layer_manager.selected = selected
@@ -251,6 +287,29 @@ def _restore_session_snapshot(snapshot: dict[str, Any]) -> None:
     _session.input_mode = session_data.get("input_mode", "prompt")
     _session.bpm = session_data.get("bpm")
     _session.generated_bed_id = session_data.get("generated_bed_id")
+
+
+def _restore_session_snapshot(snapshot: dict[str, Any]) -> None:
+    if _session is None or _layer_manager is None:
+        return
+    if snapshot.get("kind") == "layer":
+        slot = int(snapshot.get("layer_slot", snapshot.get("layer", {}).get("slot", -1)))
+        if 0 <= slot < len(_layer_manager.layers):
+            _restore_layer(_layer_manager.layers[slot], snapshot["layer"])
+            _restore_session_metadata(snapshot)
+            _waveform_cache.clear()
+        return
+
+    if _router is not None:
+        try:
+            _router.kill_all_audio()
+        except Exception:
+            pass
+
+    for layer, layer_snapshot in zip(_layer_manager.layers, snapshot["layers"]):
+        _restore_layer(layer, layer_snapshot)
+
+    _restore_session_metadata(snapshot)
     _waveform_cache.clear()
 
 
@@ -448,6 +507,8 @@ def _get_state_snapshot() -> dict[str, Any]:
         ),
         "input_available": bool(getattr(_engine, "has_input", lambda: True)()),
         "audio_running": bool(_engine.is_running()),
+        "audio_callback_errors": int(getattr(_engine, "_callback_error_count", 0)),
+        "audio_callback_last_error": str(getattr(_engine, "_last_callback_error", "")),
         "auto_listen": _session.auto_listen,
         "gateway": gateway_status,
         "engines": engines_info,
@@ -532,7 +593,8 @@ def _on_record_complete(layer):
         from oram.gateway.router import select_engine
 
         route = create_route("hybrid", llm_adapter=_router.llm_adapter)
-        report = route.listen(layer.buffer, layer.sample_rate)
+        source_snapshot = _router._snapshot_layer_for_generation(layer)
+        report = route.listen(source_snapshot.buffer, source_snapshot.sample_rate)
         _router._listening_reports[layer.id] = report
 
         if not _router.is_audio_epoch_current(audio_epoch):
@@ -574,11 +636,12 @@ def _on_record_complete(layer):
         try:
             from oram.ears.mix_context import build_mix_context
             active_layers = [
-                l for l in _layer_manager.layers
+                _router._snapshot_layer_for_generation(l)
+                for l in _layer_manager.layers
                 if not l.is_empty and not l.muted
             ]
             if active_layers:
-                mix_ctx = build_mix_context(active_layers, layer.sample_rate)
+                mix_ctx = build_mix_context(active_layers, source_snapshot.sample_rate)
                 if mix_ctx.dominant_pitches:
                     _append_log(f"mix context: {', '.join(mix_ctx.dominant_pitches)} — {mix_ctx.density_level}")
         except Exception:
@@ -591,8 +654,8 @@ def _on_record_complete(layer):
             _append_log("generation discarded after kill")
             return
 
-        gen_duration = min(layer.duration_seconds * 1.2, 30.0)
-        audio = _router._call_engine(decision.engine, prompt, gen_duration, layer)
+        gen_duration = min(source_snapshot.duration_seconds * 1.2, 30.0)
+        audio = _router._call_engine(decision.engine, prompt, gen_duration, source_snapshot)
 
         if audio is None:
             _append_log("generation: no audio returned (check API key)")
@@ -602,18 +665,20 @@ def _on_record_complete(layer):
             _append_log("generation discarded after kill")
             return
 
-        _push_undo("auto generation")
-        new_layer = _layer_manager.create_derived_layer(
-            parent=layer,
-            audio=audio,
-            route="hybrid",
-            engine=decision.engine,
-            prompt=prompt,
-        )
-
-        if new_layer is None:
+        target_layer = _layer_manager.find_empty_layer()
+        if target_layer is None:
             _append_log("all layer slots full — clear a layer first")
             return
+
+        _push_layer_undo("auto generation", target_layer)
+        new_layer = _layer_manager.assign_generated_buffer(
+            target_layer,
+            audio,
+            prompt=prompt,
+            parent=layer,
+            route="hybrid",
+            engine=decision.engine,
+        )
 
         _append_log(
             f"generated → layer {new_layer.slot + 1} "
@@ -782,6 +847,7 @@ async def lifespan(app: FastAPI):
         config=_config,
         session_dir=_config.session_dir,
         on_status=on_status,
+        on_before_layer_mutation=_push_layer_undo,
     )
 
     _engine = _build_audio_engine(_config)
@@ -890,7 +956,8 @@ async def send_command(req: CommandRequest):
         return {"error": "not initialized"}
 
     action = _agent.process_command(req.text)
-    if action.model_dump().get("action") != "unknown":
+    is_generation = isinstance(action, (GenerateLayerAction, GenerateFromAction))
+    if action.model_dump().get("action") != "unknown" and not is_generation:
         _push_undo(req.text[:60] or "command")
     message = _router.route(action, raw_text=req.text)
     return {"status": "ok", "message": message, "action": action.model_dump()}
@@ -911,7 +978,7 @@ async def undo_last_action():
         if not _undo_stack:
             return {"status": "ok", "message": "nothing to undo", "can_undo": False, "can_redo": bool(_redo_stack)}
         snapshot = _undo_stack.pop()
-        current = _session_snapshot("redo point")
+        current = _current_snapshot_for(snapshot, "redo point")
         if current is not None:
             _redo_stack.append(current)
             del _redo_stack[:-_UNDO_LIMIT]
@@ -930,7 +997,7 @@ async def redo_last_action():
         if not _redo_stack:
             return {"status": "ok", "message": "nothing to redo", "can_undo": bool(_undo_stack), "can_redo": False}
         snapshot = _redo_stack.pop()
-        current = _session_snapshot("undo point")
+        current = _current_snapshot_for(snapshot, "undo point")
         if current is not None:
             _undo_stack.append(current)
             del _undo_stack[:-_UNDO_LIMIT]
@@ -1070,7 +1137,7 @@ class StableAudioRenderRequest(BaseModel):
     model: str = "stable-audio-3-local"
     decoder: str = "same-s"
     local_provider: str = "stable_audio_mlx"
-    local_model: str = "sm-music"
+    local_model: str = "medium-mlx"
     service_url: str = ""
     chunked_decode: bool = True
     source_layer: int | str | None = None
@@ -1097,7 +1164,6 @@ async def generate_from_layer(req: GenerateRequest):
     """listen + compile + generate from a layer."""
     if _router is None:
         return {"error": "not initialized"}
-    _push_undo("generate")
     action = GenerateFromAction(
         target=req.target,
         route=req.route,
@@ -1130,6 +1196,18 @@ def _stable_audio_render_sync(req: StableAudioRenderRequest) -> dict[str, Any]:
 
     source_layer = _stable_audio_source_layer(req)
     duration = _config.validate_duration(req.duration, kind="generated")
+    if req.mode == "inpaint" and source_layer is not None:
+        source_duration = float(source_layer.duration_seconds)
+        if source_duration > _config.max_generated_seconds:
+            return {
+                "status": "error",
+                "error": "duration_exceeded",
+                "message": (
+                    f"Stable Audio inpaint source layer is {source_duration:.1f}s, "
+                    f"over the {float(_config.max_generated_seconds):.1f}s generated-audio limit"
+                ),
+            }
+        duration = max(duration, source_duration)
     if req.mode == "continue" and source_layer is not None and duration <= source_layer.duration_seconds:
         duration = _config.validate_duration(source_layer.duration_seconds + req.duration, kind="generated")
 
@@ -1157,14 +1235,15 @@ def _stable_audio_render_sync(req: StableAudioRenderRequest) -> dict[str, Any]:
     if req.assign_layer:
         target = _stable_audio_target_layer(req, source_layer=source_layer)
         if target is not None:
-            _push_undo(f"stable audio {req.mode}")
-            _layer_manager.assign_buffer(target, audio)
-            target.is_generated = True
-            target.source_type = SourceType.GENERATED
-            target.generation_prompt = req.prompt
-            target.engine_provider = provider
-            target.parent_layer_id = source_layer.id if source_layer is not None else target.parent_layer_id
-            target.generation_depth = (source_layer.generation_depth + 1) if source_layer is not None else 0
+            _push_layer_undo(f"stable audio {req.mode}", target)
+            _layer_manager.assign_generated_buffer(
+                target,
+                audio,
+                prompt=req.prompt,
+                provider=provider,
+                parent=source_layer,
+                engine=engine,
+            )
             layer_slot = target.slot + 1
 
     _session.mode = Mode.RECORD
@@ -1528,7 +1607,11 @@ async def set_playback_reverse(req: PlaybackReverseRequest):
             {"status": "error", "message": f"layer {layer.slot + 1} is empty — cannot reverse playback"},
             status_code=400,
         )
-    enabled = (not bool(layer.reverse or layer.looper.reverse or layer.sampler.reverse)) if req.enabled is None else bool(req.enabled)
+    enabled = (
+        not bool(layer.reverse or layer.looper.reverse or layer.sampler.reverse)
+        if req.enabled is None
+        else bool(req.enabled)
+    )
     _push_undo("reverse playback")
     _layer_manager.set_playback_reverse(layer, enabled)
     state = "on" if enabled else "off"
@@ -1635,7 +1718,8 @@ async def websocket_endpoint(ws: WebSocket):
                     text = msg.get("text", "")
                     if text:
                         action = _agent.process_command(text)
-                        if action.model_dump().get("action") != "unknown":
+                        is_generation = isinstance(action, (GenerateLayerAction, GenerateFromAction))
+                        if action.model_dump().get("action") != "unknown" and not is_generation:
                             _push_undo(text[:60] or "command")
                         result = _router.route(action, raw_text=text)
                         await ws.send_text(json.dumps({
@@ -1656,7 +1740,6 @@ async def websocket_endpoint(ws: WebSocket):
                     target = msg.get("target", "selected")
                     route = msg.get("route", "hybrid")
                     engine = msg.get("engine", "auto")
-                    _push_undo("generate")
                     action = GenerateFromAction(target=target, route=route, engine=engine)
                     result = _router.route(action)
                     await ws.send_text(json.dumps({
@@ -1918,7 +2001,9 @@ async def list_devices():
         except (TypeError, ValueError):
             return None
 
-    current_sr = int(_config.sample_rate) if _config else 48000
+    current_sr = int(_config.sample_rate) if _config else 44100
+    current_format = str(_config.rec_format) if _config else "wav"
+    current_bit_depth = int(_config.bit_depth) if _config else 24
     current_input = None
     current_output = None
     if _engine and hasattr(_engine, "input_device") and _engine.input_device is not None:
@@ -1937,8 +2022,8 @@ async def list_devices():
         "current_input": current_input,
         "current_output": current_output,
         "current_sample_rate": current_sr,
-        "current_format": "wav",
-        "current_bit_depth": 32,
+        "current_format": current_format,
+        "current_bit_depth": current_bit_depth,
     })
 
 
@@ -2005,9 +2090,11 @@ async def update_settings(req: SettingsRequest):
             restart_audio = True
 
     if req.bit_depth is not None and req.bit_depth in (16, 24, 32):
+        _config.bit_depth = req.bit_depth
         changes.append(f"bit depth → {req.bit_depth}-bit")
 
     if req.rec_format is not None and req.rec_format in ("wav", "aiff", "flac"):
+        _config.rec_format = req.rec_format
         changes.append(f"format → {req.rec_format}")
 
     if "input_device" in req.model_fields_set and requested_input != _config.input_device:

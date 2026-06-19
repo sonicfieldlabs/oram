@@ -48,7 +48,7 @@ The app:
 ## Provider Setup
 
 The Provider setup sheet supports ElevenLabs and Stability AI. Keys are written
-directly to macOS Keychain under `wtf.momoto.oram` and the daemon refreshes its
+directly to macOS Keychain under `com.sonicfieldlabs.oram` and the daemon refreshes its
 engine registry after Keychain changes, so Stable Audio becomes selectable after
 the Stability key is saved.
 

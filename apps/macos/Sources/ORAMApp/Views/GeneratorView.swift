@@ -8,7 +8,7 @@ struct GeneratorView: View {
     @State private var provider = "auto"
     @State private var model = "stable-audio-3-local"
     @State private var localProvider = "stable_audio_mlx"
-    @State private var localModel = "sm-music"
+    @State private var localModel = "medium-mlx"
     @State private var serviceURL = "http://127.0.0.1:8765"
     @State private var chunkedDecode = true
     @State private var tags = "texture, metallic"

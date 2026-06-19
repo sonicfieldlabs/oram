@@ -14,7 +14,7 @@ class PushToTalk:
     captured audio goes to STT, then parser, then router.
     """
 
-    def __init__(self, sample_rate: int = 48000, max_duration: float = 10.0):
+    def __init__(self, sample_rate: int = 44100, max_duration: float = 10.0):
         self._recorder = Recorder(sample_rate=sample_rate, channels=1)
         self._max_duration = max_duration
         self._active = False

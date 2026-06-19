@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
-    @AppStorage("sampleRate") private var sampleRate = 48000
+    @AppStorage("sampleRate") private var sampleRate = 44100
     @AppStorage("blockSize") private var blockSize = 512
     @AppStorage("privacyMode") private var privacyMode = true
 

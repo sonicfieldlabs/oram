@@ -158,7 +158,7 @@ def refresh_session_folder(folder: Path) -> Path:
         raise FileNotFoundError(f"missing session.json: {session_json}")
 
     data = json.loads(session_json.read_text(encoding="utf-8"))
-    sample_rate = int(data.get("sample_rate") or 48000)
+    sample_rate = int(data.get("sample_rate") or 44100)
     session = OramSession(
         id=data.get("session") or folder.name,
         scene=data.get("scene") or folder.name,

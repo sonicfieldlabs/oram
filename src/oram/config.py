@@ -48,8 +48,10 @@ def _bool_env(key: str, default: bool = False) -> bool:
 class OramConfig:
     """runtime configuration with precedence: cli > env > defaults."""
 
-    sample_rate: int = 48000
+    sample_rate: int = 44100
     block_size: int = 512
+    bit_depth: int = 24
+    rec_format: str = "wav"
     channels_out: int = 2
     channels_in: int = 1
 
@@ -92,7 +94,7 @@ class OramConfig:
     stable_audio_service_url: str = ""  # local service, defaults to Germinator when loaded from env
     stable_audio_api_url: str = ""      # override Stability API route when needed
     stable_audio_local_provider: str = "stable_audio_mlx"
-    stable_audio_local_model: str = "sm-music"
+    stable_audio_local_model: str = "medium-mlx"
     stable_audio_decoder: str = "same-s"
 
     # v2: dashboard security
@@ -108,6 +110,10 @@ class OramConfig:
             cfg.sample_rate = int(v)
         if v := os.environ.get("ORAM_BLOCK_SIZE"):
             cfg.block_size = int(v)
+        if v := os.environ.get("ORAM_BIT_DEPTH"):
+            cfg.bit_depth = int(v)
+        if v := os.environ.get("ORAM_REC_FORMAT"):
+            cfg.rec_format = v
         if v := os.environ.get("ORAM_INPUT_DEVICE"):
             cfg.input_device = int(v) if v.isdigit() else v
         if v := os.environ.get("ORAM_OUTPUT_DEVICE"):

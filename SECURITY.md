@@ -18,7 +18,7 @@ Include:
 ## Supported Model
 
 - No telemetry by default.
-- No Momoto server by default.
+- No hosted ORAM server by default.
 - Local daemon binds to `127.0.0.1`.
 - Dashboard LAN exposure requires a token.
 - Session archives and ORAM Library metadata must not contain provider keys.

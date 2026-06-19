@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 APP_NAME="ORAM"
-BUNDLE_ID="wtf.momoto.oram"
+BUNDLE_ID="com.sonicfieldlabs.oram"
 APP_VERSION="$(awk -F'"' '/^version = / {print $2; exit}' "$REPO_ROOT/pyproject.toml")"
 APP_VERSION="${APP_VERSION:-0.0.0}"
 BUILD_CONFIGURATION="${ORAM_BUILD_CONFIGURATION:-release}"
@@ -59,9 +59,16 @@ rm -rf "$PYTHON_RESOURCE_DIR/src"
 cp -R "$REPO_ROOT/src" "$PYTHON_RESOURCE_DIR/src"
 find "$PYTHON_RESOURCE_DIR/src" \( \
   -name "__pycache__" -o \
+  -name ".venv" -o \
+  -name ".git" -o \
+  -name ".pytest_cache" -o \
+  -name "output" -o \
+  -name "vendor" -o \
+  -name "oram_sessions" \
+\) -type d -prune -print0 | xargs -0 rm -rf
+find "$PYTHON_RESOURCE_DIR/src" \( \
   -name "*.pyc" -o \
   -name ".DS_Store" -o \
-  -name "oram_sessions" -o \
   -name "*.wav" -o \
   -name "*.aiff" -o \
   -name "*.aif" -o \
@@ -71,6 +78,7 @@ find "$PYTHON_RESOURCE_DIR/src" \( \
   -name "*.ogg" -o \
   -name "*.caf" \
 \) -print0 | xargs -0 rm -rf
+find "$PYTHON_RESOURCE_DIR/src" -type l -print0 | xargs -0 rm -f
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

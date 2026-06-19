@@ -142,7 +142,7 @@ class Layer:
     buffer: np.ndarray = field(default_factory=lambda: np.zeros((0, 2), dtype=np.float32))
     waveform_data: list[float] = field(default_factory=list)
     waveform_revision: int = 0
-    sample_rate: int = 48000
+    sample_rate: int = 44100
     channels: int = 2
     duration_seconds: float = 0.0
 
@@ -260,7 +260,7 @@ class OramSession:
     id: str
     scene: str
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    sample_rate: int = 48000
+    sample_rate: int = 44100
     bpm: float | None = None
     layers: list[Layer] = field(default_factory=list)
     commands: list[CommandLogEntry] = field(default_factory=list)

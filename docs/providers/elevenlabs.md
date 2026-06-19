@@ -13,7 +13,7 @@ voice design, and isolation through the provider engine registry.
 The app writes the key directly to:
 
 ```text
-service: wtf.momoto.oram
+service: com.sonicfieldlabs.oram
 account: provider:elevenlabs
 ```
 
@@ -38,4 +38,4 @@ Keychain is preferred for packaged app usage.
 ## Privacy
 
 ElevenLabs receives the prompt or audio payload needed for the selected provider
-operation. ORAM does not send the key to Momoto or any ORAM-operated server.
+operation. ORAM does not send the key to Sonic Field Labs or any ORAM-operated server.

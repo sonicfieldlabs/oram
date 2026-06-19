@@ -223,6 +223,13 @@
     const requestedMode = options.mode || fieldValue('sa3-mode', 'generate');
     const mode = options.forceSource ? stableAudioSourceMode(requestedMode) : requestedMode;
     const sourceLayer = options.forceSource || stableAudioModeRequiresSource(mode) ? layerNum : null;
+    let duration = numericField('sa3-duration', 8);
+    if (mode === 'inpaint' && sourceLayer) {
+      const sourceDuration = Number(state.layers?.[sourceLayer - 1]?.duration);
+      if (Number.isFinite(sourceDuration) && sourceDuration > duration) {
+        duration = sourceDuration;
+      }
+    }
     const seedRaw = fieldValue('sa3-seed', '');
     const seed = seedRaw === '' ? null : Number(seedRaw);
     let inpaintRanges = Array.isArray(options.inpaintRanges) ? options.inpaintRanges : [];
@@ -235,12 +242,12 @@
     return {
       prompt: promptOverride || stableAudioPrompt(sourceLayer),
       mode,
-      duration: numericField('sa3-duration', 8),
+      duration,
       provider: 'local',
       model: 'stable-audio-3-local',
       decoder: 'same-s',
       local_provider: fieldValue('sa3-provider', 'stable_audio_mlx'),
-      local_model: fieldValue('sa3-model', 'sm-music'),
+      local_model: fieldValue('sa3-model', 'medium-mlx'),
       service_url: fieldValue('sa3-service-url', 'http://127.0.0.1:8765'),
       chunked_decode: true,
       source_layer: sourceLayer,
@@ -677,7 +684,7 @@
     const cs = getComputedStyle(document.documentElement);
 
     if (!data || data.length === 0 || data.every(v => v === 0)) {
-      ctx.strokeStyle = cs.getPropertyValue('--border').trim() || '#273036';
+      ctx.strokeStyle = cs.getPropertyValue('--border').trim() || '#303030';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(0, h / 2);
@@ -691,16 +698,16 @@
     if (loopEnabled && loopStartPct != null && loopEndPct != null) {
       const lx1 = (loopStartPct / 100) * w;
       const lx2 = (loopEndPct / 100) * w;
-      ctx.fillStyle = cs.getPropertyValue('--loop-region').trim() || 'rgba(0,229,255,0.12)';
+      ctx.fillStyle = cs.getPropertyValue('--loop-region').trim() || 'rgba(200,200,200,0.12)';
       ctx.fillRect(lx1, 0, lx2 - lx1, h);
     }
 
-    let color = cs.getPropertyValue('--waveform').trim() || '#4f6b78';
-    if (layerState === 'active' && !isMuted) color = cs.getPropertyValue('--waveform-active').trim() || '#78dcff';
-    if (layerState === 'muted' || isMuted) color = cs.getPropertyValue('--waveform-muted').trim() || '#2a3135';
-    if (isGenerated) color = cs.getPropertyValue('--waveform-generated').trim() || '#26e6a2';
+    let color = cs.getPropertyValue('--waveform').trim() || '#666666';
+    if (layerState === 'active' && !isMuted) color = cs.getPropertyValue('--waveform-active').trim() || '#d4d4d4';
+    if (layerState === 'muted' || isMuted) color = cs.getPropertyValue('--waveform-muted').trim() || '#303030';
+    if (isGenerated) color = cs.getPropertyValue('--waveform-generated').trim() || '#bababa';
 
-    ctx.strokeStyle = cs.getPropertyValue('--border').trim() || '#273036';
+    ctx.strokeStyle = cs.getPropertyValue('--border').trim() || '#303030';
     ctx.globalAlpha = 0.45;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -798,8 +805,8 @@
     if (!envelope) return;
     const top = 5;
     const bottom = h - 5;
-    const fadeInColor = cs.getPropertyValue('--loop-start').trim() || '#5aabb5';
-    const fadeOutColor = cs.getPropertyValue('--loop-end').trim() || '#c4965a';
+    const fadeInColor = cs.getPropertyValue('--loop-start').trim() || '#c8c8c8';
+    const fadeOutColor = cs.getPropertyValue('--loop-end').trim() || '#909090';
     ctx.save();
     ctx.globalAlpha = 0.82;
     ctx.lineWidth = 1.4;
@@ -1005,6 +1012,14 @@
     const srSel = document.getElementById('sel-sample-rate');
     if (srSel && data.current_sample_rate) {
       srSel.value = data.current_sample_rate.toString();
+    }
+    const bitDepthSel = document.getElementById('sel-bit-depth');
+    if (bitDepthSel && data.current_bit_depth) {
+      bitDepthSel.value = data.current_bit_depth.toString();
+    }
+    const formatSel = document.getElementById('sel-format');
+    if (formatSel && data.current_format) {
+      formatSel.value = data.current_format.toString();
     }
 
     addLog(`${inputDevices.length} input / ${outputDevices.length} output device(s) available`, 'system', '⚙');
@@ -1746,6 +1761,10 @@
           shell._optimisticInpaintTimestamp = Date.now();
           commitInpaintRegions(target, regions);
         }
+      } else {
+        const existing = shell._optimisticInpaint || layerInpaintRegionsPct(layer);
+        commitInpaintRegions(target, []);
+        if (existing.length) addLog(`inpaint selections reset on layer ${target}`, 'system', '⌫');
       }
       delete shell._inpaintDraft;
       syncInpaintVisuals(shell, layer);
@@ -2081,8 +2100,6 @@
       chip.addEventListener('click', () => {
         const cmd = chip.dataset.cmd;
         if (cmd) sendCommand(cmd);
-        fxPalette.classList.add('hidden');
-        btnFx.setAttribute('aria-expanded', 'false');
       });
     });
     // click outside to close

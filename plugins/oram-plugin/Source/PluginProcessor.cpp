@@ -311,7 +311,7 @@ void OramAudioProcessor::requestGenerate (
     if (trimmed.isEmpty())
         return;
 
-    const auto providerName = provider.isNotEmpty() ? provider : "auto";
+    const auto providerName = provider.isNotEmpty() ? provider : "local";
     const auto modelName = model.isNotEmpty() ? model : generationModelForProvider (providerName);
     backgroundPool.addJob (
         new GenerateJob (*this, trimmed, providerName, modelName, juce::jlimit (0.5, 120.0, durationSeconds)),

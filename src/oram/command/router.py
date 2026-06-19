@@ -10,6 +10,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -43,7 +44,7 @@ from oram.command.schemas import (
     StopRecordingAction,
     UnknownAction,
 )
-from oram.types import CommandLogEntry, LayerMode, Mode, SourceType
+from oram.types import CommandLogEntry, LayerMode, Mode
 from oram_security import redact_mapping, redact_text
 
 if TYPE_CHECKING:
@@ -73,6 +74,7 @@ class ActionRouter:
         config=None,
         session_dir: Path | str | None = None,
         on_status=None,
+        on_before_layer_mutation=None,
     ):
         self.session = session
         self.layers = layer_manager
@@ -90,8 +92,10 @@ class ActionRouter:
         self._pending_clear_target: int | str | None = None
         self._pending_clear_ts: float = 0.0  # monotonic timestamp
         self._on_status = on_status or (lambda msg: None)
+        self._on_before_layer_mutation = on_before_layer_mutation
         self._quit_requested = False
         self._audio_kill_epoch = 0
+        self._dsp_locks: dict[str, threading.Lock] = {}
         # v2: store last listening report per layer
         self._listening_reports: dict[str, object] = {}
 
@@ -349,6 +353,12 @@ class ActionRouter:
 
     def _apply_dsp(self, layer, action: ApplyEffectAction) -> None:
         """apply DSP transform in a worker thread, then swap buffer."""
+        lock = self._dsp_locks.setdefault(layer.id, threading.Lock())
+        with lock:
+            self._apply_dsp_locked(layer, action)
+
+    def _apply_dsp_locked(self, layer, action: ApplyEffectAction) -> None:
+        """run one DSP transform for a layer after per-layer serialization."""
         try:
             from oram.dsp.fades import fade_in, fade_out, trim_end, trim_start
             from oram.dsp.filter import highpass, lowpass
@@ -356,47 +366,58 @@ class ActionRouter:
             from oram.dsp.pitch import pitch_shift
             from oram.dsp.reverb import reverb, spatial_far
             from oram.dsp.reverse import reverse
-            from oram.dsp.speed import change_speed
+            from oram.dsp.safety import crossfade_from_reference, prepare_dsp_output
 
-            buf = layer.buffer
+            if action.effect == "speed":
+                speed = action.parameters.speed or 1.0
+                self._apply_playback_speed(layer, speed)
+                self._on_status(f"applied {action.effect} to layer {layer.slot + 1}")
+                return
+
+            with layer._buf_lock:
+                source_buf = layer.buffer.copy()
+                source_length = layer.length_samples
+
+            if source_buf.shape[0] == 0:
+                self._on_status(f"dsp error: layer {layer.slot + 1} has no audio")
+                return
+
+            buf = source_buf
             sr = layer.sample_rate
             params = action.parameters
+            metadata_updates: list[tuple[str, object]] = []
 
             if action.effect == "reverse":
                 buf = reverse(buf)
-                layer.reverse = not layer.reverse
-            elif action.effect == "speed":
-                speed = params.speed or 1.0
-                buf = change_speed(buf, speed, sr)
-                layer.speed *= speed
+                metadata_updates.append(("toggle_reverse", True))
             elif action.effect == "pitch":
                 semitones = params.semitones or 0.0
                 buf = pitch_shift(buf, semitones, sr)
-                layer.pitch_semitones += semitones
+                metadata_updates.append(("pitch", semitones))
             elif action.effect == "lowpass":
                 cutoff = params.cutoff_hz or 2000.0
                 buf = lowpass(buf, cutoff, sr)
-                layer.filter_type = "lowpass"
-                layer.filter_cutoff_hz = cutoff
+                metadata_updates.extend([("filter_type", "lowpass"), ("filter_cutoff_hz", cutoff)])
             elif action.effect == "highpass":
                 cutoff = params.cutoff_hz or 4000.0
                 buf = highpass(buf, cutoff, sr)
-                layer.filter_type = "highpass"
-                layer.filter_cutoff_hz = cutoff
+                metadata_updates.extend([("filter_type", "highpass"), ("filter_cutoff_hz", cutoff)])
             elif action.effect == "reverb":
                 wet = params.wet or 0.4
                 decay = params.decay or "medium"
                 buf = reverb(buf, wet=wet, decay=decay, sample_rate=sr)
-                layer.reverb_amount = wet
+                metadata_updates.append(("reverb_amount", wet))
             elif action.effect == "granular":
                 density = params.density or 0.3
                 grain_ms = params.grain_size_ms or 120.0
                 jitter = params.jitter or 0.15
                 buf = granular(buf, density=density, grain_size_ms=grain_ms,
                                jitter=jitter, sample_rate=sr)
-                layer.grain_density = density
-                layer.grain_size_ms = grain_ms
-                layer.grain_jitter = jitter
+                metadata_updates.extend([
+                    ("grain_density", density),
+                    ("grain_size_ms", grain_ms),
+                    ("grain_jitter", jitter),
+                ])
             elif action.effect == "fade_in":
                 buf = fade_in(buf, sample_rate=sr)
             elif action.effect == "fade_out":
@@ -411,16 +432,72 @@ class ActionRouter:
             elif action.effect == "stretch_breathe":
                 buf = stretch_breathe(buf, sr)
 
-            # atomic swap via layer manager (§1.9)
-            self.layers.swap_buffer(layer, buf.astype(np.float32))
+            fade_edges = action.effect not in {"fade_in", "fade_out"}
+            buf = prepare_dsp_output(buf, sample_rate=sr, fade_edges=fade_edges)
+            if buf.shape[0] == 0:
+                self._on_status(f"dsp error: {action.effect} returned no audio")
+                return
 
-            if action.effect not in layer.effects_applied:
-                layer.effects_applied.append(action.effect)
+            # Use the latest playhead before the live swap.  This keeps playback
+            # moving and pre-bakes a tiny dry-to-wet ramp at the handoff point.
+            with layer._buf_lock:
+                current_playhead = layer.playhead
+            new_playhead = self.layers._project_playhead(
+                current_playhead,
+                source_length,
+                buf.shape[0],
+            )
+            buf = crossfade_from_reference(
+                buf,
+                source_buf,
+                processed_start=new_playhead,
+                reference_start=current_playhead,
+                sample_rate=sr,
+            )
+
+            self.layers.swap_buffer(
+                layer,
+                buf,
+                preserve_playhead=True,
+                source_playhead=current_playhead,
+                source_length=source_length,
+                metadata_update=lambda target: self._commit_dsp_metadata(
+                    target,
+                    action.effect,
+                    metadata_updates,
+                ),
+            )
 
             self._on_status(f"applied {action.effect} to layer {layer.slot + 1}")
 
         except Exception as e:
             self._on_status(f"dsp error: {e}")
+
+    @staticmethod
+    def _apply_playback_speed(layer, speed: float) -> None:
+        speed = max(0.25, min(4.0, float(speed or 1.0)))
+        with layer._buf_lock:
+            if layer.is_empty:
+                raise ValueError(f"layer {layer.slot + 1} has no audio")
+            layer.speed *= speed
+            layer.speed = max(0.25, min(4.0, float(layer.speed)))
+            if "speed" not in layer.effects_applied:
+                layer.effects_applied.append("speed")
+            layer.waveform_revision += 1
+
+    @staticmethod
+    def _commit_dsp_metadata(layer, effect: str, updates: list[tuple[str, object]]) -> None:
+        for name, value in updates:
+            if name == "toggle_reverse":
+                layer.reverse = not layer.reverse
+            elif name == "speed":
+                layer.speed *= float(value)
+            elif name == "pitch":
+                layer.pitch_semitones += float(value)
+            else:
+                setattr(layer, name, value)
+        if effect not in layer.effects_applied:
+            layer.effects_applied.append(effect)
 
     def _handle_remove_effect(self, action: RemoveEffectAction) -> str:
         layer = self.layers.get_layer(action.target)
@@ -452,7 +529,8 @@ class ActionRouter:
         try:
             from oram.ears.routes import create_route
             route = create_route(route_name, llm_adapter=self.llm_adapter)
-            report = route.listen(layer.buffer, layer.sample_rate)
+            snapshot = self._snapshot_layer_for_generation(layer)
+            report = route.listen(snapshot.buffer, snapshot.sample_rate)
             self._listening_reports[layer.id] = report
 
             # format observations
@@ -526,8 +604,9 @@ class ActionRouter:
             from oram.gateway.router import select_engine
 
             # 1. listen
+            source_snapshot = self._snapshot_layer_for_generation(source_layer)
             route = create_route(route_name, llm_adapter=self.llm_adapter)
-            report = route.listen(source_layer.buffer, source_layer.sample_rate)
+            report = route.listen(source_snapshot.buffer, source_snapshot.sample_rate)
             self._listening_reports[source_layer.id] = report
 
             # 2. select engine
@@ -548,11 +627,12 @@ class ActionRouter:
             try:
                 from oram.ears.mix_context import build_mix_context
                 active_layers = [
-                    l for l in self.layers.layers
+                    self._snapshot_layer_for_generation(l)
+                    for l in self.layers.layers
                     if not l.is_empty and not l.muted
                 ]
                 if active_layers:
-                    mix_ctx = build_mix_context(active_layers, source_layer.sample_rate)
+                    mix_ctx = build_mix_context(active_layers, source_snapshot.sample_rate)
             except Exception:
                 pass  # mix context is optional
 
@@ -565,14 +645,14 @@ class ActionRouter:
 
             # 4. generate
             gen_duration = self._clamp_duration(
-                duration or min(source_layer.duration_seconds * 1.2, 30.0),
+                duration or min(source_snapshot.duration_seconds * 1.2, 30.0),
                 kind="generated",
             )
             audio = self._call_engine(
                 decision.engine,
                 prompt,
                 gen_duration,
-                source_layer,
+                source_snapshot,
                 intent=intent,
                 provider=provider,
             )
@@ -586,17 +666,19 @@ class ActionRouter:
                 return
 
             # 5. create derived layer
-            new_layer = self.layers.create_derived_layer(
-                parent=source_layer,
-                audio=audio,
-                route=route_name,
-                engine=decision.engine,
-                prompt=prompt,
-            )
-
-            if new_layer is None:
+            target_layer = self.layers.find_empty_layer()
+            if target_layer is None:
                 self._on_status("no empty layer slot for generated audio")
                 return
+            self._before_layer_mutation("generate from layer", target_layer)
+            new_layer = self.layers.assign_generated_buffer(
+                target_layer,
+                audio,
+                prompt=prompt,
+                parent=source_layer,
+                route=route_name,
+                engine=decision.engine,
+            )
 
             self.session.mode = Mode.RECORD
             self._on_status(
@@ -664,17 +746,25 @@ class ActionRouter:
                     except ValueError:
                         provider_enum = None
 
+                source_audio = None
+                source_sample_rate = self.session.sample_rate
+                if source_layer is not None:
+                    lock = getattr(source_layer, "_buf_lock", None)
+                    if lock is not None:
+                        with lock:
+                            source_audio = np.asarray(source_layer.buffer, dtype=np.float32).copy()
+                            source_sample_rate = int(source_layer.sample_rate)
+                    else:
+                        source_audio = np.asarray(source_layer.buffer, dtype=np.float32).copy()
+                        source_sample_rate = int(source_layer.sample_rate)
+
                 # build request
                 request = GenerationRequest(
                     prompt=prompt,
                     intent=sonic_intent,
                     duration_seconds=duration,
-                    source_audio=source_layer.buffer if source_layer is not None else None,
-                    source_sample_rate=(
-                        source_layer.sample_rate
-                        if source_layer is not None
-                        else self.session.sample_rate
-                    ),
+                    source_audio=source_audio,
+                    source_sample_rate=source_sample_rate,
                     # if engine contains "-" it's a provider-specific ID
                     engine_id=engine_id if "-" in engine_id else None,
                     provider=provider_enum,
@@ -878,11 +968,14 @@ class ActionRouter:
                 self.session.mode = Mode.RECORD
                 return
 
-            self.layers.assign_buffer(target_layer, audio)
-            target_layer.is_generated = True
-            target_layer.source_type = SourceType.GENERATED
-            target_layer.generation_prompt = action.prompt
-            target_layer.volume = action.mix_level
+            self._before_layer_mutation("generate", target_layer)
+            self.layers.assign_generated_buffer(
+                target_layer,
+                audio,
+                prompt=action.prompt,
+                engine=action.engine,
+                volume=action.mix_level,
+            )
             self.session.generated_bed_id = target_layer.slot
             self.session.mode = Mode.RECORD
 
@@ -953,6 +1046,88 @@ class ActionRouter:
             return self.config.validate_duration(duration, kind=kind)
         max_duration = 120.0 if kind == "loop" else 60.0
         return max(0.0, min(duration, max_duration))
+
+    def _before_layer_mutation(self, label: str, layer) -> None:
+        """Notify the host just before a generated worker mutates a layer."""
+        if self._on_before_layer_mutation is None:
+            return
+        try:
+            self._on_before_layer_mutation(label, layer)
+        except Exception as exc:
+            self._on_status(f"history warning: {exc}")
+
+    def _snapshot_layer_for_generation(self, layer, max_seconds: float = 12.0):
+        """Copy a bounded layer window for listening, mix context, and source conditioning."""
+        with layer._buf_lock:
+            buffer = layer.buffer
+            sample_rate = int(layer.sample_rate)
+            channels = int(layer.channels)
+            playhead = int(layer.playhead)
+            duration_seconds = float(layer.duration_seconds)
+            loop_enabled = bool(layer.looper.enabled)
+            loop_start = int(layer.looper.start_offset)
+            loop_end = int(layer.looper.end_offset)
+            muted = bool(layer.muted)
+            is_empty = bool(layer.is_empty)
+            layer_id = layer.id
+            slot = layer.slot
+
+        audio = self._copy_generation_window(
+            buffer,
+            sample_rate=sample_rate,
+            channels=channels,
+            playhead=playhead,
+            loop_enabled=loop_enabled,
+            loop_start=loop_start,
+            loop_end=loop_end,
+            max_seconds=max_seconds,
+        )
+        return SimpleNamespace(
+            id=layer_id,
+            slot=slot,
+            sample_rate=sample_rate,
+            channels=channels,
+            buffer=audio,
+            duration_seconds=float(audio.shape[0]) / sample_rate if sample_rate > 0 else duration_seconds,
+            muted=muted,
+            is_empty=is_empty or audio.shape[0] == 0,
+        )
+
+    @staticmethod
+    def _copy_generation_window(
+        buffer: np.ndarray,
+        *,
+        sample_rate: int,
+        channels: int,
+        playhead: int,
+        loop_enabled: bool,
+        loop_start: int,
+        loop_end: int,
+        max_seconds: float,
+    ) -> np.ndarray:
+        length = int(buffer.shape[0])
+        if length <= 0:
+            return np.zeros((0, max(1, channels)), dtype=np.float32)
+
+        max_samples = max(1, int(max(1, sample_rate) * max_seconds))
+        if loop_enabled:
+            start = max(0, min(loop_start, length - 1))
+            end = loop_end if loop_end > start else length
+            end = max(start + 1, min(end, length))
+            segment = buffer[start:end]
+            if segment.shape[0] > max_samples:
+                segment = segment[:max_samples]
+            return np.asarray(segment, dtype=np.float32).copy()
+
+        if length <= max_samples:
+            return np.asarray(buffer, dtype=np.float32).copy()
+
+        start = int(playhead) % length
+        end = start + max_samples
+        if end <= length:
+            return np.asarray(buffer[start:end], dtype=np.float32).copy()
+
+        return np.concatenate((buffer[start:], buffer[:end - length]), axis=0).astype(np.float32, copy=False)
 
     def _target_for_recording(self, target: int | str) -> int | None:
         if target == "selected":

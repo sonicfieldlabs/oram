@@ -37,7 +37,7 @@ class RealAudioEngine:
         self,
         session: OramSession,
         layer_manager: LayerManager,
-        sample_rate: int = 48000,
+        sample_rate: int = 44100,
         block_size: int = 512,
         input_device: int | None = None,
         output_device: int | None = None,
@@ -59,6 +59,8 @@ class RealAudioEngine:
         self._input_channels = 0
         self._input_level: float = 0.0
         self._output_level: float = 0.0
+        self._callback_error_count = 0
+        self._last_callback_error = ""
 
         # --- pre-allocated mixer workspace (§1.2) ---
         self._workspace = MixerWorkspace.create(block_size, channels=2)
@@ -309,6 +311,15 @@ class RealAudioEngine:
         SAFETY: no allocations, no thread spawns, no I/O.
         Uses pre-allocated ring buffers and mixer workspace.
         """
+        try:
+            self._audio_callback_impl(indata, outdata, frames, time_info, status)
+        except Exception as exc:
+            self._callback_error_count += 1
+            self._last_callback_error = str(exc)
+            outdata[:] = 0.0
+            self._output_level = 0.0
+
+    def _audio_callback_impl(self, indata, outdata, frames, time_info, status):
         # reject oversized frames (don't raise — would crash sounddevice)
         if frames > self.block_size:
             outdata[:] = 0.0
@@ -341,41 +352,45 @@ class RealAudioEngine:
         else:
             self._input_level *= 0.95
 
-        # output: mix active layers using pre-allocated workspace
-        active = self.layers.get_active_layers()
-        if active:
-            mixed = self.mixer.mix_block(active, frames, out=self._workspace.master)
-            outdata[:frames] = mixed[:frames]
-            self._output_level = float(max(np.max(outdata), -np.min(outdata)))
-        else:
-            outdata[:] = 0.0
-            self._output_level *= 0.95
+        # output: mix and advance from coherent per-layer snapshots
+        mixed = self.mixer.mix_block_and_advance(
+            self.layers.layers,
+            frames,
+            workspace=self._workspace,
+        )
+        outdata[:frames] = mixed[:frames]
+        peak = float(np.max(np.abs(outdata[:frames]))) if frames > 0 else 0.0
+        self._output_level = peak if peak > 0.0 else self._output_level * 0.95
 
         if self._master_recorder.active:
             self._master_recorder.write(outdata[:frames])
 
-        # advance playheads
-        self.mixer.advance_playheads(self.layers.layers, frames)
-
     def _output_only_callback(self, outdata, frames, time_info, status):
         """output-only callback when input is unavailable."""
+        try:
+            self._output_only_callback_impl(outdata, frames, time_info, status)
+        except Exception as exc:
+            self._callback_error_count += 1
+            self._last_callback_error = str(exc)
+            outdata[:] = 0.0
+            self._output_level = 0.0
+
+    def _output_only_callback_impl(self, outdata, frames, time_info, status):
         if frames > self.block_size:
             outdata[:] = 0.0
             return
 
-        active = self.layers.get_active_layers()
-        if active:
-            mixed = self.mixer.mix_block(active, frames, out=self._workspace.master)
-            outdata[:frames] = mixed[:frames]
-            self._output_level = float(max(np.max(outdata), -np.min(outdata)))
-        else:
-            outdata[:] = 0.0
-            self._output_level *= 0.95
+        mixed = self.mixer.mix_block_and_advance(
+            self.layers.layers,
+            frames,
+            workspace=self._workspace,
+        )
+        outdata[:frames] = mixed[:frames]
+        peak = float(np.max(np.abs(outdata[:frames]))) if frames > 0 else 0.0
+        self._output_level = peak if peak > 0.0 else self._output_level * 0.95
 
         if self._master_recorder.active:
             self._master_recorder.write(outdata[:frames])
-
-        self.mixer.advance_playheads(self.layers.layers, frames)
 
     def _stream_finished(self):
         self._running = False

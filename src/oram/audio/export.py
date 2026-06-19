@@ -14,7 +14,7 @@ from oram.audio.mixer import Mixer
 def export_mix(
     layer_manager: LayerManager,
     output_path: Path,
-    sample_rate: int = 48000,
+    sample_rate: int = 44100,
 ) -> Path:
     """export the full mix as a stereo WAV file.
 
@@ -65,7 +65,7 @@ def export_stem(
     layer_manager: LayerManager,
     layer_id: int,
     output_path: Path,
-    sample_rate: int = 48000,
+    sample_rate: int = 44100,
 ) -> Path | None:
     """export a single layer as a WAV file."""
     layer = layer_manager.get_layer(layer_id)

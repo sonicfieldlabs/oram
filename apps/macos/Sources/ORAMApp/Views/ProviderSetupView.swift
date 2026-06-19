@@ -23,7 +23,7 @@ struct ProviderSetupView: View {
                 ForEach(store.providers) { engine in
                     HStack {
                         Image(systemName: engine.available ? "checkmark.circle" : "circle")
-                            .foregroundStyle(engine.available ? .green : .secondary)
+                            .foregroundStyle(engine.available ? Color.primary.opacity(0.75) : Color.secondary)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(engine.label)
                             Text(engine.capabilities.joined(separator: ", "))

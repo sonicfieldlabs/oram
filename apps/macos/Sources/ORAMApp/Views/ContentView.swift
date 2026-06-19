@@ -15,8 +15,10 @@ struct ContentView: View {
     @State private var showFourthLayer = false
     @State private var lightTheme = false
     @State private var commandSearch = ""
-    @State private var sampleRateDraft = 48000
+    @State private var sampleRateDraft = 44100
     @State private var blockSizeDraft = 512
+    @State private var bitDepthDraft = 24
+    @State private var recFormatDraft = "wav"
     @State private var inputDeviceDraft = -1
     @State private var outputDeviceDraft = -1
     @State private var selectedModel = "stable-audio-3-local"
@@ -24,7 +26,7 @@ struct ContentView: View {
     @State private var stableMode = "generate"
     @State private var stableDuration = 8.0
     @State private var stableLocalProvider = "stable_audio_mlx"
-    @State private var stableLocalModel = "sm-music"
+    @State private var stableLocalModel = "medium-mlx"
     @State private var stableServiceURL = "http://127.0.0.1:8765"
     @State private var stableDecoder = "same-s"
     @State private var stableChunkedDecode = true
@@ -140,6 +142,12 @@ struct ContentView: View {
             syncDeviceDrafts()
         }
         .onChange(of: store.devices?.currentOutput) { _ in
+            syncDeviceDrafts()
+        }
+        .onChange(of: store.devices?.currentBitDepth) { _ in
+            syncDeviceDrafts()
+        }
+        .onChange(of: store.devices?.currentFormat) { _ in
             syncDeviceDrafts()
         }
         .onChange(of: store.providers.map(\.id)) { _ in
@@ -338,6 +346,10 @@ struct ContentView: View {
                     systemLabel: "system output",
                     theme: lightTheme
                 )
+                Spacer(minLength: 0)
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
                 SettingMenu(
                     title: "sample rate",
                     selection: $sampleRateDraft,
@@ -352,13 +364,32 @@ struct ContentView: View {
                     label: { "\($0)" },
                     theme: lightTheme
                 )
+                SettingMenu(
+                    title: "bit depth",
+                    selection: $bitDepthDraft,
+                    values: [16, 24, 32],
+                    label: { "\($0)-bit" },
+                    theme: lightTheme
+                )
+                StringSettingMenu(
+                    title: "format",
+                    selection: $recFormatDraft,
+                    values: [
+                        ("wav", "WAV"),
+                        ("aiff", "AIFF"),
+                        ("flac", "FLAC")
+                    ],
+                    theme: lightTheme
+                )
                 Button("apply") {
                     Task {
                         await store.updateAudioSettings(
                             sampleRate: sampleRateDraft,
                             blockSize: blockSizeDraft,
                             inputDevice: inputDeviceDraft,
-                            outputDevice: outputDeviceDraft
+                            outputDevice: outputDeviceDraft,
+                            bitDepth: bitDepthDraft,
+                            recFormat: recFormatDraft
                         )
                     }
                 }
@@ -647,6 +678,8 @@ struct ContentView: View {
     private func syncDeviceDrafts() {
         inputDeviceDraft = store.devices?.currentInput ?? -1
         outputDeviceDraft = store.devices?.currentOutput ?? -1
+        bitDepthDraft = store.devices?.currentBitDepth ?? bitDepthDraft
+        recFormatDraft = store.devices?.currentFormat ?? recFormatDraft
     }
 
     private var selectedProvider: String {
@@ -2224,30 +2257,30 @@ private extension View {
 }
 
 private enum DashboardTheme {
-    static let record = Color(red: 0.77, green: 0.35, blue: 0.33)
-    static let generated = Color(red: 0.30, green: 0.66, blue: 0.51)
-    static let summon = Color(red: 0.69, green: 0.48, blue: 0.68)
-    static let solo = Color(red: 0.77, green: 0.65, blue: 0.27)
-    static let error = Color(red: 0.77, green: 0.44, blue: 0.38)
+    static let record = Color(red: 0.72, green: 0.72, blue: 0.72)
+    static let generated = Color(red: 0.64, green: 0.64, blue: 0.64)
+    static let summon = Color(red: 0.66, green: 0.66, blue: 0.66)
+    static let solo = Color(red: 0.77, green: 0.77, blue: 0.77)
+    static let error = Color(red: 0.78, green: 0.78, blue: 0.78)
 
     static func background(_ light: Bool) -> Color {
-        light ? Color(red: 0.92, green: 0.93, blue: 0.91) : Color(red: 0.031, green: 0.035, blue: 0.039)
+        light ? Color(red: 0.94, green: 0.94, blue: 0.94) : Color(red: 0.031, green: 0.031, blue: 0.031)
     }
 
     static func raised(_ light: Bool) -> Color {
-        light ? Color(red: 0.97, green: 0.97, blue: 0.95) : Color(red: 0.055, green: 0.063, blue: 0.067)
+        light ? Color(red: 0.98, green: 0.98, blue: 0.98) : Color(red: 0.059, green: 0.059, blue: 0.059)
     }
 
     static func hover(_ light: Bool) -> Color {
-        light ? Color(red: 0.90, green: 0.92, blue: 0.90) : Color(red: 0.082, green: 0.090, blue: 0.094)
+        light ? Color(red: 0.91, green: 0.91, blue: 0.91) : Color(red: 0.086, green: 0.086, blue: 0.086)
     }
 
     static func inset(_ light: Bool) -> Color {
-        light ? Color(red: 0.88, green: 0.90, blue: 0.88) : Color(red: 0.024, green: 0.027, blue: 0.031)
+        light ? Color(red: 0.88, green: 0.88, blue: 0.88) : Color(red: 0.024, green: 0.024, blue: 0.024)
     }
 
     static func settings(_ light: Bool) -> Color {
-        light ? Color(red: 0.94, green: 0.95, blue: 0.93) : Color(red: 0.063, green: 0.071, blue: 0.075)
+        light ? Color(red: 0.95, green: 0.95, blue: 0.95) : Color(red: 0.067, green: 0.067, blue: 0.067)
     }
 
     static func selected(_ light: Bool) -> Color {
@@ -2255,15 +2288,15 @@ private enum DashboardTheme {
     }
 
     static func text(_ light: Bool) -> Color {
-        light ? Color(red: 0.08, green: 0.09, blue: 0.09) : Color(red: 0.94, green: 0.95, blue: 0.95)
+        light ? Color(red: 0.09, green: 0.09, blue: 0.09) : Color(red: 0.95, green: 0.95, blue: 0.95)
     }
 
     static func secondary(_ light: Bool) -> Color {
-        light ? Color(red: 0.26, green: 0.30, blue: 0.30) : Color(red: 0.72, green: 0.75, blue: 0.75)
+        light ? Color(red: 0.30, green: 0.30, blue: 0.30) : Color(red: 0.74, green: 0.74, blue: 0.74)
     }
 
     static func dim(_ light: Bool) -> Color {
-        light ? Color(red: 0.42, green: 0.46, blue: 0.46) : Color(red: 0.54, green: 0.58, blue: 0.59)
+        light ? Color(red: 0.46, green: 0.46, blue: 0.46) : Color(red: 0.58, green: 0.58, blue: 0.58)
     }
 
     static func ghost(_ light: Bool) -> Color {
@@ -2271,30 +2304,30 @@ private enum DashboardTheme {
     }
 
     static func border(_ light: Bool) -> Color {
-        light ? Color.black.opacity(0.18) : Color(red: 0.15, green: 0.17, blue: 0.18)
+        light ? Color.black.opacity(0.18) : Color(red: 0.17, green: 0.17, blue: 0.17)
     }
 
     static func borderActive(_ light: Bool) -> Color {
-        light ? Color.black.opacity(0.28) : Color(red: 0.24, green: 0.28, blue: 0.29)
+        light ? Color.black.opacity(0.28) : Color(red: 0.28, green: 0.28, blue: 0.28)
     }
 
     static func accent(_ light: Bool) -> Color {
-        light ? Color(red: 0.20, green: 0.45, blue: 0.55) : Color(red: 0.35, green: 0.60, blue: 0.71)
+        light ? Color(red: 0.29, green: 0.29, blue: 0.29) : Color(red: 0.71, green: 0.71, blue: 0.71)
     }
 
     static func meterBackground(_ light: Bool) -> Color {
-        light ? Color.black.opacity(0.18) : Color(red: 0.07, green: 0.08, blue: 0.08)
+        light ? Color.black.opacity(0.18) : Color(red: 0.08, green: 0.08, blue: 0.08)
     }
 
     static func logBackground(_ light: Bool) -> Color {
-        light ? Color(red: 0.88, green: 0.89, blue: 0.87) : Color(red: 0.024, green: 0.027, blue: 0.031)
+        light ? Color(red: 0.89, green: 0.89, blue: 0.89) : Color(red: 0.024, green: 0.024, blue: 0.024)
     }
 
     static func logBorder(_ light: Bool) -> Color {
-        light ? Color.black.opacity(0.12) : Color(red: 0.10, green: 0.12, blue: 0.13)
+        light ? Color.black.opacity(0.12) : Color(red: 0.12, green: 0.12, blue: 0.12)
     }
 
     static func logTime(_ light: Bool) -> Color {
-        light ? Color.black.opacity(0.28) : Color(red: 0.24, green: 0.26, blue: 0.27)
+        light ? Color.black.opacity(0.28) : Color(red: 0.26, green: 0.26, blue: 0.26)
     }
 }

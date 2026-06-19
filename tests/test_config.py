@@ -22,7 +22,15 @@ class TestDefaults:
 
     def test_sample_rate_default(self):
         cfg = OramConfig()
-        assert cfg.sample_rate == 48000
+        assert cfg.sample_rate == 44100
+
+    def test_bit_depth_default(self):
+        cfg = OramConfig()
+        assert cfg.bit_depth == 24
+
+    def test_stable_audio_local_model_default(self):
+        cfg = OramConfig()
+        assert cfg.stable_audio_local_model == "medium-mlx"
 
 
 class TestEnvParsing:
@@ -32,6 +40,13 @@ class TestEnvParsing:
         monkeypatch.setenv("ORAM_SAMPLE_RATE", "44100")
         cfg = OramConfig.from_env()
         assert cfg.sample_rate == 44100
+
+    def test_from_env_bit_depth_and_format(self, monkeypatch):
+        monkeypatch.setenv("ORAM_BIT_DEPTH", "16")
+        monkeypatch.setenv("ORAM_REC_FORMAT", "flac")
+        cfg = OramConfig.from_env()
+        assert cfg.bit_depth == 16
+        assert cfg.rec_format == "flac"
 
     def test_from_env_generator_backend(self, monkeypatch):
         monkeypatch.setenv("ORAM_GENERATOR_BACKEND", "elevenlabs")

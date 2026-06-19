@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import subprocess
 import sys
 import time
-import logging
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def start_sa3_server() -> str:
     env["GERMINATOR_HOST"] = "127.0.0.1"
     env["GERMINATOR_PORT"] = str(port)
     env["GERMINATOR_ACTIVE_PROVIDER"] = "stable_audio_mlx"
-    env["GERMINATOR_DEFAULT_MODEL"] = "sm-music"
+    env["GERMINATOR_DEFAULT_MODEL"] = "medium-mlx"
     env["GERMINATOR_ALLOWED_INPUT_ROOTS"] = "output,/tmp,/var/folders,/private/tmp,/private/var/folders"
     env["GERMINATOR_OFFICIAL_REPO_DIR"] = vendor_dir
     env["GERMINATOR_MLX_REPO_DIR"] = vendor_dir

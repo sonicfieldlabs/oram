@@ -51,7 +51,7 @@ class LocalMockEngine:
         latency_profile="fast",
     )
 
-    def __init__(self, sample_rate: int = 48000):
+    def __init__(self, sample_rate: int = 44100):
         self._sample_rate = sample_rate
         self._generator = None
 
@@ -227,7 +227,7 @@ class LocalSidecarEngine:
             data = response.json()
             return GenerationResult(
                 audio=np.zeros((0, 2), dtype=np.float32),
-                sample_rate=48000,
+                sample_rate=44100,
                 engine_id=self.spec.id,
                 provider=self.spec.provider.value,
                 prompt_used=request.prompt,

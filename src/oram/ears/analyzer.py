@@ -178,7 +178,7 @@ def _spectral_flux_onsets(mono: np.ndarray, sample_rate: int,
     return float(onsets / max(duration, 0.01))
 
 
-def analyze_buffer(buffer: np.ndarray, sample_rate: int = 48000) -> AnalysisResult:
+def analyze_buffer(buffer: np.ndarray, sample_rate: int = 44100) -> AnalysisResult:
     """analyze a single audio buffer."""
     if buffer.shape[0] == 0:
         return AnalysisResult()

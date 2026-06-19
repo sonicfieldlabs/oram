@@ -16,7 +16,7 @@ void OramAudioCore::prepare (double newSampleRate, int, int channelCount)
 {
     const juce::SpinLock::ScopedLockType lock (stateLock);
 
-    sampleRate = newSampleRate > 0.0 ? newSampleRate : 48000.0;
+    sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
     channels = juce::jlimit (1, 2, channelCount);
     maxRecordSamples = juce::roundToInt (sampleRate * maxRecordSeconds);
 

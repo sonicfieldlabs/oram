@@ -12,7 +12,7 @@ class Recorder:
     converted to stereo, and ready for layer assignment.
     """
 
-    def __init__(self, sample_rate: int = 48000, channels: int = 2):
+    def __init__(self, sample_rate: int = 44100, channels: int = 2):
         self.sample_rate = sample_rate
         self.channels = channels
         self._pending: list[np.ndarray] = []

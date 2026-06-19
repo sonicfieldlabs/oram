@@ -13,7 +13,7 @@ import platform
 from dataclasses import dataclass
 from typing import Protocol
 
-DEFAULT_KEYCHAIN_SERVICE = "wtf.momoto.oram"
+DEFAULT_KEYCHAIN_SERVICE = "com.sonicfieldlabs.oram"
 
 PROVIDER_ENV_KEYS = {
     "elevenlabs": "ELEVENLABS_API_KEY",

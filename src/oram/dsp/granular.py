@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import numpy as np
 
+from oram.dsp.safety import sanitize_signal
+
 
 def granular(
     buffer: np.ndarray,
     density: float = 0.3,
     grain_size_ms: float = 120.0,
     jitter: float = 0.15,
-    sample_rate: int = 48000,
+    sample_rate: int = 44100,
     wet: float = 0.6,
 ) -> np.ndarray:
     """apply offline granular processing.
@@ -42,6 +44,7 @@ def granular(
 
     # output buffer
     output = np.zeros_like(buffer, dtype=np.float32)
+    weight = np.zeros(length, dtype=np.float32)
 
     # hop between grains (density controls overlap)
     hop = max(1, int(grain_samples * (1.0 - density * 0.8)))
@@ -76,21 +79,30 @@ def granular(
         out_end = min(position + grain_samples, length)
         out_len = out_end - position
         output[position:out_end] += grain[:out_len]
+        weight[position:out_end] += window[:out_len]
 
         position += hop
 
+    # compensate overlap-add gain so dense settings do not dip or jump.
+    safe_weight = np.maximum(weight, 1e-4)
+    if is_stereo:
+        output = output / safe_weight[:, np.newaxis]
+    else:
+        output = output / safe_weight
+
     # normalize output to prevent clipping
-    peak = np.max(np.abs(output))
-    if peak > 0.0:
-        output = output / peak * np.max(np.abs(buffer))
+    peak = float(np.max(np.abs(output)))
+    input_peak = float(np.max(np.abs(buffer)))
+    if peak > 0.0 and input_peak > 0.0:
+        output = output / peak * input_peak
 
     # wet/dry mix
-    return (buffer * (1 - wet) + output * wet).astype(np.float32)
+    return sanitize_signal(buffer * (1 - wet) + output * wet)
 
 
 def stretch_breathe(
     buffer: np.ndarray,
-    sample_rate: int = 48000,
+    sample_rate: int = 44100,
 ) -> np.ndarray:
     """stretch until it breathes: slower speed + granular smear + reverb.
 

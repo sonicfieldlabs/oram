@@ -18,7 +18,7 @@ macOS app, local library, and session archives.
 - The macOS app and Python daemon run on the user's Mac.
 - Provider credentials are stored in Apple Keychain by default on macOS.
 - `.env` remains a developer fallback, not the packaged app path.
-- ORAM does not send provider credentials to Momoto or any ORAM-operated server.
+- ORAM does not send provider credentials to Sonic Field Labs or any ORAM-operated server.
 - Network calls are limited to explicitly configured providers.
 
 ## Storage Model
@@ -26,7 +26,7 @@ macOS app, local library, and session archives.
 The macOS packaged app stores provider keys in Keychain:
 
 ```text
-service: wtf.momoto.oram
+service: com.sonicfieldlabs.oram
 account: provider:elevenlabs
 account: provider:stability
 ```

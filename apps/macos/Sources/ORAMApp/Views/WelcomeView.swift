@@ -20,7 +20,7 @@ struct WelcomeView: View {
                     WelcomeStatus(label: "Library", value: store.state?.libraryDir ?? "ORAM Library")
                 }
                 GridRow {
-                    WelcomeStatus(label: "Sample Rate", value: "\(store.state?.sampleRate ?? 48000) Hz")
+                    WelcomeStatus(label: "Sample Rate", value: "\(store.state?.sampleRate ?? 44100) Hz")
                     WelcomeStatus(label: "Layers", value: "\(store.state?.layers.count ?? 4)")
                     WelcomeStatus(label: "Sounds", value: "\(store.sounds.count)")
                 }
@@ -28,7 +28,7 @@ struct WelcomeView: View {
 
             if let error = store.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.primary.opacity(0.72))
                     .textSelection(.enabled)
             }
 

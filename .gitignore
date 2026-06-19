@@ -27,6 +27,10 @@ oram_sessions/
 *.aif
 *.flac
 *.mp3
+scratch/
+src/output/
+src/oram_sa3_server/output/
+src/oram_sa3_server/vendor/
 
 # macOS app build artifacts
 apps/macos/.build/

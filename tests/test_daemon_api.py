@@ -197,6 +197,8 @@ def test_daemon_settings_restart_audio_and_accept_default_devices(tmp_path):
         devices = client.get("/devices").json()
         assert devices["current_input"] is None
         assert devices["current_output"] is None
+        assert devices["current_sample_rate"] == 44100
+        assert devices["current_bit_depth"] == 24
 
 
 def test_daemon_upload_layer_imports_audio(tmp_path):

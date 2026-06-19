@@ -16,7 +16,7 @@ from scipy.signal import resample_poly
 def pitch_shift(
     buffer: np.ndarray,
     semitones: float,
-    sample_rate: int = 48000,
+    sample_rate: int = 44100,
 ) -> np.ndarray:
     """shift pitch by semitones using polyphase resampling.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import threading
 from contextlib import asynccontextmanager
@@ -96,7 +97,7 @@ class StableAudioRenderRequest(BaseModel):
     model: str = "auto"
     decoder: str = "same-s"
     local_provider: str = "stable_audio_mlx"
-    local_model: str = "sm-music"
+    local_model: str = "medium-mlx"
     service_url: str = ""
     chunked_decode: bool = True
     source_layer: int | str | None = None
@@ -286,6 +287,7 @@ class LocalOramService:
             config=config,
             session_dir=config.session_dir,
             on_status=self.append_log,
+            on_before_layer_mutation=self._push_layer_undo,
         )
         self.engine.start()
         self._append_audio_start_log()
@@ -403,10 +405,9 @@ class LocalOramService:
         else:
             layer.compute_waveform()
 
-    def _snapshot(self, label: str) -> dict[str, Any]:
+    def _session_metadata_snapshot(self) -> dict[str, Any]:
         return {
-            "label": label,
-            "selected": self.layers.selected,
+            "selected": int(self.layers.selected),
             "session": {
                 "mode": self.session.mode.value,
                 "selected_layer": self.session.selected_layer,
@@ -416,7 +417,23 @@ class LocalOramService:
                 "bpm": self.session.bpm,
                 "generated_bed_id": self.session.generated_bed_id,
             },
+        }
+
+    def _snapshot(self, label: str) -> dict[str, Any]:
+        return {
+            "kind": "session",
+            "label": label,
+            **self._session_metadata_snapshot(),
             "layers": [self._snapshot_layer(layer) for layer in self.layers.layers],
+        }
+
+    def _layer_snapshot(self, label: str, layer: Layer) -> dict[str, Any]:
+        return {
+            "kind": "layer",
+            "label": label,
+            **self._session_metadata_snapshot(),
+            "layer_slot": int(layer.slot),
+            "layer": self._snapshot_layer(layer),
         }
 
     def _push_undo(self, label: str) -> None:
@@ -425,15 +442,20 @@ class LocalOramService:
             del self.undo_stack[:-self.HISTORY_LIMIT]
             self.redo_stack.clear()
 
-    def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
-        try:
-            self.router.kill_all_audio()
-        except Exception:
-            pass
+    def _push_layer_undo(self, label: str, layer: Layer) -> None:
+        with self.history_lock:
+            self.undo_stack.append(self._layer_snapshot(label, layer))
+            del self.undo_stack[:-self.HISTORY_LIMIT]
+            self.redo_stack.clear()
 
-        for layer, layer_snapshot in zip(self.layers.layers, snapshot["layers"]):
-            self._restore_layer(layer, layer_snapshot)
+    def _current_snapshot_for(self, snapshot: dict[str, Any], label: str) -> dict[str, Any]:
+        if snapshot.get("kind") == "layer":
+            slot = int(snapshot.get("layer_slot", snapshot.get("layer", {}).get("slot", -1)))
+            if 0 <= slot < len(self.layers.layers):
+                return self._layer_snapshot(label, self.layers.layers[slot])
+        return self._snapshot(label)
 
+    def _restore_session_metadata(self, snapshot: dict[str, Any]) -> None:
         session_data = snapshot["session"]
         selected = max(0, min(len(self.layers.layers) - 1, int(snapshot["selected"])))
         self.layers.selected = selected
@@ -445,6 +467,24 @@ class LocalOramService:
         self.session.input_mode = session_data.get("input_mode", "prompt")
         self.session.bpm = session_data.get("bpm")
         self.session.generated_bed_id = session_data.get("generated_bed_id")
+
+    def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+        if snapshot.get("kind") == "layer":
+            slot = int(snapshot.get("layer_slot", snapshot.get("layer", {}).get("slot", -1)))
+            if 0 <= slot < len(self.layers.layers):
+                self._restore_layer(self.layers.layers[slot], snapshot["layer"])
+                self._restore_session_metadata(snapshot)
+            return
+
+        try:
+            self.router.kill_all_audio()
+        except Exception:
+            pass
+
+        for layer, layer_snapshot in zip(self.layers.layers, snapshot["layers"]):
+            self._restore_layer(layer, layer_snapshot)
+
+        self._restore_session_metadata(snapshot)
 
     def _reset_to_initial_audio_state(self) -> list[str]:
         results = self.router.kill_all_audio()
@@ -683,6 +723,8 @@ class LocalOramService:
             ),
             "input_level": round(float(getattr(self.engine, "get_input_level", lambda: 0.0)()), 3),
             "output_level": round(float(getattr(self.engine, "get_output_level", lambda: 0.0)()), 3),
+            "audio_callback_errors": int(getattr(self.engine, "_callback_error_count", 0)),
+            "audio_callback_last_error": str(getattr(self.engine, "_last_callback_error", "")),
             "auto_listen": self.session.auto_listen,
             "gateway": self._active_gateway_label(),
             "engine_count": self.engine_registry.available_count,
@@ -727,7 +769,9 @@ class LocalOramService:
 
     def command(self, text: str) -> dict[str, Any]:
         action = self.agent.process_command(text)
-        self._push_undo(text[:60] or "command")
+        is_generation = isinstance(action, (GenerateLayerAction, GenerateFromAction))
+        if action.model_dump().get("action") != "unknown" and not is_generation:
+            self._push_undo(text[:60] or "command")
         message = self.router.route(action, raw_text=redact_text(text))
         return redact_mapping({"status": "ok", "message": message, "action": action.model_dump()})
 
@@ -743,7 +787,6 @@ class LocalOramService:
         engine = req.model or "auto"
         audio = self.router._call_engine(engine, req.prompt, duration, provider=req.provider)
         if audio is None:
-            self._push_undo("generate")
             action = GenerateLayerAction(prompt=req.prompt, duration=duration, engine=engine)
             self.router.route(action, raw_text="daemon:generate")
             return {"status": "accepted", "message": "generation queued"}
@@ -765,12 +808,14 @@ class LocalOramService:
 
         target = self.layers.find_empty_layer()
         if target is not None:
-            self._push_undo("generate")
-            self.layers.assign_buffer(target, audio)
-            target.is_generated = True
-            target.source_type = SourceType.GENERATED
-            target.generation_prompt = req.prompt
-            target.engine_provider = provider
+            self._push_layer_undo("generate", target)
+            self.layers.assign_generated_buffer(
+                target,
+                audio,
+                prompt=req.prompt,
+                provider=provider,
+                engine=engine,
+            )
             self.session.generated_bed_id = target.slot
             layer_slot = target.slot + 1
         else:
@@ -879,6 +924,18 @@ class LocalOramService:
         audio_epoch = self.router.audio_kill_epoch
         source_layer = self._stable_audio_source_layer(req)
         duration = self.config.validate_duration(req.duration, kind="generated")
+        if req.mode == "inpaint" and source_layer is not None:
+            source_duration = float(source_layer.duration_seconds)
+            if source_duration > self.config.max_generated_seconds:
+                return {
+                    "status": "error",
+                    "error": "duration_exceeded",
+                    "message": (
+                        f"Stable Audio inpaint source layer is {source_duration:.1f}s, "
+                        f"over the {float(self.config.max_generated_seconds):.1f}s generated-audio limit"
+                    ),
+                }
+            duration = max(duration, source_duration)
         if req.mode == "continue" and source_layer is not None and duration <= source_layer.duration_seconds:
             duration = self.config.validate_duration(source_layer.duration_seconds + req.duration, kind="generated")
 
@@ -923,14 +980,15 @@ class LocalOramService:
         if req.assign_layer and not plugin_owned:
             target = self._stable_audio_target_layer(req, source_layer=source_layer)
             if target is not None:
-                self._push_undo(f"stable audio {req.mode}")
-                self.layers.assign_buffer(target, audio)
-                target.is_generated = True
-                target.source_type = SourceType.GENERATED
-                target.generation_prompt = req.prompt
-                target.engine_provider = provider
-                target.parent_layer_id = source_layer.id if source_layer is not None else target.parent_layer_id
-                target.generation_depth = (source_layer.generation_depth + 1) if source_layer is not None else 0
+                self._push_layer_undo(f"stable audio {req.mode}", target)
+                self.layers.assign_generated_buffer(
+                    target,
+                    audio,
+                    prompt=req.prompt,
+                    provider=provider,
+                    parent=source_layer,
+                    engine=engine,
+                )
                 self.session.generated_bed_id = target.slot
                 layer_slot = target.slot + 1
 
@@ -1139,7 +1197,6 @@ class LocalOramService:
             }
 
     def generate_from_layer(self, req: GenerateFromRequest) -> dict[str, Any]:
-        self._push_undo("generate from layer")
         action = GenerateFromAction(
             target=req.target,
             route=req.route,
@@ -1254,12 +1311,17 @@ class LocalOramService:
                     "can_redo": bool(self.redo_stack),
                 }
             snapshot = self.undo_stack.pop()
-            self.redo_stack.append(self._snapshot("redo point"))
+            self.redo_stack.append(self._current_snapshot_for(snapshot, "redo point"))
             del self.redo_stack[:-self.HISTORY_LIMIT]
         self._restore_snapshot(snapshot)
         message = f"undo: {snapshot.get('label', 'last action')}"
         self.append_log(message)
-        return {"status": "ok", "message": message, "can_undo": bool(self.undo_stack), "can_redo": bool(self.redo_stack)}
+        return {
+            "status": "ok",
+            "message": message,
+            "can_undo": bool(self.undo_stack),
+            "can_redo": bool(self.redo_stack),
+        }
 
     def redo(self) -> dict[str, Any]:
         with self.history_lock:
@@ -1271,12 +1333,17 @@ class LocalOramService:
                     "can_redo": False,
                 }
             snapshot = self.redo_stack.pop()
-            self.undo_stack.append(self._snapshot("undo point"))
+            self.undo_stack.append(self._current_snapshot_for(snapshot, "undo point"))
             del self.undo_stack[:-self.HISTORY_LIMIT]
         self._restore_snapshot(snapshot)
         message = f"redo: {snapshot.get('label', 'last action')}"
         self.append_log(message)
-        return {"status": "ok", "message": message, "can_undo": bool(self.undo_stack), "can_redo": bool(self.redo_stack)}
+        return {
+            "status": "ok",
+            "message": message,
+            "can_undo": bool(self.undo_stack),
+            "can_redo": bool(self.redo_stack),
+        }
 
     def set_loop_fades(self, req: LoopFadeRequest) -> dict[str, Any]:
         layer = self.layers.get_layer(req.target)
@@ -1343,7 +1410,11 @@ class LocalOramService:
         layer = self.layers.get_layer(req.target)
         if layer.is_empty:
             return {"status": "error", "message": f"layer {layer.slot + 1} is empty - cannot reverse playback"}
-        enabled = (not bool(layer.reverse or layer.looper.reverse or layer.sampler.reverse)) if req.enabled is None else bool(req.enabled)
+        enabled = (
+            not bool(layer.reverse or layer.looper.reverse or layer.sampler.reverse)
+            if req.enabled is None
+            else bool(req.enabled)
+        )
         self._push_undo("reverse playback")
         self.layers.set_playback_reverse(layer, enabled)
         state = "on" if enabled else "off"
@@ -1410,9 +1481,11 @@ class LocalOramService:
             restart_audio = True
 
         if req.bit_depth is not None and req.bit_depth in (16, 24, 32):
+            self.config.bit_depth = req.bit_depth
             changes.append(f"bit depth -> {req.bit_depth}-bit")
 
         if req.rec_format is not None and req.rec_format in ("wav", "aiff", "flac"):
+            self.config.rec_format = req.rec_format
             changes.append(f"format -> {req.rec_format}")
 
         if restart_audio:
@@ -1452,8 +1525,8 @@ class LocalOramService:
             "current_input": self.config.input_device,
             "current_output": self.config.output_device,
             "current_sample_rate": self.config.sample_rate,
-            "current_format": "wav",
-            "current_bit_depth": 32,
+            "current_format": self.config.rec_format,
+            "current_bit_depth": self.config.bit_depth,
         }
 
     def export(self, req: ExportRequest) -> dict[str, Any]:
@@ -1832,6 +1905,7 @@ def run_daemon(
     """Start the local daemon and write discovery metadata."""
 
     import uvicorn
+
     from oram.engines.sa3_launcher import start_sa3_server
 
     sa3_url = start_sa3_server()

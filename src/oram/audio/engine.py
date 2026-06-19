@@ -51,7 +51,7 @@ class UnavailableAudioEngine:
     def __init__(
         self,
         reason: str,
-        sample_rate: int = 48000,
+        sample_rate: int = 44100,
         block_size: int = 512,
         input_device: int | str | None = None,
         output_device: int | str | None = None,
@@ -133,7 +133,7 @@ class MockAudioEngine:
         self,
         session: OramSession,
         layer_manager: LayerManager,
-        sample_rate: int = 48000,
+        sample_rate: int = 44100,
         block_size: int = 512,
         on_record_complete=None,
     ):
@@ -349,21 +349,12 @@ class MockAudioEngine:
                 self._input_level = max(0.0, self._input_level * 0.95)
 
             # simulate output mixing
-            active = self.layers.get_active_layers()
-            if active:
-                mixed = self.mixer.mix_block(active, self.block_size)
-                self._output_level = float(np.max(np.abs(mixed)))
-            else:
-                mixed = None
-                self._output_level = max(0.0, self._output_level * 0.95)
+            mixed = self.mixer.mix_block_and_advance(self.layers.layers, self.block_size)
+            peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
+            self._output_level = peak if peak > 0.0 else max(0.0, self._output_level * 0.95)
 
             if self._master_recorder.active:
-                if mixed is None:
-                    mixed = np.zeros((self.block_size, 2), dtype=np.float32)
                 self._master_recorder.write(mixed)
-
-            # advance playheads
-            self.mixer.advance_playheads(self.layers.layers, self.block_size)
 
             # sleep to simulate realtime
             elapsed = time.monotonic() - start

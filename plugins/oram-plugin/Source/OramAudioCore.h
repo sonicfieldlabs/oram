@@ -92,7 +92,7 @@ private:
     mutable juce::SpinLock stateLock;
     std::array<Layer, maxLayers> layers;
 
-    double sampleRate = 48000.0;
+    double sampleRate = 44100.0;
     int channels = 2;
     int maxRecordSamples = 0;
     int selectedLayerIndex = 0;

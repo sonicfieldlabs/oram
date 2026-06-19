@@ -14,7 +14,7 @@ through the local engine registry.
 The app writes the key directly to:
 
 ```text
-service: wtf.momoto.oram
+service: com.sonicfieldlabs.oram
 account: provider:stability
 ```
 
@@ -90,7 +90,7 @@ from the environment:
 ```bash
 ORAM_STABLE_AUDIO_SERVICE_URL=http://127.0.0.1:8765
 ORAM_STABLE_AUDIO_LOCAL_PROVIDER=stable_audio_mlx
-ORAM_STABLE_AUDIO_LOCAL_MODEL=sm-music
+ORAM_STABLE_AUDIO_LOCAL_MODEL=medium-mlx
 ORAM_STABLE_AUDIO_DECODER=same-s
 ```
 
@@ -114,5 +114,5 @@ or realtime audio callbacks.
 
 Stability AI receives the prompt and generation parameters needed for Stable
 Audio when the Stability API engine is selected. Local service requests stay on
-the configured service URL. ORAM does not send the key to Momoto or any
-ORAM-operated server.
+the configured service URL. ORAM does not send the key to Sonic Field Labs or
+any ORAM-operated server.

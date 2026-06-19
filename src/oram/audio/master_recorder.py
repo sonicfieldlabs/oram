@@ -17,7 +17,7 @@ class MasterBusRecorder:
 
     def __init__(
         self,
-        sample_rate: int = 48000,
+        sample_rate: int = 44100,
         channels: int = 2,
         queue_blocks: int = 1024,
     ):

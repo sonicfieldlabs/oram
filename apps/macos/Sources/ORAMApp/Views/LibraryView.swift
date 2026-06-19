@@ -13,7 +13,7 @@ struct LibraryView: View {
                                 .lineLimit(1)
                             if sound.favorite {
                                 Image(systemName: "star.fill")
-                                    .foregroundStyle(.yellow)
+                                    .foregroundStyle(.primary.opacity(0.75))
                             }
                         }
                         Text("\(sound.provider) / \(sound.model) / \(String(format: "%.1fs", sound.durationSeconds))")

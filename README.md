@@ -472,7 +472,7 @@ Plugin architecture notes: [docs/architecture/daw-plugin-architecture.md](docs/a
 Packaged app usage stores keys in Keychain:
 
 ```text
-service: wtf.momoto.oram
+service: com.sonicfieldlabs.oram
 account: provider:elevenlabs
 account: provider:stability
 ```
@@ -522,7 +522,7 @@ See [.env.example](.env.example) for a complete template.
 
 ## Security
 
-ORAM is local-first: no Momoto server is required, no telemetry is enabled by
+ORAM is local-first: no hosted ORAM server is required, no telemetry is enabled by
 default, and provider credentials are never exposed in local state responses.
 
 The dashboard and daemon bind to `127.0.0.1` by default.
