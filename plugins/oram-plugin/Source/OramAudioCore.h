@@ -75,7 +75,16 @@ private:
         int loopFadeIn = 0;
         int loopFadeOut = 0;
         bool playbackReverse = false;
+        // smoothed effective per-channel gains (volume·pan·audible), ramped in
+        // process() so UI volume/pan drags and mute/solo toggles don't click.
+        float smoothedLeftGain = 0.0f;
+        float smoothedRightGain = 0.0f;
     };
+
+    // grab / restore a copy of the selected layer's audio so the expensive
+    // offline transforms (filter, reverb) run without holding the audio lock.
+    bool snapshotSelectedAudio (juce::AudioBuffer<float>& dest, int& lengthOut);
+    void writeBackSelectedAudio (const juce::AudioBuffer<float>& src, int length);
 
     Layer* currentRecordingLayer() noexcept;
     const Layer* currentRecordingLayer() const noexcept;

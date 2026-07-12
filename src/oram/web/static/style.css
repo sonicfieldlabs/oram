@@ -627,7 +627,9 @@ h1 {
   position: absolute;
   left: -1px;
   right: -1px;
-  top: 50%;
+  /* unity (1.0×) sits at curved pos ~136/200 = 68% up; fill grows from the
+     bottom, so the guide line is 32% from the top */
+  top: 32%;
   height: 1px;
   background: var(--text-muted);
   opacity: 0.4;
@@ -957,6 +959,16 @@ h1 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
+}
+.fx-grid + .fx-group-label { margin-top: 12px; }
+.fx-group-label {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 6px 2px;
+  opacity: 0.7;
 }
 .fx-chip-btn {
   font-family: var(--font);
@@ -3310,7 +3322,8 @@ header {
   position: absolute;
   left: -2px;
   right: -2px;
-  top: 50%;
+  /* unity at curved pos ~68% up; fader fills from the bottom → 32% from top */
+  top: 32%;
   height: 1px;
   background: var(--text-muted);
   opacity: 0.4;

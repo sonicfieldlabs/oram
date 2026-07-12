@@ -68,10 +68,11 @@ Current known alpha gaps:
   host smoke tests are still required.
 - The plugin imports generated audio, serializes native layer state, and applies
   a useful subset of ORAM structured actions; full DSP parity with the Python
-  engine is not complete.
-- Granular effects, true independent pitch/time-stretch, audio-to-audio
-  generation, and listening workflows remain app/core-first rather than fully
-  native in the plugin.
+  engine is not complete. As of v0.4 the plugin's native filter is a zero-phase
+  Butterworth biquad and its reverb is a Schroeder comb/allpass network, with
+  per-block gain smoothing on the mix bus.
+- Granular effects and audio-to-audio generation remain app/core-first rather
+  than fully native in the plugin.
 - Release plugin packages are ad-hoc signed by default; Developer ID signing
   and notarization require local Apple credentials.
 
@@ -126,20 +127,21 @@ recorder → looper → sampler → engine router → local archive
 | Effect | Description |
 | --- | --- |
 | `reverse` | full buffer reverse |
-| `pitch` | pitch shifting |
-| `speed` | time-stretch / speed ratio |
-| `filter` | lowpass, highpass, bandpass with frequency and Q |
-| `reverb` | convolution / algorithmic reverb |
-| `chorus` | chorus modulation |
-| `delay` | delay with feedback |
-| `flanger` | flanger |
-| `phaser` | phaser |
-| `distortion` | distortion / saturation |
-| `bitcrush` | bit reduction / sample rate reduction |
-| `stutter` | stutter / glitch buffer repeat |
-| `granular` | granular synthesis / processing |
-| `normalize` | loudness normalization |
-| `trim` | silence trimming, region selection |
+| `pitch` | phase-vocoder pitch shift ±12 semitones, duration preserved (loops stay in time) |
+| `speed` | anti-aliased varispeed (tape-style: pitch follows speed) |
+| `lowpass` / `highpass` | 4th-order Butterworth, or resonant biquad when a `q` is given |
+| `bandpass` | resonant band around a center frequency |
+| `reverb` | Freeverb-style 8-comb + 4-allpass network, loop-aware tail |
+| `chorus` | three detuned modulated voices |
+| `delay` | damped feedback echo, ping-pong option, tail folded into the loop |
+| `flanger` | swept short-delay comb |
+| `phaser` | swept 6-stage allpass ladder |
+| `distortion` | oversampled waveshaper: soft / warm / fuzz |
+| `bitcrush` | bit-depth + sample-rate reduction |
+| `stutter` | slice-repeat glitch, in time |
+| `granular` | granular cloud with local grain spray |
+| `normalize` | peak or RMS loudness normalization |
+| `trim` | silence trimming |
 | `fade` | fade in / out curves |
 | `spatial` | spatial positioning: near, far, wide |
 
@@ -352,12 +354,18 @@ a visual control surface with:
 ```text
 ⏺  record from mic into selected layer
 ⊕  overdub onto selected layer
-fx open DSP transforms (reverse, granulate, reverb…)
+fx open DSP transforms (grouped: motion / tone / space / character)
 ✦  summon — listen to what's sounding and generate a new layer
-◉  export mix
-⊘  hard-silence capture/layers/pending output
+●  record the master bus to a timed WAV
+◉  export mix — bounce all layers to a WAV
+⊘  nuke/reset — stop all audio and clear every layer (undoable)
 +  add layer
 ```
+
+The `fx` panel now offers the full effect set as one-click chips: reverse,
+slower, faster, stretch, stutter, darker, thinner, pitch up/down, reverb,
+delay, near, far, wide, distort, fuzz, bitcrush, chorus, flanger, phaser,
+granulate, and normalize.
 
 Layer corners: top-left select/mute (right-click: solo), top-right export,
 bottom-left generate, bottom-right clear. Waveform drag sets loop region.
@@ -369,11 +377,14 @@ Keyboard shortcuts in the dashboard:
 1-4       select layer
 r         record
 o         overdub
-k         kill
+k         nuke/reset all audio
 g         generate
-l         listen
+l         listen (analyze selected layer)
+⇧A        toggle auto mode
 m         mute
 u         unmute all
+⌘E        export mix
+⌘Z / ⇧⌘Z  undo / redo
 ⌘K        command palette
 /         focus prompt
 esc       close

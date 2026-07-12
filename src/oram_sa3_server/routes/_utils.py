@@ -18,7 +18,6 @@ from oram_sa3_server.schemas import (
     ModeId,
 )
 
-
 MODE_SPECS: dict[ModeId, tuple[type[BaseModel], str]] = {
     "text-to-audio": (GenerateRequest, "generate"),
     "audio-to-audio": (AudioToAudioRequest, "audio_to_audio"),
@@ -31,11 +30,14 @@ def run_provider_method(request_model: BaseModel, mode: str, method_name: str) -
     job_id = storage.new_job(mode, request_model.model_dump(exclude={"job_id"}))
     request_model = request_model.model_copy(update={"job_id": job_id})
     started = time.perf_counter()
+    provider_id = getattr(request_model, "provider", None)
     try:
-        provider = registry.get(getattr(request_model, "provider"))
+        provider = registry.get(provider_id)
         method = getattr(provider, method_name)
-        # Providers record their own result; no extra record_result needed.
-        result = method(request_model)
+        # serialize per-provider: concurrent /generate calls for different
+        # models must not swap the loaded model mid-inference
+        with registry.lock_for(provider_id):
+            result = method(request_model)
         storage.update_job(
             job_id,
             metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},

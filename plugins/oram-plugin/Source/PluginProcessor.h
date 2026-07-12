@@ -80,6 +80,8 @@ private:
     juce::ThreadPool backgroundPool { 1 };
 
     juce::AudioProcessorValueTreeState parameterState;
+    std::atomic<float>* inputMonitorParam = nullptr;
+    std::atomic<float>* loopLevelParam = nullptr;
     mutable juce::CriticalSection statusLock;
     juce::String statusText = "daemon not connected";
     mutable juce::CriticalSection historyLock;

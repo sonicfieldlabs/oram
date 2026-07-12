@@ -54,11 +54,8 @@ def _run_app(
     if session_dir is not None:
         config.session_dir = session_dir
     config.no_stt = no_stt
-    import os
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        config.mock_audio = mock_audio
-    else:
-        config.mock_audio = False
+    # --mock-audio is an explicit request; real audio stays the default
+    config.mock_audio = mock_audio
     if sample_rate is not None:
         config.sample_rate = sample_rate
     if block_size is not None:
@@ -127,7 +124,6 @@ def run(
 @cli.command()
 def export(session_path: str = typer.Argument(..., help="path to session folder")) -> None:
     """refresh a session archive's mix, waveform, and listening report."""
-    import os
 
     from oram.archive.safety import validate_export_path
     from oram.archive.session import refresh_session_folder
@@ -158,7 +154,6 @@ def dashboard(
     mock_audio: bool = typer.Option(False, "--mock-audio", help="use mock audio engine instead of hardware"),
 ) -> None:
     """launch the web dashboard."""
-    import os
     import socket
 
     load_dotenv()
@@ -192,8 +187,7 @@ def dashboard(
 
     from oram.web.server import run_server
 
-    use_mock = mock_audio if os.environ.get("PYTEST_CURRENT_TEST") else False
-    run_server(host=host, port=port, allow_lan=exposes_lan, mock_audio=use_mock)
+    run_server(host=host, port=port, allow_lan=exposes_lan, mock_audio=mock_audio)
 
 
 @cli.command()
@@ -211,11 +205,10 @@ def daemon(
 
     from oram_daemon.server import run_daemon
 
-    use_mock = mock_audio if os.environ.get("PYTEST_CURRENT_TEST") else False
     run_daemon(
         host="127.0.0.1" if host == "localhost" else host,
         port=port,
-        mock_audio=use_mock,
+        mock_audio=mock_audio,
         session_dir=session_dir,
         auth_token="" if no_auth else None,
     )
@@ -290,7 +283,6 @@ def doctor(
         typer.echo("doctor checks: pass --privacy for privacy diagnostics")
         raise typer.Exit()
 
-    import os
 
     from oram_security.credentials import default_credential_store
     from oram_security.network import allowed_hosts

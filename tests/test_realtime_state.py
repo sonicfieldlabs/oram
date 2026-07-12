@@ -1,4 +1,4 @@
-"""tests for realtime audio state — playback snapshot, ring buffer, mixer performance."""
+"""tests for realtime audio state — ring buffer, mixer correctness and performance."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 from oram.audio.layer import LayerManager
 from oram.audio.mixer import Mixer, MixerWorkspace
-from oram.audio.playback import BufferSwap, LayerSnapshot, PlaybackSnapshot, RingBuffer
+from oram.audio.playback import RingBuffer
 from oram.types import Layer, LayerState, OramSession
 
 
@@ -57,46 +57,6 @@ class TestRingBuffer:
         rb = RingBuffer(max_samples=100, channels=2)
         result = rb.read()
         assert result.shape == (0, 2)
-
-
-class TestPlaybackSnapshot:
-    """immutable playback state."""
-
-    def test_snapshot_is_frozen(self):
-        snap = PlaybackSnapshot(
-            layers=(),
-            any_solo=False,
-            revision=1,
-        )
-        assert snap.revision == 1
-        with pytest.raises(AttributeError):
-            snap.revision = 2
-
-    def test_layer_snapshot_is_frozen(self):
-        ls = LayerSnapshot(
-            slot=0,
-            buffer=np.zeros((100, 2), dtype=np.float32),
-            playhead=0,
-            volume=1.0,
-            pan=0.0,
-            muted=False,
-            solo=False,
-            is_empty=False,
-            length_samples=100,
-        )
-        with pytest.raises(AttributeError):
-            ls.volume = 0.5
-
-
-class TestBufferSwap:
-    """buffer swap message."""
-
-    def test_buffer_swap_creation(self):
-        buf = np.zeros((100, 2), dtype=np.float32)
-        swap = BufferSwap(layer_slot=0, new_buffer=buf)
-        assert swap.layer_slot == 0
-        assert swap.new_playhead == 0
-        assert swap.new_buffer.shape == (100, 2)
 
 
 class TestMixerPerformance:
@@ -202,7 +162,9 @@ class TestMixerPerformance:
         assert block[4, 0] == pytest.approx(1.0)
         assert block[7, 0] == pytest.approx(0.25)
 
-    def test_workspace_pull_uses_linear_speed_without_allocating_output(self):
+    def test_workspace_pull_interpolates_speed_without_allocating_output(self):
+        """away from the loop seam, Catmull-Rom reproduces linear material
+        exactly; the output must live in the pre-allocated workspace."""
         mixer = Mixer(sample_rate=48000, channels=2)
         workspace = MixerWorkspace.create(8, channels=2)
         layer = Layer(
@@ -219,14 +181,34 @@ class TestMixerPerformance:
         layer.duration_seconds = 8 / 48000
         layer.state = LayerState.ACTIVE
         layer.speed = 0.5
+        layer.playhead = 2
 
         block = mixer._pull_block(layer, 6, workspace=workspace)
 
         np.testing.assert_allclose(
             block[:, 0],
-            np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5], dtype=np.float32),
+            np.array([2.0, 2.5, 3.0, 3.5, 4.0, 4.5], dtype=np.float32),
+            atol=1e-6,
         )
         assert np.shares_memory(block, workspace.scratch)
+
+    def test_fractional_speed_accumulates_without_truncation(self):
+        """speed 0.75 over many blocks must land exactly where float math
+        says, not drift by int truncation per block."""
+        mixer = Mixer(sample_rate=48000, channels=2)
+        layer = Layer(id="frac", name="frac", slot=0, sample_rate=48000, channels=2)
+        layer.buffer = np.zeros((48000, 2), dtype=np.float32)
+        layer.buffer[:] = 0.1
+        layer.duration_seconds = 1.0
+        layer.state = LayerState.ACTIVE
+        layer.speed = 0.75
+
+        for _ in range(100):
+            mixer.advance_playhead(layer, 128)
+
+        expected = (100 * 128 * 0.75) % 48000
+        assert abs(layer._phase - expected) < 1e-3
+        assert layer.playhead == int(expected)
 
     def test_mix_and_advance_survives_concurrent_resized_swaps(self):
         manager = LayerManager(sample_rate=48000, channels=2)

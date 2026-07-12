@@ -21,19 +21,43 @@ VALID_EFFECTS = frozenset({
     "pitch",
     "lowpass",
     "highpass",
+    "bandpass",
     "reverb",
+    "delay",
+    "chorus",
+    "flanger",
+    "phaser",
+    "distortion",
+    "bitcrush",
+    "stutter",
     "granular",
+    "normalize",
     "fade_in",
     "fade_out",
     "trim_start",
     "trim_end",
+    "spatial_near",
     "spatial_far",
+    "spatial_wide",
     "stretch_breathe",
 })
 
 VALID_LISTENING_ROUTES = frozenset({
     "technical", "descriptive", "speculative", "hybrid",
 })
+
+# user-facing route aliases (README vocabulary -> internal route names)
+LISTENING_ROUTE_ALIASES = {
+    "spectral": "technical",
+    "llm": "descriptive",
+}
+
+
+def _normalize_route(route: str) -> str:
+    route = LISTENING_ROUTE_ALIASES.get(route, route)
+    if route not in VALID_LISTENING_ROUTES:
+        raise ValueError(f"invalid route: {route}")
+    return route
 
 VALID_ENGINES = frozenset({
     # intent-based (backward compat)
@@ -116,12 +140,13 @@ class SelectLayerAction(BaseModel):
 
 
 class MuteLayerAction(BaseModel):
-    """toggle mute on a layer."""
+    """toggle mute on a layer (state=None), or force muted/unmuted."""
 
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["mute_layer"] = "mute_layer"
     target: int | str = "selected"
+    state: bool | None = None  # None = toggle, True = mute, False = unmute
 
 
 class SoloLayerAction(BaseModel):
@@ -147,13 +172,21 @@ class ClearLayerAction(BaseModel):
 
 
 class SetVolumeAction(BaseModel):
-    """set volume on a layer or master."""
+    """set volume on a layer or master, absolutely or by a relative delta."""
 
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["set_volume"] = "set_volume"
     target: int | str = "selected"
-    volume: float = Field(ge=0.0, le=2.0)
+    volume: float | None = Field(None, ge=0.0, le=2.0)
+    delta: float | None = Field(None, ge=-1.0, le=1.0)
+
+    @field_validator("delta")
+    @classmethod
+    def _volume_or_delta(cls, v, info):
+        if v is None and info.data.get("volume") is None:
+            raise ValueError("set_volume requires volume or delta")
+        return v
 
 
 class SetPanAction(BaseModel):
@@ -180,9 +213,30 @@ class EffectParameters(BaseModel):
     semitones: float | None = Field(None, ge=-12.0, le=12.0)
     # filter
     cutoff_hz: float | None = Field(None, ge=20.0, le=20000.0)
-    # reverb
+    q: float | None = Field(None, ge=0.1, le=12.0)
+    # reverb / shared wet
     wet: float | None = Field(None, ge=0.0, le=1.0)
     decay: str | None = None  # "short", "medium", "long"
+    # delay
+    time_ms: float | None = Field(None, ge=20.0, le=2000.0)
+    feedback: float | None = Field(None, ge=0.0, le=0.95)
+    pingpong: bool | None = None
+    # modulation (chorus / flanger / phaser)
+    rate_hz: float | None = Field(None, ge=0.05, le=8.0)
+    depth: float | None = Field(None, ge=0.0, le=1.0)
+    # distortion
+    drive: float | None = Field(None, ge=1.0, le=20.0)
+    character: str | None = None  # "soft", "warm", "fuzz"
+    tone_hz: float | None = Field(None, ge=100.0, le=20000.0)
+    # bitcrush
+    bits: int | None = Field(None, ge=2, le=16)
+    downsample: int | None = Field(None, ge=1, le=64)
+    # stutter
+    slice_ms: float | None = Field(None, ge=20.0, le=500.0)
+    repeats: int | None = Field(None, ge=2, le=16)
+    prob: float | None = Field(None, ge=0.0, le=1.0)
+    # normalize
+    target_db: float | None = Field(None, ge=-24.0, le=0.0)
     # granular
     density: float | None = Field(None, ge=0.0, le=1.0)
     grain_size_ms: float | None = Field(None, ge=10.0, le=500.0)
@@ -190,14 +244,22 @@ class EffectParameters(BaseModel):
     texture: str | None = None
     # fade
     fade_seconds: float | None = Field(None, ge=0.0)
-    # spatial
+    # spatial / reverb image
     narrow: bool | None = None
+    width: float | None = Field(None, ge=0.0, le=2.0)
 
     @field_validator("decay")
     @classmethod
     def _valid_decay(cls, v: str | None) -> str | None:
         if v is not None and v not in VALID_DECAYS:
             raise ValueError(f"decay must be one of {VALID_DECAYS}")
+        return v
+
+    @field_validator("character")
+    @classmethod
+    def _valid_character(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("soft", "warm", "fuzz"):
+            raise ValueError("character must be soft, warm, or fuzz")
         return v
 
 
@@ -220,18 +282,22 @@ class ApplyEffectAction(BaseModel):
 
 
 class RemoveEffectAction(BaseModel):
-    """remove an effect from a layer."""
+    """undo the most recent destructive effect on a layer.
+
+    effect='last' undoes whatever was applied last; naming an effect only
+    succeeds when it is the most recent one (single-level undo).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["remove_effect"] = "remove_effect"
     target: int | str = "selected"
-    effect: str
+    effect: str = "last"
 
     @field_validator("effect")
     @classmethod
     def _valid_effect(cls, effect: str) -> str:
-        if effect not in VALID_EFFECTS:
+        if effect != "last" and effect not in VALID_EFFECTS:
             raise ValueError(f"invalid effect: {effect}")
         return effect
 
@@ -272,14 +338,12 @@ class ListenAction(BaseModel):
 
     action: Literal["listen"] = "listen"
     target: int | str = "selected"
-    route: str = "hybrid"  # technical / descriptive / speculative / hybrid
+    route: str = "hybrid"  # technical(spectral) / descriptive(llm) / speculative / hybrid
 
     @field_validator("route")
     @classmethod
     def _valid_route(cls, route: str) -> str:
-        if route not in VALID_LISTENING_ROUTES:
-            raise ValueError(f"invalid route: {route}")
-        return route
+        return _normalize_route(route)
 
 
 class GenerateFromAction(BaseModel):
@@ -298,9 +362,7 @@ class GenerateFromAction(BaseModel):
     @field_validator("route")
     @classmethod
     def _valid_route(cls, route: str) -> str:
-        if route not in VALID_LISTENING_ROUTES:
-            raise ValueError(f"invalid route: {route}")
-        return route
+        return _normalize_route(route)
 
     @field_validator("engine")
     @classmethod
@@ -308,6 +370,23 @@ class GenerateFromAction(BaseModel):
         if not _is_valid_engine(v):
             raise ValueError(f"invalid engine: {v}")
         return v
+
+
+class RegenerateAction(BaseModel):
+    """re-summon with the most recent generation prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["regenerate"] = "regenerate"
+
+
+class NameSessionAction(BaseModel):
+    """rename the current session scene."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["name_session"] = "name_session"
+    name: str = Field(min_length=1, max_length=64)
 
 
 class ReplaceLayerAction(BaseModel):
@@ -342,9 +421,7 @@ class ListenAgainAction(BaseModel):
     @field_validator("route")
     @classmethod
     def _valid_route(cls, route: str) -> str:
-        if route not in VALID_LISTENING_ROUTES:
-            raise ValueError(f"invalid route: {route}")
-        return route
+        return _normalize_route(route)
 
     @field_validator("engine")
     @classmethod
@@ -468,6 +545,8 @@ OramAction = Annotated[
     | ApplyEffectAction
     | RemoveEffectAction
     | GenerateLayerAction
+    | RegenerateAction
+    | NameSessionAction
     | ListenAction
     | GenerateFromAction
     | ReplaceLayerAction

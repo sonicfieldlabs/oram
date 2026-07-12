@@ -19,7 +19,14 @@ rm -f \
 
 for bundle in "$ARTEFACT_DIR/AU/ORAM.component" "$ARTEFACT_DIR/VST3/ORAM.vst3" "$ARTEFACT_DIR/Standalone/ORAM.app"; do
   if [[ -d "$bundle" ]]; then
-    codesign --force --deep --sign "$SIGN_IDENTITY" "$bundle"
+    if [[ "$SIGN_IDENTITY" == "-" ]]; then
+      # ad-hoc signature for local/dev use
+      codesign --force --deep --sign - "$bundle"
+    else
+      # Developer ID: hardened runtime + secure timestamp are required for
+      # Apple notarization to accept the build
+      codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$bundle"
+    fi
   fi
 done
 

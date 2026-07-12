@@ -140,6 +140,10 @@ juce::String OramAudioProcessor::generationModelForProvider (const juce::String&
 void OramAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     core.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    // cache the atomic pointers so processBlock avoids a String-keyed APVTS
+    // lookup on every block
+    inputMonitorParam = parameterState.getRawParameterValue ("input_monitor");
+    loopLevelParam = parameterState.getRawParameterValue ("loop_level");
 }
 
 void OramAudioProcessor::releaseResources() {}
@@ -164,8 +168,8 @@ void OramAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     for (auto channel = totalInputChannels; channel < totalOutputChannels; ++channel)
         buffer.clear (channel, 0, buffer.getNumSamples());
 
-    const auto inputMonitor = parameterState.getRawParameterValue ("input_monitor")->load();
-    const auto loopLevel = parameterState.getRawParameterValue ("loop_level")->load();
+    const auto inputMonitor = inputMonitorParam != nullptr ? inputMonitorParam->load() : 1.0f;
+    const auto loopLevel = loopLevelParam != nullptr ? loopLevelParam->load() : 1.0f;
     core.process (buffer, inputMonitor, loopLevel);
 }
 
@@ -197,7 +201,9 @@ void OramAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
         return;
     }
 
-    if ((uint32_t) stream.readInt() != processorStateVersion)
+    // accept this version or older so a project saved by a newer build isn't
+    // silently dropped; the core reader already range-checks its own version
+    if ((uint32_t) stream.readInt() > processorStateVersion)
         return;
 
     const auto xmlText = stream.readString();
@@ -486,7 +492,9 @@ bool OramAudioProcessor::applyAction (const juce::var& action)
         if (effect == "trim_start" || effect == "trim_end")
         {
             pushUndo (effect);
-            core.trimSelected (effect == "trim_start", 0.25);
+            const auto seconds = (double) parameters.getProperty (
+                "trim_seconds", parameters.getProperty ("seconds", juce::var (0.25)));
+            core.trimSelected (effect == "trim_start", seconds);
             setStatus (effect + " layer " + juce::String (core.selectedLayer()));
             return true;
         }

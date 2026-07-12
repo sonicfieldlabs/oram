@@ -22,6 +22,13 @@ final class DaemonClient {
         return decoded
     }
 
+    /// Pure read of a daemon metadata file — no shared-state mutation, safe to
+    /// call from the lifecycle path (e.g. DaemonManager.stop()).
+    nonisolated static func readMetadataFile(at url: URL) throws -> DaemonMetadata {
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode(DaemonMetadata.self, from: data)
+    }
+
     func health() async throws -> Health {
         try await get("/health")
     }
@@ -44,6 +51,14 @@ final class DaemonClient {
 
     func testCredential(provider: String) async throws -> CredentialTestResponse {
         try await post("/credentials/test", payload: ["provider": provider])
+    }
+
+    /// Push a provider key to the daemon's own credential store. The daemon is
+    /// a separately-signed binary that cannot read the app's Keychain items, so
+    /// this is how a saved key actually reaches generation.
+    func setCredential(provider: String, value: String) async throws {
+        let _: EmptyResponse = try await post(
+            "/credentials/set", payload: ["provider": provider, "value": value])
     }
 
     func sounds() async throws -> SoundsResponse {

@@ -54,16 +54,25 @@ def ensure_stereo_float32(
 
 
 def _resample(audio: np.ndarray, source_sr: int, target_sr: int) -> np.ndarray:
-    """resample stereo audio using scipy.signal.resample.
+    """resample stereo audio with polyphase filtering.
 
-    preserves the duration of the audio.
+    resample_poly avoids the edge ringing of FFT resampling and handles
+    the common 44.1k<->48k conversions exactly.
     """
-    from scipy.signal import resample
+    from fractions import Fraction
+
+    from scipy.signal import resample_poly
 
     ratio = target_sr / source_sr
     new_length = int(audio.shape[0] * ratio)
     if new_length <= 0:
         return np.zeros((0, audio.shape[1]), dtype=np.float32)
 
-    resampled = resample(audio, new_length, axis=0).astype(np.float32)
+    fraction = Fraction(target_sr, source_sr).limit_denominator(1000)
+    resampled = resample_poly(audio, fraction.numerator, fraction.denominator, axis=0).astype(np.float32)
+    if resampled.shape[0] > new_length:
+        resampled = resampled[:new_length]
+    elif resampled.shape[0] < new_length:
+        pad = ((0, new_length - resampled.shape[0]),) + ((0, 0),) * (audio.ndim - 1)
+        resampled = np.pad(resampled, pad, mode="edge")
     return resampled

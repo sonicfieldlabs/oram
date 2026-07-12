@@ -51,11 +51,18 @@ Allowed actions and their schemas:
 - {"action":"set_volume","target":1,"volume":0.5}  (0.0-2.0)
 - {"action":"set_pan","target":1,"pan":0.0}  (-1.0 to 1.0)
 - {"action":"apply_effect","target":1,"effect":"reverse","parameters":{}}
-  Effects: reverse, speed, pitch, lowpass, highpass, reverb,
-  granular, fade_in, fade_out, trim_start, trim_end, spatial_far
+  Effects: reverse, speed, pitch, lowpass, highpass, bandpass, reverb,
+  delay, chorus, flanger, phaser, distortion, bitcrush, stutter,
+  granular, normalize, fade_in, fade_out, trim_start, trim_end,
+  spatial_near, spatial_far, spatial_wide, stretch_breathe
   Parameters: speed(0.25-4.0), semitones(-12 to 12),
-  cutoff_hz(20-20000), wet(0.0-1.0), decay(short/medium/long),
+  cutoff_hz(20-20000), q(0.1-12), wet(0.0-1.0), decay(short/medium/long),
+  time_ms(20-2000), feedback(0-0.95), pingpong(bool),
+  rate_hz(0.05-8), depth(0.0-1.0), drive(1-20),
+  character(soft/warm/fuzz), bits(2-16), downsample(1-64),
+  slice_ms(20-500), repeats(2-16), prob(0.0-1.0), target_db(-24-0),
   density(0.0-1.0), grain_size_ms(10-500), jitter(0.0-1.0)
+- {"action":"remove_effect","target":1,"effect":"last"}  (undo the last effect)
 - {"action":"generate_layer","prompt":"...","duration":16}
   The prompt MUST describe a sound effect, texture, or music — NEVER speech or voice.
 - {"action":"analyze_mix"}

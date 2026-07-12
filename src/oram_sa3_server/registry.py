@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import threading
+
 from oram_sa3_server.config import Settings, get_settings
 from oram_sa3_server.control import ControlRegistry
+from oram_sa3_server.job_runner import JobRunner
 from oram_sa3_server.providers.base import AudioGenerationProvider
 from oram_sa3_server.providers.mock_provider import MockProvider
 from oram_sa3_server.providers.stability_api_provider import StabilityAPIProvider
 from oram_sa3_server.providers.stable_audio_mlx_provider import StableAudioMLXProvider
 from oram_sa3_server.providers.stable_audio_python_provider import StableAudioPythonProvider
 from oram_sa3_server.schemas import ProviderStatus
-from oram_sa3_server.job_runner import JobRunner
 from oram_sa3_server.storage import StorageManager
 from oram_sa3_server.strains import StrainRegistry
 
@@ -26,6 +28,16 @@ class ProviderRegistry:
         self.active_provider_id = (
             settings.active_provider if settings.active_provider in self.providers else "mock"
         )
+        # per-provider locks serialize model load/generate/LoRA mutation so
+        # two concurrent requests for different models cannot swap self.model
+        # out from under an in-flight inference
+        self._provider_locks: dict[str, threading.Lock] = {
+            pid: threading.Lock() for pid in self.providers
+        }
+
+    def lock_for(self, provider_id: str | None = None) -> threading.Lock:
+        provider_id = provider_id or self.active_provider_id
+        return self._provider_locks.setdefault(provider_id, threading.Lock())
 
     def get(self, provider_id: str | None = None) -> AudioGenerationProvider:
         provider_id = provider_id or self.active_provider_id

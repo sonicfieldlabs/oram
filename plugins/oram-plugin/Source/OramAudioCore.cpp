@@ -94,16 +94,27 @@ void OramAudioCore::process (juce::AudioBuffer<float>& buffer, float inputMonito
         return layer.solo && layer.lengthSamples > 0;
     });
 
+    // per-block gain smoothing coefficient (~5 ms time constant)
+    const float smoothing = (float) std::exp (-1.0 / (0.005 * juce::jmax (1.0, sampleRate)));
+
     for (int sample = 0; sample < numSamples; ++sample)
     {
         auto loopLeft = 0.0f;
         auto loopRight = 0.0f;
 
-        for (const auto& layer : layers)
+        for (auto& layer : layers)
         {
             if (layer.lengthSamples <= 0)
                 continue;
-            if (anySolo ? ! layer.solo : layer.muted)
+
+            const bool audible = anySolo ? layer.solo : ! layer.muted;
+            const auto targetLeft = audible ? panLeftGain (layer.pan) * layer.volume : 0.0f;
+            const auto targetRight = audible ? panRightGain (layer.pan) * layer.volume : 0.0f;
+            layer.smoothedLeftGain = targetLeft + (layer.smoothedLeftGain - targetLeft) * smoothing;
+            layer.smoothedRightGain = targetRight + (layer.smoothedRightGain - targetRight) * smoothing;
+
+            // skip the read only once the layer is inaudible and fully ramped
+            if (! audible && layer.smoothedLeftGain < 1.0e-5f && layer.smoothedRightGain < 1.0e-5f)
                 continue;
 
             const auto start = regionStart (layer);
@@ -112,21 +123,19 @@ void OramAudioCore::process (juce::AudioBuffer<float>& buffer, float inputMonito
             const auto phase = (layer.playhead - start + sample) % length;
             const auto position = layer.playbackReverse ? end - 1 - phase : start + phase;
             const auto fadeGain = loopFadeGain (layer, phase);
-            const auto leftGain = panLeftGain (layer.pan) * layer.volume;
-            const auto rightGain = panRightGain (layer.pan) * layer.volume;
-            loopLeft += layer.audio.getSample (0, position) * leftGain * fadeGain;
-            loopRight += layer.audio.getSample (1, position) * rightGain * fadeGain;
+            loopLeft += layer.audio.getSample (0, position) * layer.smoothedLeftGain * fadeGain;
+            loopRight += layer.audio.getSample (1, position) * layer.smoothedRightGain * fadeGain;
         }
 
         left[sample] = left[sample] * inputMonitor + loopLeft * loopLevel;
         right[sample] = right[sample] * inputMonitor + loopRight * loopLevel;
     }
 
+    // advance every non-empty layer so muted layers stay in time (and a
+    // just-muted layer resumes at the right position when unmuted)
     for (auto& layer : layers)
     {
         if (layer.lengthSamples <= 0)
-            continue;
-        if (anySolo ? ! layer.solo : layer.muted)
             continue;
         const auto start = regionStart (layer);
         const auto length = regionLength (layer);
@@ -318,64 +327,132 @@ void OramAudioCore::changeSelectedSpeed (float speed)
 
 void OramAudioCore::filterSelected (bool highpass, float cutoffHz)
 {
-    const juce::SpinLock::ScopedLockType lock (stateLock);
-    auto& layer = layers[(size_t) selectedLayerIndex];
-    if (layer.lengthSamples <= 0 || sampleRate <= 0.0)
+    juce::AudioBuffer<float> work;
+    int length = 0;
+    const double sr = sampleRate;
+    if (! snapshotSelectedAudio (work, length) || sr <= 0.0)
         return;
 
-    cutoffHz = juce::jlimit (20.0f, (float) sampleRate * 0.45f, cutoffHz);
-    const auto rc = 1.0f / (2.0f * juce::MathConstants<float>::pi * cutoffHz);
-    const auto dt = 1.0f / (float) sampleRate;
-    const auto lowpassAlpha = dt / (rc + dt);
-    const auto highpassAlpha = rc / (rc + dt);
+    // second-order Butterworth biquad (RBJ), zero-phase via forward+reverse
+    // passes — a real 12→24 dB/oct filter instead of the old 6 dB/oct one-pole
+    cutoffHz = juce::jlimit (20.0f, (float) sr * 0.45f, cutoffHz);
+    const double w0 = juce::MathConstants<double>::twoPi * (double) cutoffHz / sr;
+    const double cosw0 = std::cos (w0);
+    const double sinw0 = std::sin (w0);
+    const double q = juce::MathConstants<double>::sqrt2 * 0.5; // Butterworth Q
+    const double alpha = sinw0 / (2.0 * q);
+
+    double b0, b1, b2;
+    if (highpass)
+    {
+        b0 = (1.0 + cosw0) * 0.5;
+        b1 = -(1.0 + cosw0);
+        b2 = (1.0 + cosw0) * 0.5;
+    }
+    else
+    {
+        b0 = (1.0 - cosw0) * 0.5;
+        b1 = 1.0 - cosw0;
+        b2 = (1.0 - cosw0) * 0.5;
+    }
+    const double a0 = 1.0 + alpha;
+    const double a1 = -2.0 * cosw0;
+    const double a2 = 1.0 - alpha;
+    const float nb0 = (float) (b0 / a0), nb1 = (float) (b1 / a0), nb2 = (float) (b2 / a0);
+    const float na1 = (float) (a1 / a0), na2 = (float) (a2 / a0);
+    const float gainComp = highpass ? 0.85f : 1.0f;
+
+    auto biquadPass = [&] (float* data, int n)
+    {
+        float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            const float x0 = data[i];
+            const float y0 = nb0 * x0 + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2;
+            x2 = x1; x1 = x0; y2 = y1; y1 = y0;
+            data[i] = y0;
+        }
+    };
 
     for (int channel = 0; channel < 2; ++channel)
     {
-        auto* data = layer.audio.getWritePointer (channel);
-        if (highpass)
-        {
-            auto previousInput = data[0];
-            auto previousOutput = data[0];
-            for (int i = 1; i < layer.lengthSamples; ++i)
-            {
-                const auto input = data[i];
-                const auto output = highpassAlpha * (previousOutput + input - previousInput);
-                data[i] = output;
-                previousInput = input;
-                previousOutput = output;
-            }
-        }
-        else
-        {
-            auto output = data[0];
-            for (int i = 1; i < layer.lengthSamples; ++i)
-            {
-                output += lowpassAlpha * (data[i] - output);
-                data[i] = output;
-            }
-        }
+        auto* data = work.getWritePointer (channel);
+        biquadPass (data, length);
+        std::reverse (data, data + length);
+        biquadPass (data, length);           // second pass → zero-phase, 24 dB/oct
+        std::reverse (data, data + length);
+        if (gainComp != 1.0f)
+            juce::FloatVectorOperations::multiply (data, gainComp, length);
     }
+
+    writeBackSelectedAudio (work, length);
 }
 
 void OramAudioCore::reverbSelected (float wet)
 {
-    const juce::SpinLock::ScopedLockType lock (stateLock);
-    auto& layer = layers[(size_t) selectedLayerIndex];
-    if (layer.lengthSamples <= 0)
+    juce::AudioBuffer<float> work;
+    int length = 0;
+    const double sr = sampleRate;
+    if (! snapshotSelectedAudio (work, length) || sr <= 0.0)
         return;
 
     wet = juce::jlimit (0.0f, 1.0f, wet);
-    const auto delaySamples = juce::jlimit (1, layer.lengthSamples, juce::roundToInt (sampleRate * 0.11));
-    const auto feedback = 0.42f;
+
+    // Schroeder network: 4 parallel feedback combs + 2 series allpasses,
+    // per channel, right channel detuned for stereo width. A real tail
+    // instead of a single slapback echo.
+    const double scale = sr / 44100.0;
+    const int combBase[4] = { 1116, 1188, 1277, 1356 };
+    const int apBase[2] = { 556, 441 };
+    const float combFb = 0.78f;
+    const float apGain = 0.5f;
+
+    std::vector<float> line;
     for (int channel = 0; channel < 2; ++channel)
     {
-        auto* data = layer.audio.getWritePointer (channel);
-        for (int i = delaySamples; i < layer.lengthSamples; ++i)
+        auto* data = work.getWritePointer (channel);
+        const int spread = channel == 1 ? 23 : 0;
+
+        std::vector<float> combSum ((size_t) length, 0.0f);
+        for (int c = 0; c < 4; ++c)
         {
-            const auto delayed = data[i - delaySamples] * feedback;
-            data[i] = data[i] * (1.0f - wet) + (data[i] + delayed) * wet;
+            const int d = juce::jmax (1, (int) std::lround ((combBase[c] + spread) * scale));
+            line.assign ((size_t) d, 0.0f);
+            int idx = 0;
+            for (int i = 0; i < length; ++i)
+            {
+                const float y = data[i] + combFb * line[(size_t) idx];
+                line[(size_t) idx] = y;
+                combSum[(size_t) i] += y * 0.25f;
+                if (++idx >= d) idx = 0;
+            }
         }
+
+        for (int a = 0; a < 2; ++a)
+        {
+            const int d = juce::jmax (1, (int) std::lround ((apBase[a] + spread) * scale));
+            line.assign ((size_t) d, 0.0f);
+            int idx = 0;
+            for (int i = 0; i < length; ++i)
+            {
+                const float bufOut = line[(size_t) idx];
+                const float in = combSum[(size_t) i];
+                const float y = -apGain * in + bufOut;
+                line[(size_t) idx] = in + apGain * y;
+                combSum[(size_t) i] = y;
+                if (++idx >= d) idx = 0;
+            }
+        }
+
+        // equal-power dry/wet
+        const float theta = wet * juce::MathConstants<float>::halfPi;
+        const float dryGain = std::cos (theta);
+        const float wetGain = std::sin (theta);
+        for (int i = 0; i < length; ++i)
+            data[i] = data[i] * dryGain + combSum[(size_t) i] * wetGain;
     }
+
+    writeBackSelectedAudio (work, length);
 }
 
 void OramAudioCore::fadeSelected (bool fadeIn, double seconds)
@@ -577,13 +654,31 @@ bool OramAudioCore::readStateFromStream (juce::InputStream& stream)
         return false;
 
     sampleRate = stream.readDouble();
+    // guard against a corrupt sample rate driving an absurd capacity below
+    if (! (sampleRate > 0.0 && sampleRate <= 768000.0))
+        sampleRate = 44100.0;
     selectedLayerIndex = juce::jlimit (0, maxLayers - 1, stream.readInt());
     recordingLayerIndex = -1;
     (void) stream.readInt();
 
+    // absolute per-layer sample ceiling: never trust a length from the stream
+    // that would force a multi-gigabyte allocation (corrupt / truncated state).
+    const int recordCeiling = maxRecordSamples > 0
+        ? maxRecordSamples
+        : juce::roundToInt (sampleRate * maxRecordSeconds);
+    const int hardCeiling = juce::jmax (recordCeiling, juce::roundToInt (768000.0 * maxRecordSeconds));
+
     for (auto& layer : layers)
     {
-        const auto length = juce::jmax (0, stream.readInt());
+        int length = stream.readInt();
+        if (length < 0)
+            length = 0;
+        if (length > hardCeiling)
+            return false; // implausible payload — reject rather than allocate
+        // there must be at least `length` floats × 2 channels left to read
+        const int64_t remaining = stream.getTotalLength() - stream.getPosition();
+        const int64_t audioBytesNeeded = (int64_t) length * 2 * (int64_t) sizeof (float);
+
         ensureLayerCapacity (layer, juce::jmax (1, length));
         layer.lengthSamples = length;
         const auto playhead = stream.readInt();
@@ -608,8 +703,26 @@ bool OramAudioCore::readStateFromStream (juce::InputStream& stream)
             layer.playbackReverse = false;
         }
         clampLoopFades (layer);
+
+        if (remaining >= 0 && audioBytesNeeded > 0 && stream.getTotalLength() > 0
+            && (stream.getTotalLength() - stream.getPosition()) < audioBytesNeeded)
+        {
+            // truncated payload: zero the layer instead of reading garbage
+            layer.audio.clear();
+            layer.lengthSamples = 0;
+            return false;
+        }
         for (int channel = 0; channel < 2; ++channel)
-            stream.read (layer.audio.getWritePointer (channel), (size_t) length * sizeof (float));
+        {
+            auto* dest = layer.audio.getWritePointer (channel);
+            const auto got = stream.read (dest, (size_t) length * sizeof (float));
+            if (got < (int) ((size_t) length * sizeof (float)))
+            {
+                layer.audio.clear();
+                layer.lengthSamples = 0;
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -633,6 +746,32 @@ void OramAudioCore::ensureLayerCapacity (Layer& layer, int requiredSamples)
     const auto capacity = juce::jmax (requiredSamples, maxRecordSamples > 0 ? maxRecordSamples : requiredSamples);
     if (layer.audio.getNumSamples() < capacity)
         layer.audio.setSize (2, capacity, true, true, true);
+}
+
+bool OramAudioCore::snapshotSelectedAudio (juce::AudioBuffer<float>& dest, int& lengthOut)
+{
+    const juce::SpinLock::ScopedLockType lock (stateLock);
+    auto& layer = layers[(size_t) selectedLayerIndex];
+    if (layer.lengthSamples <= 0)
+        return false;
+    lengthOut = layer.lengthSamples;
+    dest.setSize (2, lengthOut, false, false, true);
+    for (int ch = 0; ch < 2; ++ch)
+        dest.copyFrom (ch, 0, layer.audio, ch, 0, lengthOut);
+    return true;
+}
+
+void OramAudioCore::writeBackSelectedAudio (const juce::AudioBuffer<float>& src, int length)
+{
+    const juce::SpinLock::ScopedLockType lock (stateLock);
+    auto& layer = layers[(size_t) selectedLayerIndex];
+    ensureLayerCapacity (layer, juce::jmax (1, length));
+    const int n = juce::jmin (length, src.getNumSamples());
+    for (int ch = 0; ch < 2; ++ch)
+        layer.audio.copyFrom (ch, 0, src, ch, 0, n);
+    layer.lengthSamples = n;
+    if (layer.playhead >= n)
+        layer.playhead = 0;
 }
 
 int OramAudioCore::regionStart (const Layer& layer) noexcept

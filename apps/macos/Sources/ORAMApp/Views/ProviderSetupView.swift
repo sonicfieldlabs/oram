@@ -117,11 +117,21 @@ private struct ProviderCredentialPanel: View {
     }
 
     private func saveKey() {
+        let secret = apiKey
         do {
-            try KeychainStore.shared.setSecret(apiKey, provider: provider)
+            // keep a local Keychain copy for the app's own reference…
+            try KeychainStore.shared.setSecret(secret, provider: provider)
             apiKey = ""
-            statusText = "Stored in macOS Keychain."
-            Task { await store.refreshAll() }
+            statusText = "Storing…"
+            // …and push it to the daemon, which owns generation and cannot read
+            // the app's Keychain items
+            Task {
+                let ok = await store.pushCredential(provider: provider, value: secret)
+                statusText = ok
+                    ? "Stored — daemon updated."
+                    : "Saved locally, but the daemon did not accept the key."
+                await store.refreshAll()
+            }
         } catch {
             statusText = error.localizedDescription
         }

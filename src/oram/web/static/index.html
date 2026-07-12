@@ -33,6 +33,7 @@
           <span class="master-rec-icon">●</span>
           <span class="master-rec-timer" id="master-rec-timer">0:00</span>
         </button>
+        <button class="hdr-btn" id="btn-master-export" data-hint="export mix — bounce all layers to a WAV (⌘E)" aria-label="Export mix">◉</button>
         <button class="hdr-btn hdr-mixer" id="btn-mixer" data-hint="mixer — volume, pan, mute, solo for all layers" aria-label="Open mixer" aria-haspopup="true" aria-expanded="false">☰</button>
         <button class="hdr-btn hdr-kill" id="btn-kill" data-hint="nuke/reset — stop all audio and clear every layer (k)" aria-label="Reset all audio">⊘</button>
         <span class="hdr-sep"></span>
@@ -178,15 +179,39 @@
       <span>dsp effects</span>
       <button id="fx-palette-close" class="palette-close-btn" aria-label="Close fx palette">×</button>
     </div>
+    <div class="fx-group-label">motion</div>
     <div class="fx-grid">
       <button class="fx-chip-btn" data-cmd="reverse" data-hint="reverse the selected layer's audio"><span class="fx-glyph">↺</span><span class="fx-name">reverse</span></button>
       <button class="fx-chip-btn" data-cmd="make it slower" data-hint="half speed — pitch drops, time stretches"><span class="fx-glyph">½</span><span class="fx-name">slower</span></button>
       <button class="fx-chip-btn" data-cmd="make it faster" data-hint="double speed — time compresses, pitch rises"><span class="fx-glyph">2×</span><span class="fx-name">faster</span></button>
+      <button class="fx-chip-btn" data-cmd="stretch until it breathes" data-hint="phase-vocoder stretch — slow without dropping pitch"><span class="fx-glyph">≈</span><span class="fx-name">stretch</span></button>
+      <button class="fx-chip-btn" data-cmd="stutter" data-hint="slice-repeat glitch, in time"><span class="fx-glyph">⋮⋮</span><span class="fx-name">stutter</span></button>
+    </div>
+    <div class="fx-group-label">tone</div>
+    <div class="fx-grid">
       <button class="fx-chip-btn" data-cmd="make it darker" data-hint="low-pass filter — darken the texture"><span class="fx-glyph">◐</span><span class="fx-name">darker</span></button>
-      <button class="fx-chip-btn" data-cmd="granulate softly" data-hint="granular synthesis — fragment into particles"><span class="fx-glyph">░</span><span class="fx-name">granulate</span></button>
+      <button class="fx-chip-btn" data-cmd="make it thinner" data-hint="high-pass filter — thin it out"><span class="fx-glyph">◑</span><span class="fx-name">thinner</span></button>
+      <button class="fx-chip-btn" data-cmd="pitch it up" data-hint="pitch up — same length"><span class="fx-glyph">↑</span><span class="fx-name">pitch up</span></button>
+      <button class="fx-chip-btn" data-cmd="pitch it down" data-hint="pitch down — same length"><span class="fx-glyph">↓</span><span class="fx-name">pitch dn</span></button>
+    </div>
+    <div class="fx-group-label">space</div>
+    <div class="fx-grid">
       <button class="fx-chip-btn" data-cmd="wash it in reverb" data-hint="reverb wash — push into deep space"><span class="fx-glyph">≋</span><span class="fx-name">reverb</span></button>
-      <button class="fx-chip-btn" data-cmd="make it far away" data-hint="distance — make it sound far away"><span class="fx-glyph">↠</span><span class="fx-name">far</span></button>
-      <button class="fx-chip-btn" data-cmd="stretch until it breathes" data-hint="time stretch — slow and breathe"><span class="fx-glyph">≈</span><span class="fx-name">stretch</span></button>
+      <button class="fx-chip-btn" data-cmd="add delay" data-hint="feedback echo, tail folded into the loop"><span class="fx-glyph">⋯</span><span class="fx-name">delay</span></button>
+      <button class="fx-chip-btn" data-cmd="bring it closer" data-hint="presence lift — intimate, in front"><span class="fx-glyph">◎</span><span class="fx-name">near</span></button>
+      <button class="fx-chip-btn" data-cmd="make it far away" data-hint="distance — quiet, washed, dark"><span class="fx-glyph">↠</span><span class="fx-name">far</span></button>
+      <button class="fx-chip-btn" data-cmd="make it wider" data-hint="stereo widen — mono-safe"><span class="fx-glyph">↔</span><span class="fx-name">wide</span></button>
+    </div>
+    <div class="fx-group-label">character</div>
+    <div class="fx-grid">
+      <button class="fx-chip-btn" data-cmd="distort it" data-hint="oversampled saturation — warm drive"><span class="fx-glyph">◢</span><span class="fx-name">distort</span></button>
+      <button class="fx-chip-btn" data-cmd="add fuzz" data-hint="hard fuzz — fold-back edge"><span class="fx-glyph">▚</span><span class="fx-name">fuzz</span></button>
+      <button class="fx-chip-btn" data-cmd="bitcrush" data-hint="bit + rate reduction — digital grit"><span class="fx-glyph">▦</span><span class="fx-name">bitcrush</span></button>
+      <button class="fx-chip-btn" data-cmd="add chorus" data-hint="multi-voice modulated delay"><span class="fx-glyph">◊</span><span class="fx-name">chorus</span></button>
+      <button class="fx-chip-btn" data-cmd="flanger" data-hint="swept comb — jet whoosh"><span class="fx-glyph">⌇</span><span class="fx-name">flanger</span></button>
+      <button class="fx-chip-btn" data-cmd="phaser" data-hint="swept allpass notches"><span class="fx-glyph">∿</span><span class="fx-name">phaser</span></button>
+      <button class="fx-chip-btn" data-cmd="granulate softly" data-hint="granular cloud — fragment into particles"><span class="fx-glyph">░</span><span class="fx-name">granulate</span></button>
+      <button class="fx-chip-btn" data-cmd="normalize" data-hint="lift to full level"><span class="fx-glyph">▁▇</span><span class="fx-name">normalize</span></button>
     </div>
   </section>
 

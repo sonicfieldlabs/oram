@@ -12,7 +12,7 @@ import numpy as np
 
 from oram.audio.layer import LayerManager
 from oram.audio.master_recorder import MasterBusRecorder
-from oram.audio.mixer import Mixer
+from oram.audio.mixer import Mixer, MixerWorkspace
 from oram.types import LayerState, OramSession
 
 
@@ -23,6 +23,8 @@ class AudioEngine(Protocol):
     def stop(self) -> None: ...
     def stop_all_audio(self) -> None: ...
     def is_running(self) -> bool: ...
+    @property
+    def is_recording(self) -> bool: ...
     def has_input(self) -> bool: ...
     def get_input_level(self) -> float: ...
     def get_output_level(self) -> float: ...
@@ -79,6 +81,10 @@ class UnavailableAudioEngine:
 
     def is_running(self) -> bool:
         return False
+
+    @property
+    def is_recording(self) -> bool:
+        return self._recording
 
     def has_input(self) -> bool:
         return False
@@ -144,6 +150,7 @@ class MockAudioEngine:
         self.block_size = block_size
         self.command_queue: queue.Queue = queue.Queue()
         self._on_record_complete = on_record_complete
+        self._workspace = MixerWorkspace.create(block_size, channels=2)
 
         self._running = False
         self._thread: threading.Thread | None = None
@@ -200,6 +207,10 @@ class MockAudioEngine:
 
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def is_recording(self) -> bool:
+        return self._recording
 
     def has_input(self) -> bool:
         return True
@@ -321,6 +332,7 @@ class MockAudioEngine:
                 self._input_level = float(np.max(np.abs(block)))
 
             if self._recording:
+                should_stop = False
                 with self._record_lock:
                     if self._recording:  # double-check under lock
                         self._record_buffer.append(block)
@@ -349,7 +361,9 @@ class MockAudioEngine:
                 self._input_level = max(0.0, self._input_level * 0.95)
 
             # simulate output mixing
-            mixed = self.mixer.mix_block_and_advance(self.layers.layers, self.block_size)
+            mixed = self.mixer.mix_block_and_advance(
+                self.layers.layers, self.block_size, workspace=self._workspace
+            )
             peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
             self._output_level = peak if peak > 0.0 else max(0.0, self._output_level * 0.95)
 

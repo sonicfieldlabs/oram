@@ -95,21 +95,23 @@ def test_kill_audio_stops_capture_and_mutes_layers():
 
 
 def test_make_everything_softer_reduces_all_active_layer_volumes():
+    from oram.command.grammar import match_rules
+    from oram.command.schemas import SetVolumeAction
+
+    action = match_rules("make everything softer")
+    assert isinstance(action, SetVolumeAction)
+    assert action.target == "all"
+    assert action.delta is not None and action.delta < 0
+
     router, layers, _engine = _router()
     layers.assign_buffer(layers.layers[0], np.ones((100, 2), dtype=np.float32))
     layers.assign_buffer(layers.layers[1], np.ones((100, 2), dtype=np.float32))
 
-    result = router.route(
-        ApplyEffectAction(
-            target="all",
-            effect="fade_out",
-            parameters=EffectParameters(fade_seconds=0.0),
-        )
-    )
+    result = router.route(action)
 
     assert result == "all layers softer"
-    assert layers.layers[0].volume == 0.8
-    assert layers.layers[1].volume == 0.8
+    assert abs(layers.layers[0].volume - 0.85) < 1e-6
+    assert abs(layers.layers[1].volume - 0.85) < 1e-6
 
 
 def test_apply_speed_fx_is_realtime_playback_state_not_buffer_resize():
@@ -176,3 +178,106 @@ def test_generation_source_snapshot_prefers_bounded_loop_region_copy():
     np.testing.assert_array_equal(snapshot.buffer[0], expected_first)
     source.buffer[500] = 999
     assert not np.array_equal(snapshot.buffer[0], source.buffer[500])
+
+
+def _seed_layer(layers, slot, value=0.4, n=2000):
+    layers.assign_buffer(layers.layers[slot], np.ones((n, 2), dtype=np.float32) * value)
+
+
+def test_mute_all_and_unmute_all():
+    from oram.command.schemas import MuteLayerAction
+
+    router, layers, _engine = _router()
+    _seed_layer(layers, 0)
+    _seed_layer(layers, 1)
+
+    router.route(MuteLayerAction(target="all", state=True))
+    assert layers.layers[0].muted and layers.layers[1].muted
+
+    router.route(MuteLayerAction(target="all", state=False))
+    assert not layers.layers[0].muted and not layers.layers[1].muted
+
+
+def test_set_volume_delta_is_relative_and_clamped():
+    from oram.command.schemas import SetVolumeAction
+
+    router, layers, _engine = _router()
+    _seed_layer(layers, 0)
+    layers.layers[0].volume = 1.0
+
+    router.route(SetVolumeAction(target=1, delta=-0.15))
+    assert abs(layers.layers[0].volume - 0.85) < 1e-6
+
+    # a delta that would drive below zero clamps at 0
+    router.route(SetVolumeAction(target=1, delta=-1.0))
+    assert layers.layers[0].volume == 0.0
+
+
+def test_remove_effect_restores_pre_effect_audio():
+    from oram.command.schemas import ApplyEffectAction, RemoveEffectAction
+
+    router, layers, _engine = _router()
+    ramp = np.linspace(-0.3, 0.3, 4000, dtype=np.float32)
+    layers.assign_buffer(layers.layers[0], np.column_stack([ramp, ramp]))
+    original = layers.layers[0].buffer.copy()
+
+    # apply synchronously (bypass the worker thread) then undo
+    router._apply_dsp_locked(layers.layers[0], ApplyEffectAction(target=1, effect="reverse"))
+    assert not np.allclose(layers.layers[0].buffer[: len(original)], original, atol=1e-4)
+
+    msg = router.route(RemoveEffectAction(target=1, effect="last"))
+    assert "undid" in msg
+    restored = layers.layers[0].buffer
+    assert restored.shape[0] == original.shape[0]
+    np.testing.assert_allclose(restored, original, atol=1e-4)
+    assert "reverse" not in layers.layers[0].effects_applied
+
+
+def test_regenerate_repeats_last_prompt():
+    from oram.command.schemas import GenerateLayerAction
+    from oram.summon.mock import MockSoundGenerator
+
+    router, _layers, _engine = _router()
+    router.generator = MockSoundGenerator()
+    # no generation yet
+    assert "nothing to regenerate" in router._handle_regenerate()
+
+    router._last_generate = GenerateLayerAction(prompt="distant rain")
+    msg = router._handle_regenerate()
+    assert "distant rain" in msg
+
+
+def test_name_session_updates_scene():
+    from oram.command.schemas import NameSessionAction
+
+    router, _layers, _engine = _router()
+    router.route(NameSessionAction(name="grey chapel"))
+    assert router.session.scene == "grey chapel"
+
+
+def test_analyze_focus_density_is_per_layer():
+    from oram.command.schemas import AnalyzeMixAction
+
+    router, layers, _engine = _router()
+    _seed_layer(layers, 0)
+    msg = router.route(AnalyzeMixAction(focus="density"))
+    assert "rms" in msg and "onsets" in msg
+
+
+def test_new_effects_apply_without_error():
+    from oram.command.schemas import ApplyEffectAction, EffectParameters
+
+    router, layers, _engine = _router()
+    t = np.linspace(0, 1, 8000, dtype=np.float32)
+    tone = np.sin(2 * np.pi * 300 * t) * 0.3
+    for effect in ("delay", "chorus", "flanger", "phaser", "distortion",
+                   "bitcrush", "stutter", "normalize", "bandpass",
+                   "spatial_near", "spatial_wide"):
+        layers.assign_buffer(layers.layers[0], np.column_stack([tone, tone]))
+        router._apply_dsp_locked(
+            layers.layers[0],
+            ApplyEffectAction(target=1, effect=effect, parameters=EffectParameters()),
+        )
+        buf = layers.layers[0].buffer
+        assert np.all(np.isfinite(buf)), f"{effect} produced non-finite output"
+        assert buf.shape[1] == 2

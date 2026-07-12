@@ -194,6 +194,11 @@ class Layer:
         # per-layer lock for atomic buffer+metadata swaps (§1.9)
         # not serialized — purely runtime
         object.__setattr__(self, "_buf_lock", threading.Lock())
+        # fractional playhead kept by the mixer so non-integer speeds
+        # accumulate exactly instead of truncating every block.
+        # int(playhead) stays the public integer view; the mixer resyncs
+        # _phase whenever control code rewrites playhead directly.
+        object.__setattr__(self, "_phase", 0.0)
 
     @property
     def is_empty(self) -> bool:
@@ -204,22 +209,21 @@ class Layer:
         return self.buffer.shape[0]
 
     def compute_waveform(self, points: int = 64) -> list[float]:
-        """compute a summary waveform for display."""
+        """compute a summary RMS waveform for display (vectorized)."""
         if self.is_empty:
             self.waveform_data = [0.0] * points
             return self.waveform_data
 
         mono = np.mean(self.buffer, axis=1) if self.buffer.ndim > 1 else self.buffer
         chunk_size = max(1, len(mono) // points)
-        waveform = []
-        for i in range(points):
-            start = i * chunk_size
-            end = min(start + chunk_size, len(mono))
-            if start < len(mono):
-                rms = float(np.sqrt(np.mean(mono[start:end] ** 2)))
-                waveform.append(round(rms, 4))
-            else:
-                waveform.append(0.0)
+        usable = (len(mono) // chunk_size) * chunk_size
+        if usable > 0:
+            chunks = np.square(mono[:usable]).reshape(-1, chunk_size)
+            rms = np.sqrt(chunks.mean(axis=1))[:points]
+        else:
+            rms = np.array([], dtype=np.float32)
+        waveform = [round(float(v), 4) for v in rms]
+        waveform.extend([0.0] * (points - len(waveform)))
         self.waveform_data = waveform
         return waveform
 
@@ -275,13 +279,15 @@ class OramSession:
 
     def __post_init__(self):
         if not self.layers:
+            from oram.constants import MAX_LAYERS
+
             self.layers = [
                 Layer(
                     id=f"layer-{i + 1:03d}",
                     name=f"layer_{i + 1}",
                     slot=i,
                 )
-                for i in range(4)
+                for i in range(MAX_LAYERS)
             ]
 
     def get_lineage(self) -> list[LineageNode]:

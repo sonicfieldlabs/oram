@@ -949,18 +949,42 @@ class CommandRequest(BaseModel):
     text: str
 
 
+_ERROR_MARKERS = (
+    "error", "failed", "unknown command", "is empty", "no empty layer",
+    "not available", "invalid", "cannot", "unavailable", "nothing to",
+    "no active layers",
+)
+
+
+def _status_for_message(message: str) -> str:
+    """classify a router message so the UI can distinguish success from
+    'all layer slots full' and friends instead of always logging success."""
+    lowered = (message or "").strip().lower()
+    return "error" if any(marker in lowered for marker in _ERROR_MARKERS) else "ok"
+
+
+async def _route_in_thread(action, raw_text: str) -> str:
+    """run router.route off the event loop — DSP transforms and engine calls
+    must not stall the 12 fps state broadcast."""
+    return await asyncio.to_thread(_router.route, action, raw_text)
+
+
 @app.post("/api/command")
 async def send_command(req: CommandRequest):
     """send a text command to the engine."""
     if _agent is None or _router is None:
         return {"error": "not initialized"}
 
-    action = _agent.process_command(req.text)
+    action = await asyncio.to_thread(_agent.process_command, req.text)
     is_generation = isinstance(action, (GenerateLayerAction, GenerateFromAction))
     if action.model_dump().get("action") != "unknown" and not is_generation:
         _push_undo(req.text[:60] or "command")
-    message = _router.route(action, raw_text=req.text)
-    return {"status": "ok", "message": message, "action": action.model_dump()}
+    message = await _route_in_thread(action, req.text)
+    return {
+        "status": _status_for_message(message),
+        "message": message,
+        "action": action.model_dump(),
+    }
 
 
 @app.get("/api/state")
@@ -1113,8 +1137,8 @@ async def listen_to_layer(req: ListenRequest):
     if _router is None:
         return {"error": "not initialized"}
     action = ListenAction(target=req.target, route=req.route)
-    message = _router.route(action, raw_text=f"api:listen {req.route}")
-    return {"status": "ok", "message": message}
+    message = await _route_in_thread(action, f"api:listen {req.route}")
+    return {"status": _status_for_message(message), "message": message}
 
 
 class GenerateRequest(BaseModel):
@@ -1170,8 +1194,8 @@ async def generate_from_layer(req: GenerateRequest):
         engine=req.engine,
         duration=req.duration,
     )
-    message = _router.route(action, raw_text=f"api:generate {req.route}→{req.engine}")
-    return {"status": "ok", "message": message}
+    message = await _route_in_thread(action, f"api:generate {req.route}→{req.engine}")
+    return {"status": _status_for_message(message), "message": message}
 
 
 @app.post("/api/stable-audio/render")
@@ -1370,8 +1394,8 @@ async def fork_layer(req: ForkRequest):
         return {"error": "not initialized"}
     _push_undo("fork layer")
     action = ForkLayerAction(target=req.target)
-    message = _router.route(action, raw_text="api:fork")
-    return {"status": "ok", "message": message}
+    message = await _route_in_thread(action, "api:fork")
+    return {"status": _status_for_message(message), "message": message}
 
 
 class SetModeRequest(BaseModel):
@@ -1386,8 +1410,8 @@ async def set_layer_mode(req: SetModeRequest):
         return {"error": "not initialized"}
     _push_undo("layer mode")
     action = SetLayerModeAction(target=req.target, mode=req.mode)
-    message = _router.route(action, raw_text=f"api:mode {req.mode}")
-    return {"status": "ok", "message": message}
+    message = await _route_in_thread(action, f"api:mode {req.mode}")
+    return {"status": _status_for_message(message), "message": message}
 
 
 @app.post("/api/upload-layer")
@@ -1717,13 +1741,14 @@ async def websocket_endpoint(ws: WebSocket):
                 if msg.get("type") == "command" and _agent and _router:
                     text = msg.get("text", "")
                     if text:
-                        action = _agent.process_command(text)
+                        action = await asyncio.to_thread(_agent.process_command, text)
                         is_generation = isinstance(action, (GenerateLayerAction, GenerateFromAction))
                         if action.model_dump().get("action") != "unknown" and not is_generation:
                             _push_undo(text[:60] or "command")
-                        result = _router.route(action, raw_text=text)
+                        result = await asyncio.to_thread(_router.route, action, text)
                         await ws.send_text(json.dumps({
                             "type": "command_result",
+                            "status": _status_for_message(result),
                             "message": result,
                             "action": action.model_dump(),
                         }))
@@ -1731,7 +1756,7 @@ async def websocket_endpoint(ws: WebSocket):
                     target = msg.get("target", "selected")
                     route = msg.get("route", "hybrid")
                     action = ListenAction(target=target, route=route)
-                    result = _router.route(action)
+                    result = await asyncio.to_thread(_router.route, action)
                     await ws.send_text(json.dumps({
                         "type": "listen_result",
                         "message": result,
@@ -1741,7 +1766,7 @@ async def websocket_endpoint(ws: WebSocket):
                     route = msg.get("route", "hybrid")
                     engine = msg.get("engine", "auto")
                     action = GenerateFromAction(target=target, route=route, engine=engine)
-                    result = _router.route(action)
+                    result = await asyncio.to_thread(_router.route, action)
                     await ws.send_text(json.dumps({
                         "type": "generate_result",
                         "message": result,
@@ -1847,13 +1872,18 @@ async def export_layer(req: ExportLayerRequest):
     try:
         import soundfile as sf
 
+        from oram.archive.safety import safe_segment
+
         export_dir = _config.session_dir / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
 
-        filename = f"layer_{req.target}_{layer.name}.wav"
+        # layer.name can come from an upload filename — sanitize before
+        # building a filesystem path with it
+        safe_name = safe_segment(layer.name, fallback=f"layer_{req.target}")
+        filename = f"layer_{req.target}_{safe_name}.wav"
         filepath = export_dir / filename
 
-        sf.write(str(filepath), layer.buffer, layer.sample_rate)
+        await asyncio.to_thread(sf.write, str(filepath), layer.buffer, layer.sample_rate)
 
         _append_log(f"exported layer {req.target} → {filepath}")
         return {"status": "ok", "message": f"layer {req.target} exported", "path": str(filepath), "filename": filename}
@@ -1936,10 +1966,10 @@ async def export_master():
         export_dir = _config.session_dir / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
 
-        filename = f"master_mix_{datetime.now().strftime('%H%M%S')}.wav"
+        filename = f"master_mix_{datetime.now().strftime('%H%M%S_%f')}.wav"
         filepath = export_dir / filename
 
-        export_mix(_layer_manager, filepath, _config.sample_rate)
+        await asyncio.to_thread(export_mix, _layer_manager, filepath, _config.sample_rate)
 
         _append_log(f"master mix exported → {filepath}")
         return {"status": "ok", "message": "master mix exported", "path": str(filepath)}
@@ -1973,7 +2003,7 @@ async def list_devices():
     default_out = -1
     try:
         import sounddevice as sd
-        device_list = sd.query_devices()
+        device_list = await asyncio.to_thread(sd.query_devices)
         for i, dev in enumerate(device_list):
             devices.append({
                 "id": int(i),
@@ -2123,7 +2153,7 @@ async def update_settings(req: SettingsRequest):
 
     if changes:
         if restart_audio:
-            restart_msg = _restart_audio_engine()
+            restart_msg = await asyncio.to_thread(_restart_audio_engine)
             changes.append(restart_msg)
         msg = "settings: " + ", ".join(changes)
         _append_log(msg)
@@ -2145,5 +2175,5 @@ async def clear_layer(req: ClearLayerRequest):
     from oram.command.schemas import ClearLayerAction
     _push_undo(f"clear layer {req.target}")
     action = ClearLayerAction(target=req.target, confirmed=True)
-    message = _router.route(action, raw_text=f"api:clear layer {req.target}")
-    return {"status": "ok", "message": message}
+    message = await _route_in_thread(action, f"api:clear layer {req.target}")
+    return {"status": _status_for_message(message), "message": message}

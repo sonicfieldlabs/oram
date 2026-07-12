@@ -75,10 +75,6 @@ def run(config: OramConfig) -> None:
     """start the oram instrument."""
     from oram.engines.sa3_launcher import start_sa3_server, stop_sa3_server
 
-    # Force real audio unless testing
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        config.mock_audio = False
-
     # Start Stable Audio 3 server automatically
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         sa3_url = start_sa3_server()
@@ -250,7 +246,7 @@ def run(config: OramConfig) -> None:
         style="oram.status",
     )
     console.print(
-        "          space=push-to-talk  i=input-mode  d=layer-mode",
+        "          space=push-to-talk  /=type-a-command  i=input-mode  d=layer-mode",
         style="oram.status",
     )
     console.print("")
@@ -293,7 +289,7 @@ def _input_loop(live, tui, router, agent, ptt, stt, engine, session, config):
                 if key == " ":
                     if session.input_mode == "audio":
                         # direct audio recording
-                        action = key_to_action("r", is_recording=engine._recording)
+                        action = key_to_action("r", is_recording=engine.is_recording)
                         if action is not None:
                             router.route(action, raw_text="key:space")
                     else:
@@ -312,7 +308,13 @@ def _input_loop(live, tui, router, agent, ptt, stt, engine, session, config):
                             if result is None:
                                 tui.add_log("no command audio captured")
                             elif stt is not None:
-                                text = stt.transcribe(result, config.sample_rate)
+                                # a transient STT/network failure must not
+                                # take the instrument down mid-performance
+                                try:
+                                    text = stt.transcribe(result, config.sample_rate)
+                                except Exception as e:
+                                    tui.add_log(f"stt error: {e}")
+                                    text = None
                                 if text:
                                     tui.set_current_cmd(text)
                                     action = agent.process_command(text)
@@ -323,6 +325,23 @@ def _input_loop(live, tui, router, agent, ptt, stt, engine, session, config):
                             tui.set_ptt(True)
                             session.listening = True
                             tui.add_log("listening...")
+
+                elif key == "/":
+                    # typed command entry: leave raw mode, read one line,
+                    # parse it exactly like a spoken command
+                    live.stop()
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                    try:
+                        text = input("oram> ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        text = ""
+                    finally:
+                        tty.setcbreak(fd)
+                        live.start()
+                    if text:
+                        tui.set_current_cmd(text)
+                        action = agent.process_command(text)
+                        router.route(action, raw_text=text)
 
                 elif key == "l":
                     # v2: listen to selected layer
@@ -371,11 +390,14 @@ def _input_loop(live, tui, router, agent, ptt, stt, engine, session, config):
                     break
 
                 elif key == "\x1b":
+                    # drain the rest of an escape sequence (arrow keys etc.)
+                    # so its bytes don't fire random single-key actions
+                    while select.select([sys.stdin], [], [], 0.005)[0]:
+                        sys.stdin.read(1)
                     continue
 
                 else:
-                    is_recording = engine._recording
-                    action = key_to_action(key, is_recording=is_recording)
+                    action = key_to_action(key, is_recording=engine.is_recording)
                     if action is not None:
                         router.route(action, raw_text=f"key:{key}")
 

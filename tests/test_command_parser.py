@@ -342,3 +342,150 @@ class TestRejection:
         result = parser.parse("REVERSE LAYER ONE")
         assert isinstance(result, ApplyEffectAction)
         assert result.effect == "reverse"
+
+
+class TestNewEffectCommands:
+    """v0.4: the full fx vocabulary — delay/chorus/flanger/phaser/distortion/
+    bitcrush/stutter/normalize/bandpass/spatial near+wide — plus undo,
+    regenerate, listen routes, and volume deltas."""
+
+    def _effect(self, text: str) -> ApplyEffectAction:
+        result = parser.parse(text)
+        assert isinstance(result, ApplyEffectAction), f"{text!r} -> {result}"
+        return result
+
+    def test_delay_variants(self):
+        for text in ("delay", "add delay", "echo it", "delay layer 2"):
+            assert self._effect(text).effect == "delay"
+
+    def test_pingpong_delay(self):
+        action = self._effect("ping pong delay")
+        assert action.effect == "delay"
+        assert action.parameters.pingpong is True
+
+    def test_chorus(self):
+        assert self._effect("chorus").effect == "chorus"
+        assert self._effect("add some chorus").effect == "chorus"
+
+    def test_chorus_of_birds_is_generative(self):
+        result = parser.parse("a chorus of birds singing")
+        assert isinstance(result, GenerateLayerAction)
+
+    def test_flanger_phaser(self):
+        assert self._effect("flanger").effect == "flanger"
+        assert self._effect("phaser layer 3").effect == "phaser"
+
+    def test_distortion(self):
+        assert self._effect("distort it").effect == "distortion"
+        warm = self._effect("warm distortion")
+        assert warm.parameters.character == "warm"
+        fuzz = self._effect("add fuzz")
+        assert fuzz.parameters.character == "fuzz"
+
+    def test_bitcrush(self):
+        action = self._effect("bitcrush to 6 bits")
+        assert action.effect == "bitcrush"
+        assert action.parameters.bits == 6
+
+    def test_stutter_glitch(self):
+        assert self._effect("stutter").effect == "stutter"
+        assert self._effect("glitch it").effect == "stutter"
+
+    def test_normalize(self):
+        assert self._effect("normalize").effect == "normalize"
+        assert self._effect("normalise the mix").effect == "normalize"
+
+    def test_filter_with_frequency(self):
+        action = self._effect("filter layer 2 lowpass 800")
+        assert action.effect == "lowpass"
+        assert action.parameters.cutoff_hz == 800.0
+        assert action.target == 2
+
+    def test_bandpass_with_q(self):
+        action = self._effect("bandpass 1200 q 3")
+        assert action.effect == "bandpass"
+        assert action.parameters.cutoff_hz == 1200.0
+        assert action.parameters.q == 3.0
+
+    def test_speed_ratio(self):
+        action = self._effect("set speed 1.5")
+        assert action.effect == "speed"
+        assert action.parameters.speed == 1.5
+
+    def test_spatial_family(self):
+        assert self._effect("make it wider").effect == "spatial_wide"
+        assert self._effect("bring it closer").effect == "spatial_near"
+        assert self._effect("make it far away").effect == "spatial_far"
+
+    def test_descriptive_delay_text_still_generates(self):
+        result = parser.parse("add a delayed choir texture with rain")
+        assert isinstance(result, GenerateLayerAction)
+
+
+class TestNewSessionCommands:
+    def test_bare_listen(self):
+        from oram.command.schemas import ListenAction
+
+        result = parser.parse("listen")
+        assert isinstance(result, ListenAction)
+
+    def test_listen_route_alias(self):
+        from oram.command.schemas import ListenAction
+
+        result = parser.parse("listen via spectral")
+        assert isinstance(result, ListenAction)
+        assert result.route == "technical"
+
+    def test_listen_mix_is_analyze(self):
+        from oram.command.schemas import AnalyzeMixAction
+
+        result = parser.parse("listen to the mix")
+        assert isinstance(result, AnalyzeMixAction)
+
+    def test_mode_command(self):
+        from oram.command.schemas import SetModeAction
+
+        result = parser.parse("mode loop")
+        assert isinstance(result, SetModeAction)
+        assert result.mode == "loop"
+
+    def test_regenerate(self):
+        from oram.command.schemas import RegenerateAction
+
+        result = parser.parse("regenerate")
+        assert isinstance(result, RegenerateAction)
+
+    def test_name_session(self):
+        from oram.command.schemas import NameSessionAction
+
+        result = parser.parse("name session grey chapel")
+        assert isinstance(result, NameSessionAction)
+        assert result.name == "grey chapel"
+
+    def test_undo(self):
+        from oram.command.schemas import RemoveEffectAction
+
+        result = parser.parse("undo")
+        assert isinstance(result, RemoveEffectAction)
+        assert result.effect == "last"
+
+    def test_unmute_forces_state(self):
+        result = parser.parse("unmute layer 2")
+        assert isinstance(result, MuteLayerAction)
+        assert result.state is False
+
+    def test_volume_half_is_half(self):
+        result = parser.parse("set volume half")
+        assert isinstance(result, SetVolumeAction)
+        assert result.volume == 0.5
+
+    def test_softer_is_volume_delta(self):
+        result = parser.parse("make everything softer")
+        assert isinstance(result, SetVolumeAction)
+        assert result.target == "all"
+        assert result.delta is not None and result.delta < 0
+
+    def test_louder(self):
+        result = parser.parse("louder")
+        assert isinstance(result, SetVolumeAction)
+        assert result.delta is not None and result.delta > 0

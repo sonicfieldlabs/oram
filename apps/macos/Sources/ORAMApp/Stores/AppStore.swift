@@ -310,6 +310,19 @@ final class AppStore: ObservableObject {
         }
     }
 
+    /// Push a provider key to the daemon so generation can actually use it
+    /// (the app's Keychain is not readable by the separately-signed daemon).
+    func pushCredential(provider: String, value: String) async -> Bool {
+        do {
+            try await client.setCredential(provider: provider, value: value)
+            await refreshAll()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     var modeKey: String {
         if state?.autoListen == true {
             return "listen"

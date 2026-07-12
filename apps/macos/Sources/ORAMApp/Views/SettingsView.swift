@@ -2,9 +2,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
-    @AppStorage("sampleRate") private var sampleRate = 44100
-    @AppStorage("blockSize") private var blockSize = 512
-    @AppStorage("privacyMode") private var privacyMode = true
+    @State private var sampleRate = 48000
+    @State private var seeded = false
 
     var body: some View {
         Form {
@@ -13,15 +12,24 @@ struct SettingsView: View {
                 Text("48 kHz").tag(48000)
                 Text("96 kHz").tag(96000)
             }
-            Picker("Block size", selection: $blockSize) {
-                Text("256").tag(256)
-                Text("512").tag(512)
-                Text("1024").tag(1024)
+            .onChange(of: sampleRate) { newValue in
+                guard seeded else { return }
+                Task { await store.updateAudioSettings(sampleRate: newValue, blockSize: nil) }
             }
-            Toggle("Privacy mode", isOn: $privacyMode)
+
             LabeledContent("Session directory", value: store.state?.sessionDir ?? "")
             LabeledContent("Library directory", value: store.state?.libraryDir ?? "")
             LabeledContent("Provider backend", value: store.state?.gateway ?? "mock")
+
+            Text("Audio input/output devices are chosen in the main window's settings panel.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .task {
+            // seed from the live daemon state so the picker reflects reality,
+            // and don't fire an update for the seed itself
+            if let sr = store.state?.sampleRate { sampleRate = sr }
+            seeded = true
         }
     }
 }

@@ -32,7 +32,13 @@
     ws.onmessage = (evt) => {
       const data = JSON.parse(evt.data);
       if (data.type === 'command_result') {
-        addLog(data.message, 'system', '→');
+        addLog(data.message, data.status === 'error' ? 'error' : 'system',
+               data.status === 'error' ? '✕' : '→');
+      } else if (data.type === 'listen_result' || data.type === 'generate_result') {
+        addLog(data.message, 'listen', '👂');
+      } else if (data.type) {
+        // any other typed frame is a notification, not a full state snapshot —
+        // never assign it to `state` (it would blank the UI)
       } else {
         state = data;
         render(state);
@@ -164,7 +170,6 @@
   const btnRecord = document.getElementById('btn-record');
   const btnUndo = document.getElementById('btn-undo');
   const btnRedo = document.getElementById('btn-redo');
-  const btnModeCycle = document.getElementById('btn-mode-cycle');
 
   let smoothedIn = 0;
   let smoothedOut = 0;
@@ -1478,7 +1483,8 @@
     }, { passive: false });
 
     strip.addEventListener('dblclick', () => {
-      strip.dataset.value = 100;
+      // reset to unity (1.0×), which sits at the curved position, not 100
+      strip.dataset.value = volumeToStripPos(1.0);
       updateVolStripVisual(strip);
       commitStripValue(strip);
       showFloatingValue();
@@ -2497,19 +2503,21 @@
       updateVolStripVisual(strip);
     });
 
+    // single teardown path so the document keydown listener is always
+    // removed, whether the overlay closes via backdrop click or Escape
+    function closeOverlay() {
+      document.removeEventListener('keydown', onEsc);
+      overlay.remove();
+    }
+
     // close on overlay click
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-      }
+      if (e.target === overlay) closeOverlay();
     });
 
     // close on escape
     function onEsc(e) {
-      if (e.key === 'Escape') {
-        overlay.remove();
-        document.removeEventListener('keydown', onEsc);
-      }
+      if (e.key === 'Escape') closeOverlay();
     }
     document.addEventListener('keydown', onEsc);
   }
@@ -2544,6 +2552,7 @@
 
     // cmd/ctrl combos
     if (e.metaKey || e.ctrlKey) {
+      // (text-editing guard handled per-branch below)
       if (!isTextEditing && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) performRedo();
@@ -2559,6 +2568,10 @@
       if (e.key === 'e') { e.preventDefault(); apiPost('/api/export-master'); addLog('exporting mix…', 'export', '◉'); return; }
       return; // don't process other cmd combos
     }
+
+    // single-key shortcuts must never fire while typing in a field/select
+    // (settings inputs, SA3 fields, engine selectors, …)
+    if (isTextEditing) return;
 
     switch (e.key) {
       case 'r':
@@ -2585,13 +2598,9 @@
       }
       case 'm': sendCommand('mute'); break;
       case 'u':
-        // unmute all
-        if (state.layers) {
-          state.layers.forEach((layer, i) => {
-            if (layer.muted) sendCommand('mute layer ' + (i + 1));
-          });
-          addLog('unmuted all layers', 'system', '♪');
-        }
+        // unmute all in one command (server iterates active layers)
+        sendCommand('unmute all');
+        addLog('unmuted all layers', 'system', '♪');
         break;
       case 'k':
         apiPost('/api/kill');
@@ -2603,7 +2612,14 @@
         break;
       }
       case 'l': {
-        // toggle auto-mode with keyboard
+        // listen: analyze the selected layer through the default route
+        const sel = (state.selected_layer || 0) + 1;
+        apiPost('/api/listen', { target: sel, route: 'hybrid' });
+        addLog('listening to layer ' + sel + '…', 'listen', '👂');
+        break;
+      }
+      case 'A': {
+        // shift-A toggles auto-generate mode (moved off 'l')
         const autoBtn = document.getElementById('btn-auto-mode');
         if (autoBtn) autoBtn.click();
         break;
@@ -2641,7 +2657,6 @@
   const engineSelector = document.getElementById('engine-selector');
   const runtimeModeSelector = document.getElementById('runtime-mode-selector');
   const stableAudioPanel = document.getElementById('stable-audio-panel');
-  const engineChip = document.getElementById('prompt-engine-chip');
 
   function syncRuntimeModeControls() {
     const local = localStableAudioEnabled();
@@ -2721,7 +2736,6 @@
       const val = engineSelector.value;
       const opt = engineSelector.options[engineSelector.selectedIndex];
       const label = opt ? opt.textContent : val;
-      if (engineChip) engineChip.textContent = label;
       addLog(`engine → ${label}`, 'system', '⚙');
     });
   }
@@ -2767,12 +2781,24 @@
     { group: 'dsp', label: 'Slower (Half Speed)', icon: '½', action: () => sendCommand('make it slower') },
     { group: 'dsp', label: 'Faster (Double Speed)', icon: '2×', action: () => sendCommand('make it faster') },
     { group: 'dsp', label: 'Darken (Low-pass)', icon: '◐', action: () => sendCommand('make it darker') },
+    { group: 'dsp', label: 'Thin (High-pass)', icon: '◑', action: () => sendCommand('make it thinner') },
     { group: 'dsp', label: 'Granulate', icon: '░', action: () => sendCommand('granulate softly') },
     { group: 'dsp', label: 'Reverb Wash', icon: '≋', action: () => sendCommand('wash it in reverb') },
+    { group: 'dsp', label: 'Delay / Echo', icon: '⋯', action: () => sendCommand('add delay') },
+    { group: 'dsp', label: 'Chorus', icon: '◊', action: () => sendCommand('add chorus') },
+    { group: 'dsp', label: 'Flanger', icon: '⌇', action: () => sendCommand('flanger') },
+    { group: 'dsp', label: 'Phaser', icon: '∿', action: () => sendCommand('phaser') },
+    { group: 'dsp', label: 'Distortion', icon: '◢', action: () => sendCommand('distort it') },
+    { group: 'dsp', label: 'Bitcrush', icon: '▦', action: () => sendCommand('bitcrush') },
+    { group: 'dsp', label: 'Stutter', icon: '⋮⋮', action: () => sendCommand('stutter') },
+    { group: 'dsp', label: 'Normalize', icon: '▁▇', action: () => sendCommand('normalize') },
+    { group: 'dsp', label: 'Near', icon: '◎', action: () => sendCommand('bring it closer') },
     { group: 'dsp', label: 'Spatial Far', icon: '↠', action: () => sendCommand('make it far away') },
+    { group: 'dsp', label: 'Widen', icon: '↔', action: () => sendCommand('make it wider') },
     { group: 'dsp', label: 'Stretch Breathe', icon: '≈', action: () => sendCommand('stretch until it breathes') },
     // agent
-    { group: 'agent', label: 'Toggle Auto Mode', icon: '⚙', shortcut: 'l', action: () => { const autoBtn = document.getElementById('btn-auto-mode'); if (autoBtn) autoBtn.click(); } },
+    { group: 'agent', label: 'Listen (Analyze Layer)', icon: '👂', shortcut: 'l', action: () => { const sel = (state.selected_layer || 0) + 1; apiPost('/api/listen', { target: sel, route: 'hybrid' }); } },
+    { group: 'agent', label: 'Toggle Auto Mode', icon: '⚙', shortcut: '⇧A', action: () => { const autoBtn = document.getElementById('btn-auto-mode'); if (autoBtn) autoBtn.click(); } },
     { group: 'agent', label: 'Auto-Generate', icon: '✦', shortcut: 'g', action: () => { const sel = (state.selected_layer || 0) + 1; autoGenerate(sel); } },
     { group: 'agent', label: 'Summon (Listen + Generate)', icon: '✦', action: () => { document.getElementById('btn-summon')?.click(); } },
     // session

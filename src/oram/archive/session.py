@@ -69,12 +69,15 @@ def create_session_folder(
         # export mix
         export_mix(layer_manager, tmp_dir / "mix.wav", session.sample_rate)
 
-        # export stems
+        # export stems — remember each layer's stem filename so refresh can
+        # re-import renamed layers instead of silently dropping them
         stems_dir = tmp_dir / "stems"
         stems_dir.mkdir(exist_ok=True)
+        stem_names: dict[int, str] = {}
         for layer in layer_manager.layers:
             if not layer.is_empty:
                 stem_name = f"{safe_segment(layer.name, fallback=f'layer_{layer.slot + 1}')}.wav"
+                stem_names[layer.slot] = stem_name
                 export_stem(layer_manager, layer.slot + 1, stems_dir / stem_name, session.sample_rate)
 
         # write text waveform and listening report
@@ -107,6 +110,7 @@ def create_session_folder(
                     "generation_depth": layer.generation_depth,
                     "generation_prompt": redact_text(layer.generation_prompt),
                     "name": layer.name,
+                    "stem": stem_names.get(layer.slot),
                     "duration_seconds": layer.duration_seconds,
                     "muted": layer.muted,
                     "effects": layer.effects_applied,
@@ -131,6 +135,10 @@ def create_session_folder(
         # write commands.log
         from oram.archive.log import write_command_log
         write_command_log(session.commands, tmp_dir / "commands.log")
+
+        # write lineage.json — the sonic genealogy of this state
+        from oram.archive.lineage import save_lineage
+        save_lineage(layer_manager.layers, tmp_dir / "lineage.json")
 
         # atomic swap: remove old folder if re-saving, rename temp → final
         if folder.exists():
@@ -167,26 +175,35 @@ def refresh_session_folder(folder: Path) -> Path:
     )
 
     manager = LayerManager(sample_rate=sample_rate, channels=2)
-    layer_meta = {layer.get("name"): layer for layer in data.get("layers", [])}
 
     stems_dir = folder / "stems"
     if stems_dir.exists():
-        for stem in sorted(stems_dir.glob("*.wav")):
-            if not stem.stem.startswith("layer_"):
+        for meta in data.get("layers", []):
+            slot_number = meta.get("id")
+            if not isinstance(slot_number, int) or not 1 <= slot_number <= len(manager.layers):
                 continue
-            try:
-                layer_number = int(stem.stem.split("_", 1)[1])
-            except (IndexError, ValueError):
-                continue
-            if not 1 <= layer_number <= len(manager.layers):
+
+            # locate this layer's stem: recorded filename first, then the
+            # current naming scheme, then the legacy layer_N pattern
+            candidates = []
+            if meta.get("stem"):
+                candidates.append(stems_dir / str(meta["stem"]))
+            if meta.get("name"):
+                candidates.append(
+                    stems_dir / f"{safe_segment(str(meta['name']), fallback=f'layer_{slot_number}')}.wav"
+                )
+            candidates.append(stems_dir / f"layer_{slot_number}.wav")
+            stem = next((c for c in candidates if c.exists()), None)
+            if stem is None:
                 continue
 
             audio, sr = sf.read(str(stem), dtype="float32", always_2d=True)
             if int(sr) != sample_rate:
                 raise ValueError(f"stem sample rate mismatch: {stem}")
-            layer = manager.layers[layer_number - 1]
+            layer = manager.layers[slot_number - 1]
             manager.assign_buffer(layer, audio)
-            meta = layer_meta.get(layer.name, {})
+            if meta.get("name"):
+                layer.name = str(meta["name"])
             layer.muted = bool(meta.get("muted", False))
             layer.effects_applied = list(meta.get("effects", []))
             # restore source type from stored metadata

@@ -1795,8 +1795,20 @@ private struct EngineMenu: View {
 private struct OramLogoView: View {
     let size: CGFloat
 
+    // decode the 2.4 MB PNG exactly once, not on every header re-render (the
+    // header re-evaluates at the 12 fps WebSocket state rate)
+    private static let cachedLogo: NSImage? = {
+        if let named = NSImage(named: NSImage.Name("logo-oram")) {
+            return named
+        }
+        guard let url = Bundle.main.url(forResource: "logo-oram", withExtension: "png") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }()
+
     var body: some View {
-        if let image = NSImage(named: NSImage.Name("logo-oram")) ?? bundleLogo {
+        if let image = OramLogoView.cachedLogo {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()
@@ -1811,13 +1823,6 @@ private struct OramLogoView: View {
                         .font(.system(size: size * 0.55, weight: .semibold, design: .monospaced))
                 )
         }
-    }
-
-    private var bundleLogo: NSImage? {
-        guard let url = Bundle.main.url(forResource: "logo-oram", withExtension: "png") else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
     }
 }
 

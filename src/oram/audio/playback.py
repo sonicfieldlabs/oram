@@ -1,56 +1,13 @@
-"""oram.audio.playback — immutable playback state for safe callback access.
+"""oram.audio.playback — pre-allocated capture buffers for the audio callback.
 
-the audio callback should only read from a PlaybackSnapshot, never mutate
-layer state directly. workers publish BufferSwap messages which the control
-thread applies between callback blocks.
+the realtime engine records into RingBuffers so the callback never grows a
+python list.  (the snapshot/message-queue playback design that used to live
+here was never wired in — the mixer's per-layer locks are the real mechanism.)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 import numpy as np
-
-
-@dataclass(frozen=True)
-class LayerSnapshot:
-    """immutable view of a single layer for the audio callback."""
-
-    slot: int
-    buffer: np.ndarray  # read-only reference
-    playhead: int
-    volume: float
-    pan: float
-    muted: bool
-    solo: bool
-    is_empty: bool
-    length_samples: int
-
-
-@dataclass(frozen=True)
-class PlaybackSnapshot:
-    """immutable snapshot of all layers for one callback block.
-
-    the control thread builds this and atomically swaps it so the
-    callback always reads a consistent state.
-    """
-
-    layers: tuple[LayerSnapshot, ...]
-    any_solo: bool
-    revision: int = 0
-
-
-@dataclass
-class BufferSwap:
-    """message from a worker thread to the control thread.
-
-    the control thread applies this between callback blocks.
-    """
-
-    layer_slot: int
-    new_buffer: np.ndarray
-    new_playhead: int = 0
-    metadata: dict = field(default_factory=dict)
 
 
 class RingBuffer:

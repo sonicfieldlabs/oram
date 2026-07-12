@@ -198,6 +198,11 @@ class CredentialTestRequest(BaseModel):
     provider: str = "elevenlabs"
 
 
+class CredentialSetRequest(BaseModel):
+    provider: str
+    value: str = Field(min_length=1, max_length=512)
+
+
 class FavoriteRequest(BaseModel):
     favorite: bool = True
 
@@ -253,6 +258,10 @@ class LocalOramService:
         self.undo_stack: list[dict[str, Any]] = []
         self.redo_stack: list[dict[str, Any]] = []
         self.history_lock = threading.Lock()
+        # serializes layer-slot reservation and snapshot restore across the
+        # threadpool: two concurrent generations must not claim the same
+        # empty layer, and undo must not run mid-assignment
+        self.mutate_lock = threading.RLock()
 
         session_name = config.session_name or f"oram_{datetime.now().strftime('%H%M%S')}"
         self.session = OramSession(
@@ -469,22 +478,23 @@ class LocalOramService:
         self.session.generated_bed_id = session_data.get("generated_bed_id")
 
     def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
-        if snapshot.get("kind") == "layer":
-            slot = int(snapshot.get("layer_slot", snapshot.get("layer", {}).get("slot", -1)))
-            if 0 <= slot < len(self.layers.layers):
-                self._restore_layer(self.layers.layers[slot], snapshot["layer"])
-                self._restore_session_metadata(snapshot)
-            return
+        with self.mutate_lock:
+            if snapshot.get("kind") == "layer":
+                slot = int(snapshot.get("layer_slot", snapshot.get("layer", {}).get("slot", -1)))
+                if 0 <= slot < len(self.layers.layers):
+                    self._restore_layer(self.layers.layers[slot], snapshot["layer"])
+                    self._restore_session_metadata(snapshot)
+                return
 
-        try:
-            self.router.kill_all_audio()
-        except Exception:
-            pass
+            try:
+                self.router.kill_all_audio()
+            except Exception:
+                pass
 
-        for layer, layer_snapshot in zip(self.layers.layers, snapshot["layers"]):
-            self._restore_layer(layer, layer_snapshot)
+            for layer, layer_snapshot in zip(self.layers.layers, snapshot["layers"]):
+                self._restore_layer(layer, layer_snapshot)
 
-        self._restore_session_metadata(snapshot)
+            self._restore_session_metadata(snapshot)
 
     def _reset_to_initial_audio_state(self) -> list[str]:
         results = self.router.kill_all_audio()
@@ -806,20 +816,21 @@ class LocalOramService:
             tags=req.tags,
         )
 
-        target = self.layers.find_empty_layer()
-        if target is not None:
-            self._push_layer_undo("generate", target)
-            self.layers.assign_generated_buffer(
-                target,
-                audio,
-                prompt=req.prompt,
-                provider=provider,
-                engine=engine,
-            )
-            self.session.generated_bed_id = target.slot
-            layer_slot = target.slot + 1
-        else:
-            layer_slot = None
+        with self.mutate_lock:
+            target = self.layers.find_empty_layer()
+            if target is not None:
+                self._push_layer_undo("generate", target)
+                self.layers.assign_generated_buffer(
+                    target,
+                    audio,
+                    prompt=req.prompt,
+                    provider=provider,
+                    engine=engine,
+                )
+                self.session.generated_bed_id = target.slot
+                layer_slot = target.slot + 1
+            else:
+                layer_slot = None
 
         self.session.mode = Mode.RECORD
         self.append_log(f"generated {record.id} via {provider}/{engine}")
@@ -978,19 +989,20 @@ class LocalOramService:
 
         layer_slot = None
         if req.assign_layer and not plugin_owned:
-            target = self._stable_audio_target_layer(req, source_layer=source_layer)
-            if target is not None:
-                self._push_layer_undo(f"stable audio {req.mode}", target)
-                self.layers.assign_generated_buffer(
-                    target,
-                    audio,
-                    prompt=req.prompt,
-                    provider=provider,
-                    parent=source_layer,
-                    engine=engine,
-                )
-                self.session.generated_bed_id = target.slot
-                layer_slot = target.slot + 1
+            with self.mutate_lock:
+                target = self._stable_audio_target_layer(req, source_layer=source_layer)
+                if target is not None:
+                    self._push_layer_undo(f"stable audio {req.mode}", target)
+                    self.layers.assign_generated_buffer(
+                        target,
+                        audio,
+                        prompt=req.prompt,
+                        provider=provider,
+                        parent=source_layer,
+                        engine=engine,
+                    )
+                    self.session.generated_bed_id = target.slot
+                    layer_slot = target.slot + 1
 
         self.session.mode = Mode.RECORD
         self.append_log(f"stable audio {req.mode}: {record.id} via {provider}/{engine}")
@@ -1135,7 +1147,7 @@ class LocalOramService:
             self.config.session_dir.mkdir(parents=True, exist_ok=True)
             export_dir = self.config.session_dir / "exports"
             export_dir.mkdir(parents=True, exist_ok=True)
-            filename = f"master_recording_{datetime.now().strftime('%H%M%S')}.wav"
+            filename = f"master_recording_{datetime.now().strftime('%H%M%S_%f')}.wav"
             filepath = export_dir / filename
             self.engine.start_master_recording(filepath)
             self.append_log(f"master recording started -> {filepath}")
@@ -1178,8 +1190,13 @@ class LocalOramService:
             if layer.is_empty:
                 return {"status": "error", "error": "empty", "message": f"layer {layer.slot + 1} is empty"}
 
+            from oram.archive.safety import safe_segment
+
             self.library.exports_dir.mkdir(parents=True, exist_ok=True)
-            filename = f"layer_{layer.slot + 1}_{layer.name}.wav"
+            # layer.name may come from an uploaded filename — sanitize before
+            # composing a filesystem path with it
+            safe_name = safe_segment(layer.name, fallback=f"layer_{layer.slot + 1}")
+            filename = f"layer_{layer.slot + 1}_{safe_name}.wav"
             path = self.library.exports_dir / filename
             sf.write(str(path), layer.buffer, layer.sample_rate)
             self.append_log(f"exported layer {layer.slot + 1} -> {path}")
@@ -1540,6 +1557,26 @@ class LocalOramService:
         message = self.router.route(AnalyzeMixAction(), raw_text="daemon:analyze")
         return {"status": "ok", "message": message}
 
+    def set_credentials(self, provider: str, value: str) -> dict[str, Any]:
+        """store a provider key in the daemon's credential store.
+
+        this is the supported path for host apps: the packaged SwiftUI app
+        cannot share Keychain items with the separately-signed python daemon,
+        so it pushes keys over the authenticated localhost API instead.
+        """
+        provider = provider.strip().lower()
+        try:
+            self.credential_store.set_secret(provider, value)
+        except Exception as exc:
+            return {
+                "status": "error",
+                "provider": provider,
+                "message": f"credential write failed: {redact_text(exc)}",
+            }
+        self.refresh_provider_credentials()
+        self.append_log(f"credentials updated: {provider}")
+        return {"status": "ok", "provider": provider, "configured": True}
+
     def test_credentials(self, provider: str) -> dict[str, Any]:
         status = self.credential_store.status(provider)
         if not status.configured:
@@ -1648,9 +1685,14 @@ def create_app(
     async def credentials_test(req: CredentialTestRequest):
         return await asyncio.to_thread(service.test_credentials, req.provider)
 
+    @app.post("/credentials/set")
+    async def credentials_set(req: CredentialSetRequest):
+        return await asyncio.to_thread(service.set_credentials, req.provider, req.value)
+
     @app.post("/command")
     async def command(req: CommandRequest):
-        return service.command(req.text)
+        # a text prompt can resolve to generation/DSP — never on the loop
+        return await asyncio.to_thread(service.command, req.text)
 
     @app.post("/actions/parse")
     async def parse_action(req: ParseActionRequest):
@@ -1746,7 +1788,7 @@ def create_app(
 
     @app.post("/layer/generate")
     async def generate_from_layer(req: GenerateFromRequest):
-        return service.generate_from_layer(req)
+        return await asyncio.to_thread(service.generate_from_layer, req)
 
     @app.post("/layer/loop-region")
     async def loop_region(req: LoopRegionRequest):
@@ -1819,7 +1861,8 @@ def create_app(
 
     @app.post("/settings")
     async def settings(req: SettingsRequest):
-        return service.update_settings(req)
+        # may stop/start the hardware stream — keep it off the loop
+        return await asyncio.to_thread(service.update_settings, req)
 
     @app.post("/export")
     async def export(req: ExportRequest):
@@ -1827,7 +1870,7 @@ def create_app(
 
     @app.post("/analyze")
     async def analyze():
-        return service.analyze()
+        return await asyncio.to_thread(service.analyze)
 
     @app.get("/library")
     async def library():
@@ -1920,12 +1963,11 @@ def run_daemon(
     elif config.session_dir == Path("./oram_sessions"):
         config.session_dir = library.sessions_dir
 
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        config.mock_audio = mock_audio or config.mock_audio
-    else:
-        config.mock_audio = False
+    # --mock-audio is an explicit request; real audio stays the default
+    config.mock_audio = mock_audio or config.mock_audio
 
     selected_port = find_available_port(host) if str(port) == "auto" else int(port)
+    # None -> generate a per-run token; "" -> auth explicitly disabled
     token = auth_token if auth_token is not None else secrets.token_urlsafe(24)
     service = LocalOramService(config=config, library=library, mock_audio=config.mock_audio)
     app = create_app(service, auth_token=token)

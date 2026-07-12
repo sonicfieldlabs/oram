@@ -302,19 +302,27 @@ class MemoryCredentialStore:
 
 
 class ChainedCredentialStore:
-    """Read-through store: write/delete primary, read primary then fallbacks."""
+    """Layered store: reads walk primary then fallbacks; writes go to the
+    persistent write_store (so `oram credentials set` actually survives the
+    process); deletes sweep every layer."""
 
     source_name = "chained"
 
-    def __init__(self, primary: CredentialStore, fallbacks: list[CredentialStore] | None = None):
+    def __init__(
+        self,
+        primary: CredentialStore,
+        fallbacks: list[CredentialStore] | None = None,
+        write_store: CredentialStore | None = None,
+    ):
         self.primary = primary
         self.fallbacks = fallbacks or []
+        self.write_store = write_store or primary
 
     def _stores(self) -> list[CredentialStore]:
         return [self.primary, *self.fallbacks]
 
     def set_secret(self, provider: str, value: str) -> None:
-        self.primary.set_secret(provider, value)
+        self.write_store.set_secret(provider, value)
 
     def get_secret(self, provider: str) -> str | None:
         for store in self._stores():
@@ -327,7 +335,14 @@ class ChainedCredentialStore:
         return None
 
     def delete_secret(self, provider: str) -> None:
-        self.primary.delete_secret(provider)
+        errors: list[Exception] = []
+        for store in {id(s): s for s in [*self._stores(), self.write_store]}.values():
+            try:
+                store.delete_secret(provider)
+            except Exception as exc:  # keep sweeping the other layers
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     def has_secret(self, provider: str) -> bool:
         return self.get_secret(provider) is not None
@@ -362,7 +377,9 @@ def default_credential_store() -> CredentialStore:
 
     keychain = MacOSKeychainCredentialStore()
     if keychain.is_supported:
-        return ChainedCredentialStore(env_store, [keychain])
+        # env vars override reads (CI / explicit terminal sessions), but
+        # writes persist to the Keychain so stored keys survive the process
+        return ChainedCredentialStore(env_store, [keychain], write_store=keychain)
     return env_store
 
 

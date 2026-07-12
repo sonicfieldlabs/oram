@@ -70,6 +70,10 @@ def _windowed_spectral_centroid(mono: np.ndarray, sample_rate: int,
     """compute spectral centroid averaged over overlapping windows."""
     centroids = []
     length = len(mono)
+    if length < window_size:
+        # short buffer: single window over what exists instead of returning 0
+        window_size = max(64, 1 << int(np.log2(length)))
+        hop = window_size
     for start in range(0, length - window_size + 1, hop):
         frame = mono[start:start + window_size]
         # apply hann window to reduce spectral leakage
@@ -94,6 +98,9 @@ def _spectral_flatness(mono: np.ndarray, window_size: int = 4096,
     """
     flatness_values = []
     length = len(mono)
+    if length < window_size:
+        window_size = max(64, 1 << int(np.log2(length)))
+        hop = window_size
     for start in range(0, length - window_size + 1, hop):
         frame = mono[start:start + window_size]
         windowed = frame * np.hanning(window_size)
@@ -258,12 +265,28 @@ def analyze_buffer(buffer: np.ndarray, sample_rate: int = 44100) -> AnalysisResu
     return result
 
 
-def analyze_session(session: OramSession) -> ListeningReport:
-    """generate a listening report for the entire session."""
+def analyze_session(
+    session: OramSession,
+    target: int | str | None = None,
+    focus: str | None = None,
+) -> ListeningReport:
+    """generate a listening report for the session.
+
+    target: optional 1-based layer number — restrict the report to one layer
+    focus: optional bias for the observations ("density", "speech", "changes")
+    """
     report = ListeningReport(session_id=session.id, scene=session.scene)
+
+    target_slot: int | None = None
+    if isinstance(target, int):
+        target_slot = target - 1
+    elif isinstance(target, str) and target.isdigit():
+        target_slot = int(target) - 1
 
     for layer in session.layers:
         if layer.is_empty:
+            continue
+        if target_slot is not None and layer.slot != target_slot:
             continue
 
         analysis = analyze_buffer(layer.buffer, session.sample_rate)
@@ -279,17 +302,31 @@ def analyze_session(session: OramSession) -> ListeningReport:
         report.layer_analyses.append(layer_analysis)
 
     # generate observations
-    report.observations = _generate_observations(report)
+    report.observations = _generate_observations(report, focus=focus)
     return report
 
 
-def _generate_observations(report: ListeningReport) -> list[str]:
+def _generate_observations(report: ListeningReport, focus: str | None = None) -> list[str]:
     """generate textual observations from analysis data."""
     obs = []
 
     if not report.layer_analyses:
         obs.append("empty session — no active layers")
         return obs
+
+    if focus == "density":
+        for la in report.layer_analyses:
+            obs.append(
+                f"{la.layer_name}: rms {la.analysis.rms:.3f}, "
+                f"{la.analysis.onset_density:.1f} onsets/s, "
+                f"silence {la.analysis.silence_ratio * 100:.0f}%"
+            )
+    elif focus == "speech":
+        for la in report.layer_analyses:
+            speechy = 1200 < la.analysis.spectral_centroid_hz < 3500 and la.analysis.onset_density > 1.5
+            obs.append(
+                f"{la.layer_name}: {'speech-like movement' if speechy else 'no clear speech residue'}"
+            )
 
     # overall density
     avg_rms = np.mean([la.analysis.rms for la in report.layer_analyses])

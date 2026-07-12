@@ -20,11 +20,15 @@ from oram.command.schemas import (
     ExportMixAction,
     GenerateLayerAction,
     KillAudioAction,
+    ListenAction,
     MuteLayerAction,
+    NameSessionAction,
     OramAction,
     OverdubAction,
     QuitAction,
     RecordAction,
+    RegenerateAction,
+    RemoveEffectAction,
     SaveSessionAction,
     SelectLayerAction,
     SetModeAction,
@@ -36,12 +40,12 @@ from oram.command.schemas import (
 )
 
 # word-to-number mapping for layer references and durations
-WORD_NUMBERS: dict[str, int] = {
+WORD_NUMBERS: dict[str, float] = {
     "one": 1, "two": 2, "three": 3, "four": 4,
     "five": 5, "six": 6, "seven": 7, "eight": 8,
     "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
     "sixteen": 16, "twenty": 20, "thirty": 30, "sixty": 60,
-    "half": 0,  # special: "half speed"
+    "half": 0.5,  # "volume half", "half speed"
 }
 NUMBER_WORD_PATTERN = "|".join(sorted(WORD_NUMBERS, key=len, reverse=True))
 
@@ -75,8 +79,8 @@ def extract_entities(text: str) -> ExtractedEntities:
         val = layer_match.group(1)
         if val.isdigit():
             entities.layer = int(val)
-        elif val in WORD_NUMBERS:
-            entities.layer = WORD_NUMBERS[val]
+        elif val in WORD_NUMBERS and float(WORD_NUMBERS[val]).is_integer():
+            entities.layer = int(WORD_NUMBERS[val])
 
     # extract duration in seconds
     dur_match = re.search(r"(\w+)\s+seconds?", text)
@@ -93,8 +97,8 @@ def extract_entities(text: str) -> ExtractedEntities:
         val = bar_match.group(1)
         if val.isdigit():
             entities.bars = int(val)
-        elif val in WORD_NUMBERS:
-            entities.bars = WORD_NUMBERS[val]
+        elif val in WORD_NUMBERS and float(WORD_NUMBERS[val]).is_integer():
+            entities.bars = int(WORD_NUMBERS[val])
 
     # extract semitones
     semi_match = re.search(r"(\w+)\s+semitones?", text)
@@ -168,10 +172,12 @@ def _match_transport(text: str, entities: ExtractedEntities) -> OramAction | Non
             return SelectLayerAction(target=entities.layer)
 
     if re.match(r"mute", text):
-        return MuteLayerAction(target=_target(entities))
+        target = "all" if re.search(r"\b(all|everything)\b", text) else _target(entities)
+        return MuteLayerAction(target=target, state=True if target == "all" else None)
 
     if re.match(r"unmute", text):
-        return MuteLayerAction(target=_target(entities))
+        target = "all" if re.search(r"\b(all|everything)\b", text) else _target(entities)
+        return MuteLayerAction(target=target, state=False)
 
     if re.match(r"solo", text):
         return SoloLayerAction(target=_target(entities))
@@ -187,6 +193,20 @@ def _match_transport(text: str, entities: ExtractedEntities) -> OramAction | Non
 
     if re.match(r"quit|exit|bye", text):
         return QuitAction()
+
+    if re.match(r"(regenerate|re-?summon|generate\s+again)$", text):
+        return RegenerateAction()
+
+    mode_match = re.match(r"mode\s+(record|listen|loop|shape|summon|sleep)$", text)
+    if mode_match:
+        return SetModeAction(mode=mode_match.group(1))
+
+    name_match = re.match(r"name\s+(?:session\s+|this\s+|it\s+)?(.+)$", text)
+    if name_match:
+        return NameSessionAction(name=name_match.group(1).strip()[:64])
+
+    if re.match(r"undo(\s+(that|last|effect))?$", text):
+        return RemoveEffectAction(target="selected", effect="last")
 
     return None
 
@@ -227,7 +247,33 @@ def _match_mix(text: str, entities: ExtractedEntities) -> OramAction | None:
     if "pan" in text and ("center" in text or "centre" in text):
         return SetPanAction(target=target, pan=0.0)
 
+    if re.search(r"\b(softer|quieter|gentler)\b", text):
+        soft_target = "all" if re.search(r"\b(all|everything)\b", text) or entities.layer is None else entities.layer
+        return SetVolumeAction(target=soft_target, delta=-0.15)
+
+    if re.search(r"\blouder\b", text):
+        loud_target = "all" if re.search(r"\b(all|everything)\b", text) or entities.layer is None else entities.layer
+        return SetVolumeAction(target=loud_target, delta=0.15)
+
     return None
+
+
+# imperative fx phrasing: "apply delay", "add some chorus", "echo it",
+# "delay layer 2", "bitcrush this" — anchored so longer descriptive text
+# (e.g. "add a delayed choir texture") still falls through to generation.
+_FX_PREFIX = r"(?:apply\s+|add\s+|put\s+|give\s+it\s+|make\s+it\s+|)"
+_FX_SUFFIX = r"(?:\s+(?:on|to|it|this|the\s+loop|layer\s+\w+))*"
+_NUM = r"(-?\d+(?:\.\d+)?)"
+
+
+def _fx_command(text: str, *nouns: str) -> re.Match | None:
+    """match an anchored 1-click fx phrase for the given effect nouns."""
+    noun = "|".join(nouns)
+    pattern = (
+        rf"^{_FX_PREFIX}(?:a\s+|some\s+|)(?:{noun}){_FX_SUFFIX}"
+        rf"(?:\s+(?:at\s+)?{_NUM}\s*(?:ms|hz|hertz|bits?|db)?)?$"
+    )
+    return re.match(pattern, text)
 
 
 def _match_transform(text: str, entities: ExtractedEntities) -> OramAction | None:
@@ -261,12 +307,103 @@ def _match_transform(text: str, entities: ExtractedEntities) -> OramAction | Non
             parameters=EffectParameters(speed=2.0),
         )
 
+    speed_match = re.search(rf"\bspeed\b(?:\s+layer\s+\w+)?\s+(?:ratio\s+)?{_NUM}\b", text)
+    if speed_match:
+        ratio = max(0.25, min(4.0, float(speed_match.group(1))))
+        return ApplyEffectAction(
+            target=target, effect="speed",
+            parameters=EffectParameters(speed=ratio),
+        )
+
     if re.search(r"\bpitch\b", text):
         semitones = entities.semitones if entities.semitones is not None else -2.0
         return ApplyEffectAction(
             target=target, effect="pitch",
             parameters=EffectParameters(semitones=semitones),
         )
+
+    # --- filters with explicit frequency / resonance ---
+    filter_match = re.search(
+        rf"\b(?:filter(?:\s+layer\s+\w+)?\s+)?(low\s*pass|high\s*pass|band\s*pass)\b"
+        rf"(?:\s+(?:at\s+)?{_NUM}(?:\s*(?:hz|hertz))?)?(?:\s+q\s+{_NUM})?",
+        text,
+    )
+    if filter_match:
+        kind = filter_match.group(1).replace(" ", "")
+        cutoff = float(filter_match.group(2)) if filter_match.group(2) else None
+        q = float(filter_match.group(3)) if filter_match.group(3) else None
+        if cutoff is not None:
+            cutoff = max(20.0, min(20000.0, cutoff))
+        if q is not None:
+            q = max(0.1, min(12.0, q))
+        return ApplyEffectAction(
+            target=target, effect=kind,
+            parameters=EffectParameters(cutoff_hz=cutoff, q=q),
+        )
+
+    # --- 1-click fx vocabulary ---
+    delay_match = _fx_command(text, "ping\\s*pong\\s+delay", "delay", "echo")
+    if delay_match:
+        time_ms = None
+        if delay_match.group(1):
+            time_ms = max(20.0, min(2000.0, float(delay_match.group(1))))
+        pingpong = True if "ping" in text else None
+        return ApplyEffectAction(
+            target=target, effect="delay",
+            parameters=EffectParameters(time_ms=time_ms, pingpong=pingpong),
+        )
+
+    if _fx_command(text, "chorus") and not re.search(r"\bchorus\s+of\b", text):
+        return ApplyEffectAction(target=target, effect="chorus")
+
+    if _fx_command(text, "flanger?", "flange\\s+it"):
+        return ApplyEffectAction(target=target, effect="flanger")
+
+    if _fx_command(text, "phaser?", "phase\\s+it"):
+        return ApplyEffectAction(target=target, effect="phaser")
+
+    distort_match = re.match(
+        rf"^{_FX_PREFIX}(?:a\s+|some\s+|)(warm\s+|soft\s+|fuzzy?\s+|)"
+        rf"(?:distortion|distort|saturation|saturate|overdrive|fuzz){_FX_SUFFIX}"
+        rf"(?:\s+drive\s+{_NUM})?$",
+        text,
+    )
+    if distort_match:
+        flavor = (distort_match.group(1) or "").strip()
+        character = {"warm": "warm", "soft": "soft", "fuzz": "fuzz", "fuzzy": "fuzz"}.get(flavor)
+        if character is None and ("fuzz" in text):
+            character = "fuzz"
+        drive = float(distort_match.group(2)) if distort_match.group(2) else None
+        return ApplyEffectAction(
+            target=target, effect="distortion",
+            parameters=EffectParameters(character=character, drive=drive),
+        )
+
+    bitcrush_match = re.match(
+        rf"^{_FX_PREFIX}(?:a\s+|some\s+|)(?:bit\s*crush(?:er|ed)?|crush){_FX_SUFFIX}"
+        rf"(?:\s+(?:to\s+)?(\d+)\s*bits?)?$",
+        text,
+    )
+    if bitcrush_match:
+        bits = int(bitcrush_match.group(1)) if bitcrush_match.group(1) else None
+        if bits is not None:
+            bits = max(2, min(16, bits))
+        return ApplyEffectAction(
+            target=target, effect="bitcrush",
+            parameters=EffectParameters(bits=bits),
+        )
+
+    if _fx_command(text, "stutter", "glitch"):
+        return ApplyEffectAction(target=target, effect="stutter")
+
+    if re.match(r"^normali[sz]e(\s+(it|this|the\s+mix|layer\s+\w+))?$", text):
+        return ApplyEffectAction(target=target, effect="normalize")
+
+    if re.match(r"^(?:bring\s+it\s+|make\s+it\s+|)(closer|nearby|intimate|near)(\s+(it|this|layer\s+\w+))?$", text):
+        return ApplyEffectAction(target=target, effect="spatial_near")
+
+    if re.match(r"^(?:make\s+it\s+|)(wider|wide|stereo\s+wide|spread(\s+it)?(\s+out)?)$", text):
+        return ApplyEffectAction(target=target, effect="spatial_wide")
 
     if re.search(r"\bfade\s+(the\s+)?end\b|fade\s+out\b", text):
         return ApplyEffectAction(target=target, effect="fade_out")
@@ -381,6 +518,22 @@ def _match_generative(text: str, entities: ExtractedEntities) -> OramAction | No
 
 def _match_listening(text: str, entities: ExtractedEntities) -> OramAction | None:
     """match listening / analysis commands."""
+    # per-layer listening report through a route: "listen", "listen layer 2",
+    # "listen via spectral", "listen --route hybrid"
+    listen_match = re.match(
+        r"^listen(?:\s+to)?(?:\s+layer\s+\w+)?"
+        r"(?:\s+(?:--route\s+|via\s+|route\s+))?"
+        r"(?:\s*(spectral|llm|technical|descriptive|speculative|hybrid))?$",
+        text,
+    )
+    if listen_match:
+        route = listen_match.group(1) or "hybrid"
+        target = entities.layer if entities.layer is not None else "selected"
+        return ListenAction(target=target, route=route)
+
+    if re.match(r"^listen(?:\s+to)?(?:\s+the)?\s+mix$", text):
+        return AnalyzeMixAction()
+
     if re.search(
         r"\blisten\s+to\b|\bdescribe\b|\bwhat\s+is\b|\bwhat\s+changed\b"
         r"|\bfind\s+speech\b|\banalyze\b|\banalysis\b",
@@ -396,17 +549,6 @@ def _match_listening(text: str, entities: ExtractedEntities) -> OramAction | Non
             focus = "changes"
         return AnalyzeMixAction(target=target, focus=focus)
 
-    return None
-
-
-def _match_mode(text: str, _entities: ExtractedEntities) -> OramAction | None:
-    """match mode-setting commands."""
-    if re.search(r"\bsofter\b|\bquieter\b", text):
-        # "make everything softer" is a volume reduction, not a mode change
-        return ApplyEffectAction(
-            target="all", effect="fade_out",
-            parameters=EffectParameters(fade_seconds=0.0),
-        )
     return None
 
 
@@ -459,6 +601,7 @@ _SYSTEM_WORDS = frozenset({
     "pan", "clear", "delete", "remove", "save", "export", "quit",
     "exit", "stop", "record", "overdub", "set", "mode", "help",
     "undo", "redo", "settings", "device", "kill", "make", "loop",
+    "listen", "name", "regenerate", "normalize", "normalise",
 })
 
 
@@ -515,11 +658,10 @@ def match_rules(text: str) -> OramAction:
     matchers = [
         _match_transport,
         _match_mix,
+        _match_listening,
         _match_transform,
         _match_generative,
         _match_spatial,
-        _match_listening,
-        _match_mode,
         _match_sound_prompt,
     ]
 

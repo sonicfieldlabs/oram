@@ -61,6 +61,11 @@ class ElevenLabsSFXEngine:
     def generate(self, request: GenerationRequest) -> GenerationResult:
         adapter = self._get_adapter()
         params = request.to_adapter_params()
+        # the SFX API rejects durations above the spec limit — clamp here
+        # instead of letting a 23-30s request reach the API and error
+        duration = params.get("duration_seconds")
+        if duration is not None:
+            params["duration_seconds"] = min(float(duration), self.spec.max_duration_seconds)
         result = adapter.generate(request.prompt, params)
         return GenerationResult(
             audio=result.audio,

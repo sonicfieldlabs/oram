@@ -3,6 +3,11 @@ import Foundation
 
 final class DaemonManager: @unchecked Sendable {
     private var process: Process?
+    // real python daemon PID from metadata — the launched Process is the `uv`
+    // wrapper, and when we attach to an existing daemon there is no Process at
+    // all, so quitting must signal this PID to avoid orphaning the daemon
+    // (and the Stable Audio sidecar it owns).
+    private var managedPID: Int?
     private let metadataURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/ORAM/oram-daemon.json")
 
@@ -11,6 +16,14 @@ final class DaemonManager: @unchecked Sendable {
     }
 
     func stop() {
+        // signal the real daemon first so its lifespan shutdown stops the
+        // SA3 sidecar and releases the audio device + port
+        if let pid = managedPID {
+            terminateDaemon(pid: pid, hard: false)
+        } else if let pid = (try? DaemonClient.readMetadataFile(at: metadataURL))?.pid {
+            terminateDaemon(pid: pid, hard: false)
+        }
+        managedPID = nil
         process?.terminate()
         process = nil
     }
@@ -22,9 +35,12 @@ final class DaemonManager: @unchecked Sendable {
 
         if let metadata = try? client.loadMetadata(), (try? await client.health()) != nil {
             if metadata.projectPath == root.path {
+                // attached to an already-running daemon — remember its PID so
+                // stop() can shut it down even though we hold no Process
+                managedPID = metadata.pid
                 return "connected"
             }
-            terminateDaemon(pid: metadata.pid)
+            terminateDaemon(pid: metadata.pid, hard: false)
         }
 
         try? FileManager.default.removeItem(at: metadataURL)
@@ -50,7 +66,8 @@ final class DaemonManager: @unchecked Sendable {
 
         for _ in 0..<30 {
             try? await Task.sleep(nanoseconds: 300_000_000)
-            if (try? client.loadMetadata()) != nil, (try? await client.health()) != nil {
+            if let metadata = try? client.loadMetadata(), (try? await client.health()) != nil {
+                managedPID = metadata.pid
                 return "connected"
             }
         }
@@ -135,8 +152,8 @@ final class DaemonManager: @unchecked Sendable {
         return FileHandle.nullDevice
     }
 
-    private func terminateDaemon(pid: Int) {
+    private func terminateDaemon(pid: Int, hard: Bool) {
         guard pid > 0 else { return }
-        _ = kill(pid_t(pid), SIGTERM)
+        _ = kill(pid_t(pid), hard ? SIGKILL : SIGTERM)
     }
 }

@@ -220,14 +220,18 @@ class LayerManager:
             start = layer.playhead % buf.shape[0]
         length = min(new_audio.shape[0], buf.shape[0])
 
-        for i in range(length):
-            pos = (start + i) % buf.shape[0]
-            buf[pos] += new_audio[i] * gain
+        # vectorized wrap-around add (the region wraps at most once because
+        # length <= len(buf))
+        first = min(length, buf.shape[0] - start)
+        buf[start:start + first] += new_audio[:first] * gain
+        if length > first:
+            buf[: length - first] += new_audio[first:length] * gain
 
-        # conservative clipping protection
-        peak = np.max(np.abs(buf))
-        if peak > 0.95:
-            buf *= 0.9 / peak
+        # gentle clipping protection: only rescale when actually about to clip,
+        # so repeated overdubs don't audibly duck the existing material
+        peak = float(np.max(np.abs(buf)))
+        if peak > 0.99:
+            buf *= 0.98 / peak
 
         with layer._buf_lock:
             layer.buffer = buf
@@ -514,6 +518,8 @@ class LayerManager:
         with source._buf_lock:
             source_audio = source.buffer.copy()
             source_metadata = {
+                "volume": source.volume,
+                "pan": source.pan,
                 "source_type": source.source_type,
                 "is_generated": source.is_generated,
                 "parent_layer_id": source.parent_layer_id,
@@ -546,6 +552,8 @@ class LayerManager:
 
         self.assign_buffer(target, source_audio)
         with target._buf_lock:
+            target.volume = source_metadata["volume"]
+            target.pan = source_metadata["pan"]
             target.source_type = source_metadata["source_type"]
             target.is_generated = source_metadata["is_generated"]
             target.parent_layer_id = source_metadata["parent_layer_id"]

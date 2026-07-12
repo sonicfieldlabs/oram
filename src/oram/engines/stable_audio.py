@@ -420,9 +420,9 @@ class LocalStableAudio3Engine:
         mode = payload["mode"]
         try:
             with httpx.Client(timeout=360.0) as client:
-                response = client.post(f"{base_url}/render", json=payload)
-                if response.status_code == 404:
-                    response = _post_local_mode_render(client, base_url, payload)
+                # the germinator server has no /render endpoint — go straight
+                # to the mode-mapped route instead of paying a 404 probe first
+                response = _post_local_mode_render(client, base_url, payload)
                 if response.status_code == 404:
                     response = client.post(f"{base_url}/{mode}", json=payload)
                 response.raise_for_status()

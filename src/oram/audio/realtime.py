@@ -196,6 +196,10 @@ class RealAudioEngine:
     def is_running(self) -> bool:
         return self._running
 
+    @property
+    def is_recording(self) -> bool:
+        return self._recording
+
     def get_input_level(self) -> float:
         return self._input_level
 

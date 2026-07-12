@@ -27,10 +27,12 @@ from oram.command.schemas import (
     ListenAction,
     ListenAgainAction,
     MuteLayerAction,
+    NameSessionAction,
     OramAction,
     OverdubAction,
     QuitAction,
     RecordAction,
+    RegenerateAction,
     RemoveEffectAction,
     ReplaceLayerAction,
     SaveSessionAction,
@@ -98,6 +100,17 @@ class ActionRouter:
         self._dsp_locks: dict[str, threading.Lock] = {}
         # v2: store last listening report per layer
         self._listening_reports: dict[str, object] = {}
+        # single-level pre-effect snapshots for remove_effect/undo:
+        # layer id -> (audio, dsp-metadata field values before the effect)
+        self._effect_undo: dict[str, tuple[np.ndarray, dict]] = {}
+        # last generation action for `regenerate`
+        self._last_generate: GenerateLayerAction | None = None
+
+    _DSP_METADATA_FIELDS = (
+        "reverse", "speed", "pitch_semitones", "filter_type",
+        "filter_cutoff_hz", "reverb_amount", "grain_density",
+        "grain_size_ms", "grain_jitter",
+    )
 
     @property
     def quit_requested(self) -> bool:
@@ -180,6 +193,8 @@ class ActionRouter:
             ApplyEffectAction: self._handle_apply_effect,
             RemoveEffectAction: self._handle_remove_effect,
             GenerateLayerAction: self._handle_generate,
+            RegenerateAction: lambda a: self._handle_regenerate(),
+            NameSessionAction: self._handle_name_session,
             # v2 actions
             ListenAction: self._handle_listen,
             GenerateFromAction: self._handle_generate_from,
@@ -262,8 +277,20 @@ class ActionRouter:
         return f"selected layer {action.target}"
 
     def _handle_mute(self, action: MuteLayerAction) -> str:
+        if action.target == "all":
+            targets = [l for l in self.layers.layers if not l.is_empty]
+            if not targets:
+                return "no active layers"
+            for layer in targets:
+                desired = action.state if action.state is not None else not layer.muted
+                if layer.muted != desired:
+                    self.layers.mute(layer)
+            state = "muted" if (action.state if action.state is not None else True) else "unmuted"
+            return f"all layers {state}"
+
         layer = self.layers.get_layer(action.target)
-        self.layers.mute(layer)
+        if action.state is None or layer.muted != action.state:
+            self.layers.mute(layer)
         state = "muted" if layer.muted else "unmuted"
         return f"layer {layer.slot + 1} {state}"
 
@@ -298,14 +325,22 @@ class ActionRouter:
     # --- mix ---
 
     def _handle_set_volume(self, action: SetVolumeAction) -> str:
+        def _resolve(current: float) -> float:
+            if action.volume is not None:
+                return action.volume
+            return max(0.0, min(2.0, current + (action.delta or 0.0)))
+
         if action.target == "all":
             for layer in self.layers.layers:
                 if not layer.is_empty:
-                    layer.volume = action.volume
-            return f"all layer volumes: {action.volume:.2f}"
+                    layer.volume = _resolve(layer.volume)
+            if action.volume is not None:
+                return f"all layer volumes: {action.volume:.2f}"
+            direction = "softer" if (action.delta or 0.0) < 0 else "louder"
+            return f"all layers {direction}"
         layer = self.layers.get_layer(action.target)
-        layer.volume = action.volume
-        return f"layer {layer.slot + 1} volume: {action.volume:.2f}"
+        layer.volume = _resolve(layer.volume)
+        return f"layer {layer.slot + 1} volume: {layer.volume:.2f}"
 
     def _handle_set_pan(self, action: SetPanAction) -> str:
         if action.target == "all":
@@ -324,11 +359,6 @@ class ActionRouter:
             targets = [layer for layer in self.layers.layers if not layer.is_empty]
             if not targets:
                 return "no active layers"
-
-            if action.effect == "fade_out" and action.parameters.fade_seconds == 0.0:
-                for layer in targets:
-                    layer.volume = max(0.0, layer.volume * 0.8)
-                return "all layers softer"
 
             for target in targets:
                 threading.Thread(
@@ -360,13 +390,22 @@ class ActionRouter:
     def _apply_dsp_locked(self, layer, action: ApplyEffectAction) -> None:
         """run one DSP transform for a layer after per-layer serialization."""
         try:
+            from oram.dsp.bitcrush import bitcrush
+            from oram.dsp.chorus import chorus
+            from oram.dsp.delay import delay
+            from oram.dsp.distortion import distortion
             from oram.dsp.fades import fade_in, fade_out, trim_end, trim_start
-            from oram.dsp.filter import highpass, lowpass
+            from oram.dsp.filter import bandpass, highpass, lowpass
+            from oram.dsp.flanger import flanger
             from oram.dsp.granular import granular, stretch_breathe
+            from oram.dsp.normalize import normalize
+            from oram.dsp.phaser import phaser
             from oram.dsp.pitch import pitch_shift
             from oram.dsp.reverb import reverb, spatial_far
             from oram.dsp.reverse import reverse
             from oram.dsp.safety import crossfade_from_reference, prepare_dsp_output
+            from oram.dsp.spatial import spatial_near, spatial_wide
+            from oram.dsp.stutter import stutter
 
             if action.effect == "speed":
                 speed = action.parameters.speed or 1.0
@@ -396,17 +435,82 @@ class ActionRouter:
                 metadata_updates.append(("pitch", semitones))
             elif action.effect == "lowpass":
                 cutoff = params.cutoff_hz or 2000.0
-                buf = lowpass(buf, cutoff, sr)
+                buf = lowpass(buf, cutoff, sr, q=params.q)
                 metadata_updates.extend([("filter_type", "lowpass"), ("filter_cutoff_hz", cutoff)])
             elif action.effect == "highpass":
                 cutoff = params.cutoff_hz or 4000.0
-                buf = highpass(buf, cutoff, sr)
+                buf = highpass(buf, cutoff, sr, q=params.q)
                 metadata_updates.extend([("filter_type", "highpass"), ("filter_cutoff_hz", cutoff)])
+            elif action.effect == "bandpass":
+                cutoff = params.cutoff_hz or 800.0
+                buf = bandpass(buf, center_hz=cutoff, q=params.q or 1.2, sample_rate=sr)
+                metadata_updates.extend([("filter_type", "bandpass"), ("filter_cutoff_hz", cutoff)])
             elif action.effect == "reverb":
                 wet = params.wet or 0.4
                 decay = params.decay or "medium"
-                buf = reverb(buf, wet=wet, decay=decay, sample_rate=sr)
+                width = params.width if params.width is not None else (0.3 if params.narrow else 1.0)
+                buf = reverb(buf, wet=wet, decay=decay, sample_rate=sr, width=width)
                 metadata_updates.append(("reverb_amount", wet))
+            elif action.effect == "delay":
+                buf = delay(
+                    buf,
+                    time_ms=params.time_ms or 350.0,
+                    feedback=params.feedback if params.feedback is not None else 0.45,
+                    wet=params.wet if params.wet is not None else 0.35,
+                    pingpong=bool(params.pingpong),
+                    sample_rate=sr,
+                )
+            elif action.effect == "chorus":
+                buf = chorus(
+                    buf,
+                    rate_hz=params.rate_hz or 0.6,
+                    depth_ms=(params.depth * 12.0) if params.depth is not None else 6.0,
+                    wet=params.wet if params.wet is not None else 0.5,
+                    sample_rate=sr,
+                )
+            elif action.effect == "flanger":
+                buf = flanger(
+                    buf,
+                    rate_hz=params.rate_hz or 0.3,
+                    depth=params.depth if params.depth is not None else 0.7,
+                    wet=params.wet if params.wet is not None else 0.5,
+                    sample_rate=sr,
+                )
+            elif action.effect == "phaser":
+                buf = phaser(
+                    buf,
+                    rate_hz=params.rate_hz or 0.4,
+                    depth=params.depth if params.depth is not None else 0.8,
+                    wet=params.wet if params.wet is not None else 0.5,
+                    sample_rate=sr,
+                )
+            elif action.effect == "distortion":
+                buf = distortion(
+                    buf,
+                    drive=params.drive or 4.0,
+                    character=params.character or "soft",
+                    tone_hz=params.tone_hz,
+                    wet=params.wet if params.wet is not None else 1.0,
+                    sample_rate=sr,
+                )
+            elif action.effect == "bitcrush":
+                buf = bitcrush(
+                    buf,
+                    bits=params.bits or 8,
+                    downsample=params.downsample or 4,
+                    wet=params.wet if params.wet is not None else 1.0,
+                    sample_rate=sr,
+                )
+            elif action.effect == "stutter":
+                buf = stutter(
+                    buf,
+                    slice_ms=params.slice_ms,
+                    repeats=params.repeats or 4,
+                    prob=params.prob if params.prob is not None else 0.5,
+                    sample_rate=sr,
+                )
+            elif action.effect == "normalize":
+                buf = normalize(buf, target_db=params.target_db if params.target_db is not None else -1.0)
             elif action.effect == "granular":
                 density = params.density or 0.3
                 grain_ms = params.grain_size_ms or 120.0
@@ -419,7 +523,8 @@ class ActionRouter:
                     ("grain_jitter", jitter),
                 ])
             elif action.effect == "fade_in":
-                buf = fade_in(buf, sample_rate=sr)
+                secs = params.fade_seconds if params.fade_seconds is not None else 1.0
+                buf = fade_in(buf, duration_seconds=secs, sample_rate=sr)
             elif action.effect == "fade_out":
                 secs = params.fade_seconds if params.fade_seconds is not None else 1.0
                 buf = fade_out(buf, duration_seconds=secs, sample_rate=sr)
@@ -427,10 +532,17 @@ class ActionRouter:
                 buf = trim_start(buf)
             elif action.effect == "trim_end":
                 buf = trim_end(buf)
+            elif action.effect == "spatial_near":
+                buf = spatial_near(buf, sr)
             elif action.effect == "spatial_far":
                 buf = spatial_far(buf, sr)
+            elif action.effect == "spatial_wide":
+                buf = spatial_wide(buf, sr, width=params.width or 1.5)
             elif action.effect == "stretch_breathe":
                 buf = stretch_breathe(buf, sr)
+            else:
+                self._on_status(f"dsp error: effect {action.effect} has no implementation")
+                return
 
             fade_edges = action.effect not in {"fade_in", "fade_out"}
             buf = prepare_dsp_output(buf, sample_rate=sr, fade_edges=fade_edges)
@@ -453,6 +565,13 @@ class ActionRouter:
                 processed_start=new_playhead,
                 reference_start=current_playhead,
                 sample_rate=sr,
+            )
+
+            # keep a single-level pre-effect snapshot so remove_effect/undo
+            # can restore the audio and dsp metadata this transform replaces
+            self._effect_undo[layer.id] = (
+                source_buf,
+                {name: getattr(layer, name) for name in self._DSP_METADATA_FIELDS},
             )
 
             self.layers.swap_buffer(
@@ -500,10 +619,34 @@ class ActionRouter:
             layer.effects_applied.append(effect)
 
     def _handle_remove_effect(self, action: RemoveEffectAction) -> str:
+        """undo the most recent destructive effect by restoring its snapshot."""
         layer = self.layers.get_layer(action.target)
-        if action.effect in layer.effects_applied:
-            layer.effects_applied.remove(action.effect)
-        return f"removed {action.effect} from layer {layer.slot + 1}"
+        last = layer.effects_applied[-1] if layer.effects_applied else None
+
+        if action.effect != "last" and action.effect != last:
+            if action.effect in layer.effects_applied:
+                return (
+                    f"can only undo the most recent effect ({last or 'none'}) "
+                    f"on layer {layer.slot + 1}"
+                )
+            return f"{action.effect} is not applied to layer {layer.slot + 1}"
+
+        entry = self._effect_undo.pop(layer.id, None)
+        if entry is None or entry[0].shape[0] == 0:
+            return f"nothing to undo on layer {layer.slot + 1}"
+
+        snapshot, prior_metadata = entry
+
+        def _restore_metadata(target) -> None:
+            for name, value in prior_metadata.items():
+                setattr(target, name, value)
+
+        self.layers.swap_buffer(
+            layer, snapshot, preserve_playhead=True, metadata_update=_restore_metadata
+        )
+        if last and last in layer.effects_applied:
+            layer.effects_applied.remove(last)
+        return f"undid {last or 'last effect'} on layer {layer.slot + 1}"
 
     # --- v2: listening ---
 
@@ -920,6 +1063,7 @@ class ActionRouter:
         if self.generator is None and not self.gateway and self.engine_router is None:
             return "generator not available"
 
+        self._last_generate = action
         self.session.mode = Mode.SUMMON
         self._on_status(f"summon: generating \"{action.prompt}\"")
 
@@ -985,11 +1129,22 @@ class ActionRouter:
             self.session.mode = Mode.RECORD
             self._on_status(f"generation failed: {e}")
 
+    def _handle_regenerate(self) -> str:
+        """re-summon with the most recent generation prompt."""
+        if self._last_generate is None:
+            return "nothing to regenerate — no generation yet this session"
+        return self._handle_generate(self._last_generate.model_copy())
+
+    def _handle_name_session(self, action: NameSessionAction) -> str:
+        self.session.scene = action.name
+        self.session.id = action.name
+        return f"session named: {action.name}"
+
     # --- analysis ---
 
     def _handle_analyze(self, action: AnalyzeMixAction) -> str:
         from oram.ears.analyzer import analyze_session
-        report = analyze_session(self.session)
+        report = analyze_session(self.session, target=action.target, focus=action.focus)
         observations = "; ".join(report.observations) if report.observations else "nothing to report"
         return f"oram hears: {observations}"
 

@@ -1,42 +1,107 @@
-"""oram.dsp.reverb — simple schroeder-style reverb.
+"""oram.dsp.reverb — vectorized Freeverb-style reverb with loop-aware tails.
 
 spatial command mappings:
 - 'far away' -> lower volume, more reverb, slight lowpass
 - 'small room' -> short decay
 - 'wash it in reverb' -> higher wet mix
+
+quality notes vs the old 4-comb Schroeder:
+- 8 damped feedback combs + 4 series allpasses per channel (Freeverb topology)
+- damping inside the comb loop kills the metallic ring
+- right channel runs detuned delays (+23 samples) for real stereo width
+- predelay keeps the dry transient in front of the wash
+- the tail is rendered past the buffer end and folded back into the loop
+  start, so a loop keeps its length but the wash survives the seam
 """
 
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import lfilter
 
 from oram.dsp.safety import sanitize_signal
+from oram.dsp.util import (
+    allpass_diffuser,
+    equal_power_mix,
+    feedback_comb,
+    wrap_tail_into_loop,
+)
+
+# Freeverb delay sets, tuned at 44100 Hz and scaled to the session rate.
+_COMB_DELAYS_44K = (1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617)
+_ALLPASS_DELAYS_44K = (556, 441, 341, 225)
+_STEREO_SPREAD = 23
+
+_DECAY_PRESETS = {
+    # feedback, damping, tail seconds
+    "short": (0.72, 0.45, 0.8),
+    "medium": (0.80, 0.32, 1.6),
+    "long": (0.86, 0.22, 3.2),
+}
 
 
-def _comb_filter(
-    signal_in: np.ndarray, delay_samples: int, feedback: float
+def _reverb_channel(
+    x: np.ndarray,
+    sample_rate: int,
+    feedback: float,
+    damp: float,
+    spread: int,
 ) -> np.ndarray:
-    """single feedback comb filter."""
-    delay_samples = max(1, int(delay_samples))
-    denominator = np.zeros(delay_samples + 1, dtype=np.float32)
-    denominator[0] = 1.0
-    denominator[-1] = -float(feedback)
-    return lfilter([1.0], denominator, signal_in).astype(np.float32)
+    scale = sample_rate / 44100.0
+    wet = np.zeros_like(x)
+    for base in _COMB_DELAYS_44K:
+        delay = max(1, int(round((base + spread) * scale)))
+        wet += feedback_comb(x, delay, feedback, damp)
+    wet /= len(_COMB_DELAYS_44K)
+    for base in _ALLPASS_DELAYS_44K:
+        delay = max(1, int(round((base + spread) * scale)))
+        wet = allpass_diffuser(wet, delay, 0.5)
+    return wet
 
 
-def _allpass_filter(
-    signal_in: np.ndarray, delay_samples: int, feedback: float
-) -> np.ndarray:
-    """single Schroeder allpass filter."""
-    delay_samples = max(1, int(delay_samples))
-    numerator = np.zeros(delay_samples + 1, dtype=np.float32)
-    denominator = np.zeros(delay_samples + 1, dtype=np.float32)
-    numerator[0] = -float(feedback)
-    numerator[-1] = 1.0
-    denominator[0] = 1.0
-    denominator[-1] = -float(feedback)
-    return lfilter(numerator, denominator, signal_in).astype(np.float32)
+def render_reverb_tail(
+    buffer: np.ndarray,
+    wet: float = 0.3,
+    decay: str = "medium",
+    sample_rate: int = 44100,
+    width: float = 1.0,
+    predelay_ms: float = 12.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """render the wet signal plus its tail beyond the buffer end.
+
+    returns (wet_body, wet_tail) where body has the input length.
+    """
+    dry = sanitize_signal(buffer)
+    feedback, damp, tail_seconds = _DECAY_PRESETS.get(decay, _DECAY_PRESETS["medium"])
+    tail_samples = int(tail_seconds * sample_rate)
+    predelay = max(0, int(predelay_ms * sample_rate / 1000.0))
+
+    mono_input = dry if dry.ndim == 1 else dry
+    padded_len = dry.shape[0] + tail_samples
+    if dry.ndim == 1:
+        x = np.zeros(padded_len, dtype=np.float32)
+        x[predelay:predelay + dry.shape[0]] = dry[: max(0, padded_len - predelay)]
+        wet_sig = _reverb_channel(x, sample_rate, feedback, damp, 0)
+        return wet_sig[: dry.shape[0]], wet_sig[dry.shape[0]:]
+
+    channels = dry.shape[1]
+    x = np.zeros((padded_len, channels), dtype=np.float32)
+    body_len = min(dry.shape[0], max(0, padded_len - predelay))
+    x[predelay:predelay + body_len] = dry[:body_len]
+    wet_sig = np.zeros_like(x)
+    for ch in range(channels):
+        spread = _STEREO_SPREAD if ch % 2 == 1 else 0
+        wet_sig[:, ch] = _reverb_channel(
+            np.ascontiguousarray(x[:, ch]), sample_rate, feedback, damp, spread
+        )
+
+    if channels == 2 and width < 1.0:
+        mid = (wet_sig[:, 0] + wet_sig[:, 1]) * 0.5
+        side = (wet_sig[:, 0] - wet_sig[:, 1]) * 0.5 * float(max(0.0, width))
+        wet_sig[:, 0] = mid + side
+        wet_sig[:, 1] = mid - side
+
+    del mono_input
+    return wet_sig[: dry.shape[0]], wet_sig[dry.shape[0]:]
 
 
 def reverb(
@@ -44,62 +109,41 @@ def reverb(
     wet: float = 0.3,
     decay: str = "medium",
     sample_rate: int = 44100,
+    width: float = 1.0,
+    predelay_ms: float = 12.0,
+    tail: str = "wrap",
 ) -> np.ndarray:
-    """apply a schroeder-style reverb.
+    """apply a Freeverb-style reverb.
 
     decay: 'short', 'medium', 'long'
-    wet: 0.0 (dry) to 1.0 (fully wet)
+    wet: 0.0 (dry) to 1.0 (fully wet), equal-power mixed
+    width: stereo width of the wash (0 mono .. 1 full)
+    tail: 'wrap' folds the tail into the loop start (loop keeps its length),
+          'extend' appends it, 'cut' discards it
     """
     wet = max(0.0, min(1.0, wet))
     dry = sanitize_signal(buffer)
-    if wet <= 0.0:
+    if wet <= 0.0 or dry.shape[0] == 0:
         return dry.copy()
 
-    # feedback based on decay
-    feedback_map = {"short": 0.6, "medium": 0.75, "long": 0.85}
-    feedback = feedback_map.get(decay, 0.75)
+    wet_body, wet_tail = render_reverb_tail(
+        dry,
+        wet=wet,
+        decay=decay,
+        sample_rate=sample_rate,
+        width=width,
+        predelay_ms=predelay_ms,
+    )
 
-    # process mono or per-channel
-    if dry.ndim == 1:
-        processed = _apply_reverb_mono(dry, feedback, sample_rate)
-        return sanitize_signal(dry * (1 - wet) + processed * wet)
+    if tail == "extend":
+        pad = ((0, wet_tail.shape[0]),) + ((0, 0),) * (dry.ndim - 1)
+        dry_ext = np.pad(dry, pad)
+        wet_sig = np.concatenate([wet_body, wet_tail], axis=0)
+        return sanitize_signal(equal_power_mix(dry_ext, wet_sig, wet))
+    if tail == "wrap":
+        wet_body = wrap_tail_into_loop(wet_body, wet_tail)
 
-    result = np.zeros_like(dry)
-    for ch in range(dry.shape[1]):
-        processed = _apply_reverb_mono(dry[:, ch], feedback, sample_rate)
-        result[:, ch] = (dry[:, ch] * (1 - wet) + processed * wet).astype(np.float32)
-
-    return sanitize_signal(result)
-
-
-def _apply_reverb_mono(
-    mono: np.ndarray, feedback: float, sample_rate: int
-) -> np.ndarray:
-    """apply reverb to a mono signal using parallel combs + series allpasses."""
-    # 4 parallel comb filters with prime-ish delays
-    comb_delays = [
-        int(0.0297 * sample_rate),
-        int(0.0371 * sample_rate),
-        int(0.0411 * sample_rate),
-        int(0.0437 * sample_rate),
-    ]
-
-    combs = np.zeros_like(mono)
-    for delay in comb_delays:
-        combs += _comb_filter(mono, delay, feedback)
-    combs /= len(comb_delays)
-
-    # 2 series allpass filters
-    allpass_delays = [
-        int(0.005 * sample_rate),
-        int(0.0017 * sample_rate),
-    ]
-
-    result = combs
-    for delay in allpass_delays:
-        result = _allpass_filter(result, max(1, delay), 0.5)
-
-    return sanitize_signal(result)
+    return sanitize_signal(equal_power_mix(dry, wet_body, wet))
 
 
 def spatial_far(
