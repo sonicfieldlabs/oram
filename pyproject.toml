@@ -21,10 +21,10 @@ dependencies = [
     "typer>=0.9",
     "httpx>=0.27",
     "python-dotenv>=1.0",
-    "fastapi>=0.100",
+    "fastapi>=0.139",
     "uvicorn[standard]>=0.20",
     "websockets>=11.0",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.31",
 ]
 
 [project.urls]
@@ -34,6 +34,7 @@ Issues = "https://github.com/sonicfieldlabs/oram/issues"
 
 [project.optional-dependencies]
 dev = [
+    "httpx2>=2.7",
     "pytest>=7.0",
     "ruff>=0.4",
 ]
@@ -41,7 +42,7 @@ stt = [
     "openai-whisper>=20231117",
 ]
 web = [
-    "fastapi>=0.100",
+    "fastapi>=0.139",
     "uvicorn[standard]>=0.20",
     "websockets>=11.0",
 ]

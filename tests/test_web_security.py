@@ -56,6 +56,14 @@ class TestTokenAuth:
         resp = client.post("/api/auto-listen")
         assert resp.status_code == 200
 
+    def test_dashboard_escapes_token_before_html_injection(self, monkeypatch):
+        token = '\"><script>alert(1)</script>'
+        monkeypatch.setenv("ORAM_DASHBOARD_TOKEN", token)
+        client = _make_client()
+        body = client.get("/").text
+        assert token not in body
+        assert "&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" in body
+
 
 class TestStateSecrets:
     """api/state must never contain API keys or tokens."""

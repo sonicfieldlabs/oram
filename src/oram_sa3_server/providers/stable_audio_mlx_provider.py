@@ -124,7 +124,8 @@ class StableAudioMLXProvider(AudioGenerationProvider):
 
             command_text = " ".join(command)
             try:
-                process = subprocess.run(
+                # Executable is the validated local sa3 binary; arguments are passed without a shell.
+                process = subprocess.run(  # nosemgrep: python.django.security.injection.command.subprocess-injection.subprocess-injection
                     command,
                     cwd=str(self.mlx_dir()),
                     text=True,

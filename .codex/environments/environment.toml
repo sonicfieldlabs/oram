@@ -1,3 +1,0 @@
-[actions.Run]
-command = "./apps/macos/script/build_and_run.sh"
-description = "Build and launch ORAM.app"

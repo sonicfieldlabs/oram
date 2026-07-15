@@ -16,7 +16,9 @@ exposed to the frontend. The /api/state endpoint strips all secrets.
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import json
+import logging
 import os
 import threading
 import time
@@ -64,6 +66,8 @@ from oram.types import (
     SourceType,
 )
 from oram_security import redact_text
+
+logger = logging.getLogger(__name__)
 
 # ── state ──
 
@@ -684,8 +688,9 @@ def _on_record_complete(layer):
             f"generated → layer {new_layer.slot + 1} "
             f"(from layer {layer.slot + 1}, depth {new_layer.generation_depth})"
         )
-    except Exception as e:
-        _append_log(f"auto-generate error: {e}")
+    except Exception:
+        logger.exception("automatic generation failed")
+        _append_log("auto-generation failed; see the server log for details")
 
 
 def _build_audio_engine(config: OramConfig):
@@ -720,10 +725,11 @@ def _build_audio_engine(config: OramConfig):
             output_device=config.output_device,
             on_record_complete=_on_record_complete,
         )
-    except Exception as e:
-        _append_log(f"audio: real engine unavailable ({e}); mock disabled")
+    except Exception:
+        logger.exception("real audio engine is unavailable")
+        _append_log("audio: real engine unavailable; mock disabled")
         return UnavailableAudioEngine(
-            reason=str(e),
+            reason="real audio engine unavailable",
             sample_rate=config.sample_rate,
             block_size=config.block_size,
             input_device=config.input_device,
@@ -940,7 +946,7 @@ async def dashboard():
     # inject dashboard token so JS can auth API calls without ?token= in URL
     token = _get_dashboard_token()
     if token:
-        meta_tag = f'<meta name="oram-token" content="{token}">'
+        meta_tag = f'<meta name="oram-token" content="{html_lib.escape(token, quote=True)}">'
         html = html.replace('<head>', f'<head>\n{meta_tag}')
     return HTMLResponse(html)
 
@@ -1887,8 +1893,13 @@ async def export_layer(req: ExportLayerRequest):
 
         _append_log(f"exported layer {req.target} → {filepath}")
         return {"status": "ok", "message": f"layer {req.target} exported", "path": str(filepath), "filename": filename}
-    except Exception as e:
-        return {"error": str(e), "message": f"export failed: {e}"}
+    except Exception:
+        logger.exception("layer export failed")
+        _append_log("layer export failed; see the server log for details")
+        return JSONResponse(
+            {"status": "error", "message": "layer export failed"},
+            status_code=500,
+        )
 
 
 # ── master record/export ──
@@ -1919,9 +1930,10 @@ async def master_record(req: MasterRecordRequest):
             filename = f"master_recording_{datetime.now().strftime('%H%M%S')}.wav"
             filepath = export_dir / filename
             _engine.start_master_recording(filepath)
-        except Exception as exc:
+        except Exception:
+            logger.exception("master recording failed to start")
             return JSONResponse(
-                {"status": "error", "message": f"master recording failed: {redact_text(exc)}"},
+                {"status": "error", "message": "master recording failed to start"},
                 status_code=400,
             )
         _append_log(f"master recording started → {filepath}")
@@ -1934,9 +1946,10 @@ async def master_record(req: MasterRecordRequest):
             )
         try:
             result = _engine.stop_master_recording()
-        except Exception as exc:
+        except Exception:
+            logger.exception("master recording failed to stop")
             return JSONResponse(
-                {"status": "error", "message": f"master recording stop failed: {redact_text(exc)}"},
+                {"status": "error", "message": "master recording failed to stop"},
                 status_code=400,
             )
         path = result.get("path", "")
@@ -1973,8 +1986,13 @@ async def export_master():
 
         _append_log(f"master mix exported → {filepath}")
         return {"status": "ok", "message": "master mix exported", "path": str(filepath)}
-    except Exception as e:
-        return {"error": str(e), "message": f"export failed: {e}"}
+    except Exception:
+        logger.exception("master mix export failed")
+        _append_log("master mix export failed; see the server log for details")
+        return JSONResponse(
+            {"status": "error", "message": "master mix export failed"},
+            status_code=500,
+        )
 
 
 def run_server(

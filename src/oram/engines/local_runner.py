@@ -205,7 +205,7 @@ class LocalSidecarEngine:
                 if request.source_audio.ndim > 1
                 else request.source_audio
             )
-            sf.write(buf, mono, request.source_sample_rate, format="WAV", subtype="PCM_16")
+            sf.write(buf, mono, request.source_sample_rate, format="WAV", subtype="PCM_16")  # nosemgrep: python.django.security.injection.request-data-write.request-data-write -- in-memory buffer, not a filesystem path
             buf.seek(0)
             payload["audio_base64"] = base64.b64encode(buf.read()).decode("ascii")
             payload["sample_rate"] = request.source_sample_rate

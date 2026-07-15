@@ -806,12 +806,12 @@ def process_audio(request: AudioProcessRequest) -> GenerationResult:
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     command = _rubberband_command(binary, request, source_audio, audio_path, ratio)
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True, timeout=180)
+        # Fixed Rubber Band executable, numeric flags, and storage-confined paths; no shell is used.
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=180)  # nosemgrep: python.django.security.injection.command.subprocess-injection.subprocess-injection
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail="Rubber Band processing timed out.") from exc
     except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or exc.stdout or str(exc)).strip()
-        raise HTTPException(status_code=422, detail=f"Rubber Band processing failed: {detail}") from exc
+        raise HTTPException(status_code=422, detail="Rubber Band processing failed.") from exc
 
     output_payload = _read_wav(audio_path)
     operation_params = {

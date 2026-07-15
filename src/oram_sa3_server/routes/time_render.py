@@ -247,7 +247,7 @@ def _pitch_shift_payload(
     temp_dir: Path,
 ) -> WavPayload:
     cache_key = f"{payload.source.id}:{payload.path}:{pitch_semitones:.8f}"
-    output_path = temp_dir / f"pitch_{hashlib.sha1(cache_key.encode('utf-8')).hexdigest()}.wav"
+    output_path = temp_dir / f"pitch_{hashlib.sha256(cache_key.encode('utf-8')).hexdigest()}.wav"
     command = _rubberband_pitch_command(binary, payload.path, output_path, pitch_semitones)
     try:
         subprocess.run(command, check=True, capture_output=True, text=True, timeout=180)

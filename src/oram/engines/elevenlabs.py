@@ -520,7 +520,7 @@ class ElevenLabsIsolationEngine:
             if request.source_audio.ndim > 1
             else request.source_audio
         )
-        sf.write(buf, mono, request.source_sample_rate, format="WAV", subtype="PCM_16")
+        sf.write(buf, mono, request.source_sample_rate, format="WAV", subtype="PCM_16")  # nosemgrep: python.django.security.injection.request-data-write.request-data-write -- in-memory buffer, not a filesystem path
         buf.seek(0)
 
         client = ElevenLabsHTTPClient(self._api_key, timeout=120.0)
@@ -555,4 +555,3 @@ class ElevenLabsIsolationEngine:
             cost_credits=client.parse_cost_header(response) or float(len(mono) / request.source_sample_rate * 20),
             metadata={"mode": "voice_isolation"},
         )
-

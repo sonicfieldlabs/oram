@@ -76,7 +76,10 @@
 
   async function apiGet(endpoint) {
     try {
-      const res = await fetch(endpoint);
+      const url = new URL(endpoint, window.location.origin);
+      const allowedPath = /^\/api\/(devices|engines|waveform\/\d+)$/.test(url.pathname);
+      if (url.origin !== window.location.origin || !allowedPath) return null;
+      const res = await fetch(url);
       return await res.json();
     } catch (e) {
       return null;
