@@ -7,7 +7,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
-
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 LOCAL_ORIGIN_HOSTS = {"localhost", "127.0.0.1"}
 

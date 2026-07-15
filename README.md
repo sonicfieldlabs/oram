@@ -3,6 +3,8 @@
 # ORAM
 a speech-operated terminal looper for synthetic sound studies.
 
+Current release: `0.4.0`.
+
 > "We seem to have tuned circuits within us"
 > — Daphne Oram, *An Individual Note of Music, Sound and Electronics*
 
@@ -35,6 +37,18 @@ The current app has several surfaces around the same core idea:
 ORAM is not a DAW replacement, not a chatbot, and not a hosted prompt-to-song
 service. It is a small instrument where local audio, structured commands, and
 optional BYOK providers become constrained audio actions.
+
+## Sonic Field Labs stack boundary
+
+ORAM `0.4.0` is the stack's performance instrument. Its direct stack
+integration is GERM `0.2.0`: ORAM can use the local GERM-compatible generation
+surface for constrained sound generation and transformation.
+
+ORAM does not currently embed the AKOÚŌ `v0.7` listening contract or write
+Earworm `0.4.0` / akousma v1.3 records itself. Recordings and exports can enter
+the Listening Stack through OÍDA `0.6.0` or GERM, then be navigated in
+Akousmata `0.4.0` and evaluated by Algophony `0.5.0`. This boundary is
+intentional: ORAM remains usable as a standalone local instrument.
 
 Not stable objects, but flowing resonant states. Not notes, but unstable
 entities. Not fixed frequencies, but living circuits of relation.
@@ -84,7 +98,6 @@ Current known alpha gaps:
 | Browser dashboard | `oram dashboard` | Working local test/control surface |
 | Local daemon | `oram daemon` | Working localhost API for app/plugin control |
 | macOS app | `apps/macos` | Working SwiftUI shell around the Python daemon |
-| macOS DMG | `releases/macos/ORAM.dmg` | Unsigned development package |
 | Audio Unit | `plugins/oram-plugin` | Alpha build; installs and passes `auval` |
 | VST3 | `plugins/oram-plugin` | Alpha build with JUCE module-info generation |
 | Standalone plugin app | `plugins/oram-plugin` | Alpha debug/release build |
@@ -412,10 +425,10 @@ Refresh the unsigned development DMG:
 apps/macos/script/package_unsigned.sh
 ```
 
-Repository development package:
+The app bundle, DMG, and checksums are generated locally under:
 
 ```text
-releases/macos/ORAM.dmg
+apps/macos/dist/
 ```
 
 ## DAW Plugin

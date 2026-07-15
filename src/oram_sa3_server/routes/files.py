@@ -12,7 +12,6 @@ from pydantic import BaseModel
 
 from oram_sa3_server.registry import settings, storage
 
-
 router = APIRouter()
 
 # Only media files are served over the unauthenticated GET file endpoint. This

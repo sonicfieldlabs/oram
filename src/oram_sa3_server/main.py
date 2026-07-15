@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from oram_sa3_server.config import get_settings
 from oram_sa3_server.identity import LEGACY_ENGINE_NAME, PRODUCT_DESCRIPTION, PRODUCT_NAME
+from oram_sa3_server.performance import PerformanceMiddleware
 from oram_sa3_server.routes import (
-    audio_tools,
     audio_to_audio,
+    audio_tools,
     continue_audio,
     control,
     diagnostics,
@@ -30,9 +29,7 @@ from oram_sa3_server.routes import (
     strains,
     time_render,
 )
-from oram_sa3_server.performance import PerformanceMiddleware
 from oram_sa3_server.security import LocalOriginAndHeadersMiddleware
-
 
 settings = get_settings()
 

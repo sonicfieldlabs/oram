@@ -84,7 +84,7 @@ Keychain is preferred for packaged app usage.
 ## Local Stable Audio 3 Service
 
 For Apple Silicon MLX or a local Python/CUDA sidecar, point ORAM at the local
-service. ORAM defaults to the Germinator-compatible local server URL when loaded
+service. ORAM defaults to the GERM-compatible local server URL when loaded
 from the environment:
 
 ```bash
@@ -95,7 +95,7 @@ ORAM_STABLE_AUDIO_DECODER=same-s
 ```
 
 ORAM sends a JSON payload to `/render` first. If that route is not available, it
-uses Germinator-style mode routes:
+uses GERM mode routes:
 
 ```text
 generate     -> /generate
@@ -106,7 +106,7 @@ lora_mixer   -> /generate with LoRA metadata
 ```
 
 Responses may be raw audio, base64 audio, a local `audio_path`, a JSON object
-containing an audio URL, or a Germinator `audio_files` result served through
+containing an audio URL, or a GERM `audio_files` result served through
 `/files/...`. Model rendering must stay in this companion service, not in plugin
 or realtime audio callbacks.
 

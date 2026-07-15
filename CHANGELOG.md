@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4
+## v0.4.0
 
 A wide audit-and-repair pass across every surface: a reworked audio engine, a
 much larger and higher-quality effect set, and fixes throughout the CLI, web

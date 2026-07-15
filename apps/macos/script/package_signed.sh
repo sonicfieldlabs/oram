@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="ORAM"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -42,12 +41,5 @@ fi
   cd "$DIST_DIR"
   shasum -a 256 "$(basename "$DMG_PATH")" > "$(basename "$CHECKSUMS_PATH")"
 )
-
-if [[ "${ORAM_COPY_RELEASES:-0}" == "1" ]]; then
-  RELEASE_DIR="$REPO_ROOT/releases/macos"
-  mkdir -p "$RELEASE_DIR"
-  cp "$DMG_PATH" "$RELEASE_DIR/$APP_NAME-signed.dmg"
-  cp "$CHECKSUMS_PATH" "$RELEASE_DIR/checksums-signed.txt"
-fi
 
 echo "$DMG_PATH"

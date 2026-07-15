@@ -16,12 +16,11 @@ Outputs:
 apps/macos/dist/ORAM.app
 apps/macos/dist/ORAM.dmg
 apps/macos/dist/checksums.txt
-releases/macos/ORAM.dmg
-releases/macos/checksums.txt
 ```
 
-The `releases/macos` copy is intentionally tracked so the repository contains a
-downloadable development DMG.
+Generated packages remain in the ignored `apps/macos/dist` directory. Publish
+signed release assets through the project release page rather than committing
+binary installers to source control.
 
 The development DMG bundles the ORAM Python source, lockfile, and a `uv` helper
 under `ORAM.app/Contents/Resources`. The app uses that helper to create the
@@ -59,9 +58,6 @@ signs the app with hardened runtime and a secure timestamp, creates
 `apps/macos/dist/ORAM-signed.dmg`, signs the DMG, and notarizes/staples it when
 `ORAM_NOTARY_PROFILE` is set.
 
-Use `ORAM_COPY_RELEASES=1 apps/macos/script/package_signed.sh` only when you
-intentionally want to copy the signed DMG into `releases/macos`.
-
 ## Notarization Setup
 
 Create the notarytool keychain profile once:
@@ -86,7 +82,7 @@ xcrun stapler validate apps/macos/dist/ORAM-signed.dmg
 ## Do You Need Apple?
 
 For local testing and repository development builds: no. An unsigned DMG can be
-stored in the repository and opened manually.
+built locally and opened manually.
 
 For public distribution with a normal first-launch experience: yes. Join the
 Apple Developer Program, create a Developer ID Application certificate, sign the

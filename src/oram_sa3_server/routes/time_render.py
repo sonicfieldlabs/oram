@@ -17,7 +17,6 @@ from fastapi import APIRouter, HTTPException
 from oram_sa3_server.registry import settings, storage
 from oram_sa3_server.schemas import GenerationResult, TimeClock, TimeRenderRequest, TimeRenderSource
 
-
 router = APIRouter()
 
 TIME_RENDER_MODE = "time-render"

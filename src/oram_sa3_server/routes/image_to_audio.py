@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from oram_sa3_server.registry import settings
 
-
 router = APIRouter()
 
 SUPPORTED_IMAGE_MIME_TYPES = {

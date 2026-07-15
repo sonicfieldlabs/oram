@@ -6,10 +6,9 @@ from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from oram_sa3_server.schemas import GenerateRequest, GenerationResult
 from oram_sa3_server.registry import settings, storage
+from oram_sa3_server.schemas import GenerateRequest, GenerationResult
 from oram_sa3_server.storage import safe_stem
-
 
 router = APIRouter()
 

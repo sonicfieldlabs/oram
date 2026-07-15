@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from oram_sa3_server.registry import registry
 from oram_sa3_server.schemas import LoraLoadRequest, LoraStrengthRequest
 
-
 router = APIRouter()
 
 

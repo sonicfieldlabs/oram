@@ -49,8 +49,8 @@ fi
 if [[ -f "$REPO_ROOT/engines.yaml" ]]; then
   cp "$REPO_ROOT/engines.yaml" "$PYTHON_RESOURCE_DIR/engines.yaml"
 fi
-if [[ -f "$ROOT_DIR/Assets/logo-oram.png" ]]; then
-  cp "$ROOT_DIR/Assets/logo-oram.png" "$RESOURCES_DIR/logo-oram.png"
+if [[ -f "$ROOT_DIR/Sources/ORAMApp/Resources/logo-oram.png" ]]; then
+  cp "$ROOT_DIR/Sources/ORAMApp/Resources/logo-oram.png" "$RESOURCES_DIR/logo-oram.png"
 fi
 if [[ -f "$ROOT_DIR/Assets/AppIcon.icns" ]]; then
   cp "$ROOT_DIR/Assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"

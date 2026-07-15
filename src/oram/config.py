@@ -91,7 +91,7 @@ class OramConfig:
     preferred_provider: str = "local"      # user's preferred provider override
 
     # Stable Audio 3 local/API integration.
-    stable_audio_service_url: str = ""  # local service, defaults to Germinator when loaded from env
+    stable_audio_service_url: str = ""  # local service, defaults to GERM when loaded from env
     stable_audio_api_url: str = ""      # override Stability API route when needed
     stable_audio_local_provider: str = "stable_audio_mlx"
     stable_audio_local_model: str = "medium-mlx"

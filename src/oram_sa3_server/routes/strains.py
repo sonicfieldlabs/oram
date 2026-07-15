@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException
 from oram_sa3_server.registry import registry, strain_registry
 from oram_sa3_server.schemas import StrainCard, StrainLoadRequest, StrainRegistryResponse
 
-
 router = APIRouter(prefix="/strains", tags=["strains"])
 
 

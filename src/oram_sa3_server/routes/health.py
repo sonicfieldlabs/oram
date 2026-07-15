@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from oram_sa3_server.registry import registry, settings
 from oram_sa3_server.schemas import HealthResponse
 
-
 router = APIRouter()
 
 

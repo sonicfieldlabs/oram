@@ -11,7 +11,6 @@ from fastapi import APIRouter
 from oram_sa3_server.identity import LEGACY_ENGINE_NAME, PRODUCT_NAME, SOUND_MATTER_CONCEPT
 from oram_sa3_server.registry import settings, storage
 
-
 router = APIRouter()
 
 AUDIO_EXTENSIONS = {".aif", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".wav", ".webm"}

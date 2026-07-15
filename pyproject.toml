@@ -4,11 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oram"
-version = "0.4"
+version = "0.4.0"
 description = "agentic recorder, looper, and sampler — recursive listening instrument"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "Sonic Field Labs" }]
 
 dependencies = [
     "sounddevice>=0.4",
@@ -25,6 +26,11 @@ dependencies = [
     "websockets>=11.0",
     "python-multipart>=0.0.9",
 ]
+
+[project.urls]
+Homepage = "https://github.com/sonicfieldlabs/oram"
+Repository = "https://github.com/sonicfieldlabs/oram"
+Issues = "https://github.com/sonicfieldlabs/oram/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -55,7 +61,10 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
-ignore = ["E741"]  # allow short var names like 'l' for layer in audio code
+ignore = [
+    "E501",  # structured audio-operation payloads are clearer when kept together
+    "E741",  # allow short var names like 'l' for layer in audio code
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

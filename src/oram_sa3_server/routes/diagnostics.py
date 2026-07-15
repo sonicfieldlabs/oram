@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from oram_sa3_server.diagnostics import environment_report
 from oram_sa3_server.registry import registry, settings
 
-
 router = APIRouter()
 
 

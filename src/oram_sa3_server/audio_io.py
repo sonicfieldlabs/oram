@@ -5,7 +5,6 @@ import struct
 import wave
 from pathlib import Path
 
-
 WAV_WRITE_CHUNK_FRAMES = 16_384
 
 

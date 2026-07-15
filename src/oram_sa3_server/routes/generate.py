@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from oram_sa3_server.routes._utils import run_provider_method
 from oram_sa3_server.schemas import GenerateRequest, GenerationResult
 
-
 router = APIRouter()
 
 

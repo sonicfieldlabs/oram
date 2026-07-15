@@ -42,7 +42,6 @@ from oram_sa3_server.schemas import (
 )
 from oram_sa3_server.storage import safe_stem, utc_now_iso
 
-
 router = APIRouter(prefix="/control", tags=["control"])
 
 MAX_CONTROL_POINTS_PER_FEATURE = 20000

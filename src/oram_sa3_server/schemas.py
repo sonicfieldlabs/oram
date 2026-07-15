@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 ProviderId = Literal["mock", "stable_audio_python", "stable_audio_mlx", "stability_api"]
 ModeId = Literal["text-to-audio", "audio-to-audio", "inpainting", "continuation"]
 SnapDivision = Literal["1/4", "1/8", "1/16", "1/32", "triplet"]

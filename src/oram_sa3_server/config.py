@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 
 from oram_sa3_server.identity import PRODUCT_NAME
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[0]
 load_dotenv(PROJECT_ROOT / ".env")
 DEFAULT_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "testserver"}

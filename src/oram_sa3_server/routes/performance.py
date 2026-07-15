@@ -4,7 +4,6 @@ from fastapi import APIRouter
 
 from oram_sa3_server.performance import performance_monitor
 
-
 router = APIRouter()
 
 

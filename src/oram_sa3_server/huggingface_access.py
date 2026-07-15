@@ -6,7 +6,6 @@ import shutil
 import subprocess
 from typing import Any
 
-
 STABLE_AUDIO_MODEL_REPOS = {
     "small-sfx": "stabilityai/stable-audio-3-small-sfx",
     "small-music": "stabilityai/stable-audio-3-small-music",

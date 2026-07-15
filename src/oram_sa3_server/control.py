@@ -9,7 +9,6 @@ from uuid import uuid4
 from oram_sa3_server.schemas import ControlCVProfile, ControlEvent, ControlPort, ControlRoute, ControlSnapshot
 from oram_sa3_server.storage import StorageManager, utc_now_iso
 
-
 CONTROL_EVENT_LIMIT = 512
 
 
