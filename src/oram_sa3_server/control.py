@@ -477,9 +477,8 @@ class ControlRegistry:
             raise ValueError(f"target kind must be {target.kind}")
 
     def resolve_control_artifact(self, path: str | Path) -> Path:
-        resolved = self.storage.resolve_existing_path(path, label="control artifact")
-        try:
-            resolved.relative_to(self.control_dir.resolve())
-        except ValueError as exc:
-            raise PermissionError(f"control artifact must be inside {self.control_dir}") from exc
-        return resolved
+        return self.storage.resolve_existing_path_within(
+            path,
+            roots=(self.control_dir,),
+            label="control artifact",
+        )

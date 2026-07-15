@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 from datetime import datetime, timezone
@@ -148,17 +149,40 @@ class StorageManager:
             path = self.settings.project_root / path
         return path.resolve().as_posix()
 
-    def resolve_path(self, path: str | Path) -> Path:
-        path = Path(path).expanduser()
-        if not path.is_absolute():
-            path = self.settings.project_root / path
-        return path.resolve()
-
-    def resolve_existing_path(self, path: str | Path, *, label: str = "path") -> Path:
-        resolved = self.resolve_path(path)
-        if not resolved.exists():
-            raise FileNotFoundError(f"{label} does not exist: {path}")
+    def resolve_existing_path_within(
+        self,
+        path: str | Path,
+        *,
+        roots: tuple[Path, ...],
+        label: str = "path",
+    ) -> Path:
+        """Resolve an existing regular file and confine symlinks to known roots."""
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.settings.project_root / candidate
+        resolved_roots = tuple(root.resolve() for root in roots)
+        lexical_path = Path(os.path.abspath(candidate))
+        if not any(
+            lexical_path == root or root in lexical_path.parents
+            for root in resolved_roots
+        ):
+            raise PermissionError(f"{label} is outside its allowed directory")
+        try:
+            resolved = lexical_path.resolve(strict=True)
+        except (FileNotFoundError, OSError) as exc:
+            raise FileNotFoundError(f"{label} does not exist") from exc
+        if not any(self.is_within(resolved, root) for root in resolved_roots):
+            raise PermissionError(f"{label} is outside its allowed directory")
+        if not resolved.is_file():
+            raise FileNotFoundError(f"{label} is not a regular file")
         return resolved
+
+    def resolve_existing_output_path(self, path: str | Path, *, label: str = "output file") -> Path:
+        return self.resolve_existing_path_within(
+            path,
+            roots=(self.settings.output_root,),
+            label=label,
+        )
 
     @staticmethod
     def is_within(path: Path, root: Path) -> bool:
@@ -169,29 +193,28 @@ class StorageManager:
         return True
 
     def resolve_existing_metadata_path(self, path: str | Path, *, label: str = "metadata") -> Path:
-        resolved = self.resolve_existing_path(path, label=label)
-        if not self.is_within(resolved, self.metadata_dir):
-            raise PermissionError(f"{label} must be inside the metadata directory: {path}")
-        return resolved
+        return self.resolve_existing_path_within(path, roots=(self.metadata_dir,), label=label)
 
     def resolve_existing_input_audio_path(self, path: str | Path, *, label: str = "input audio") -> Path:
-        resolved = self.resolve_existing_path(path, label=label)
         allowed_roots = self.settings.allowed_input_roots
-        if not any(self.is_within(resolved, root) for root in allowed_roots):
-            roots = ", ".join(self.relative_path(root) for root in allowed_roots)
-            raise PermissionError(f"{label} must be inside an allowed input root ({roots}): {path}")
+        resolved = self.resolve_existing_path_within(
+            path,
+            roots=tuple(allowed_roots),
+            label=label,
+        )
         if resolved.suffix.lower() not in AUDIO_EXTENSIONS:
-            raise ValueError(f"{label} must be an audio file: {path}")
+            raise ValueError(f"{label} must be an audio file")
         return resolved
 
     def resolve_existing_model_file_path(self, path: str | Path, *, label: str = "model file") -> Path:
-        resolved = self.resolve_existing_path(path, label=label)
         allowed_roots = self.settings.allowed_model_roots
-        if not any(self.is_within(resolved, root) for root in allowed_roots):
-            roots = ", ".join(self.relative_path(root) for root in allowed_roots)
-            raise PermissionError(f"{label} must be inside an allowed model root ({roots}): {path}")
+        resolved = self.resolve_existing_path_within(
+            path,
+            roots=tuple(allowed_roots),
+            label=label,
+        )
         if resolved.suffix.lower() not in MODEL_FILE_EXTENSIONS:
-            raise ValueError(f"{label} has an unsupported extension: {path}")
+            raise ValueError(f"{label} has an unsupported extension")
         return resolved
 
     @staticmethod
@@ -691,13 +714,30 @@ class StorageManager:
         filename: str,
         upload: Any,
         max_bytes: int,
-        directory: str | Path | None = None,
+        transient: bool = False,
     ) -> tuple[Path, int]:
-        stem = safe_stem(Path(filename).stem, fallback="upload")
-        suffix = safe_suffix(Path(filename).suffix)
-        target_dir = Path(directory) if directory is not None else self.upload_dir
+        cleaned_suffix = safe_suffix(Path(filename).suffix).lower()
+        if cleaned_suffix == ".aif":
+            suffix = ".aif"
+        elif cleaned_suffix == ".aiff":
+            suffix = ".aiff"
+        elif cleaned_suffix == ".flac":
+            suffix = ".flac"
+        elif cleaned_suffix == ".m4a":
+            suffix = ".m4a"
+        elif cleaned_suffix == ".mp3":
+            suffix = ".mp3"
+        elif cleaned_suffix == ".ogg":
+            suffix = ".ogg"
+        elif cleaned_suffix == ".wav":
+            suffix = ".wav"
+        elif cleaned_suffix == ".webm":
+            suffix = ".webm"
+        else:
+            raise ValueError("uploaded file has an unsupported audio extension")
+        target_dir = self.scratch_dir if transient else self.upload_dir
         target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{stem}_{uuid4().hex[:8]}{suffix}"
+        path = target_dir / f"upload_{uuid4().hex}{suffix}"
         total = 0
         try:
             with path.open("wb") as handle:

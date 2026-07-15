@@ -1211,9 +1211,10 @@ async def stable_audio_render(req: StableAudioRenderRequest):
         return JSONResponse({"status": "error", "error": "not initialized"}, status_code=503)
     try:
         payload = await asyncio.to_thread(_stable_audio_render_sync, req)
-    except ValueError as exc:
+    except ValueError:
+        logger.warning("invalid Stable Audio dashboard request", exc_info=True)
         return JSONResponse(
-            {"status": "error", "error": "invalid_request", "message": redact_text(exc)},
+            {"status": "error", "error": "invalid_request", "message": "Stable Audio request is invalid"},
             status_code=400,
         )
     status = 400 if payload.get("status") == "error" else 200
@@ -1448,9 +1449,10 @@ async def upload_layer(request: Request, target: int = 1, filename: str = "uploa
         layer = _layer_manager.get_layer(target)
         _push_undo(f"upload layer {target}")
         assign_imported_audio(_layer_manager, layer, audio, filename=filename, sample_rate=sample_rate)
-    except ValueError as exc:
+    except ValueError:
+        logger.warning("dashboard audio upload could not be decoded", exc_info=True)
         return JSONResponse(
-            {"status": "error", "error": "invalid_audio", "message": redact_text(exc)},
+            {"status": "error", "error": "invalid_audio", "message": "uploaded audio could not be decoded"},
             status_code=400,
         )
 
@@ -1513,8 +1515,8 @@ async def set_loop_region(req: LoopRegionRequest):
         end_seconds=req.end_seconds,
         enabled=req.enabled,
     )
-    message = _router.route(action, raw_text="api:loop-region")
-    ok = message.startswith("loop enabled:") or message.startswith("loop disabled:")
+    route_message = _router.route(action, raw_text="api:loop-region")
+    ok = route_message.startswith("loop enabled:") or route_message.startswith("loop disabled:")
     if _layer_manager:
         try:
             layer = _layer_manager.get_layer(req.target)
@@ -1522,9 +1524,28 @@ async def set_loop_region(req: LoopRegionRequest):
             sr = layer.sample_rate
             s = layer.looper.start_offset
             e = layer.looper.end_offset if layer.looper.end_offset > 0 else length
+            if ok:
+                client_message = (
+                    f"loop {'enabled' if layer.looper.enabled else 'disabled'} "
+                    f"on layer {layer.slot + 1}"
+                )
+            elif layer.is_empty:
+                client_message = "layer is empty"
+            elif (
+                req.start_pct is not None
+                and req.end_pct is not None
+                and req.start_pct >= req.end_pct
+            ) or (
+                req.start_seconds is not None
+                and req.end_seconds is not None
+                and req.start_seconds >= req.end_seconds
+            ):
+                client_message = "invalid loop region"
+            else:
+                client_message = "loop region could not be updated"
             payload = {
                 "status": "ok" if ok else "error",
-                "message": message,
+                "message": client_message,
                 "target": layer.slot + 1,
                 "loop_enabled": layer.looper.enabled,
                 "loop_start_pct": round(s / length * 100, 2) if length > 0 else 0,
@@ -1537,8 +1558,11 @@ async def set_loop_region(req: LoopRegionRequest):
                 return JSONResponse(payload, status_code=400)
             return payload
         except Exception:
-            pass
-    return JSONResponse({"status": "error", "message": message}, status_code=400)
+            logger.warning("loop region state could not be read", exc_info=True)
+    return JSONResponse(
+        {"status": "error", "message": "loop region could not be updated"},
+        status_code=400,
+    )
 
 
 @app.post("/api/loop-fades")
@@ -1548,8 +1572,9 @@ async def set_loop_fades(req: LoopFadeRequest):
         return JSONResponse({"status": "error", "error": "not initialized"}, status_code=503)
     try:
         layer = _layer_manager.get_layer(req.target)
-    except Exception as exc:
-        return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+    except Exception:
+        logger.warning("invalid loop-fade layer", exc_info=True)
+        return JSONResponse({"status": "error", "message": "invalid layer"}, status_code=400)
     if layer.is_empty or layer.length_samples <= 0:
         return JSONResponse(
             {"status": "error", "message": f"layer {layer.slot + 1} is empty — cannot set loop fades"},
@@ -1589,8 +1614,9 @@ async def set_inpaint_regions(req: InpaintRegionsRequest):
         return JSONResponse({"status": "error", "error": "not initialized"}, status_code=503)
     try:
         layer = _layer_manager.get_layer(req.target)
-    except Exception as exc:
-        return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+    except Exception:
+        logger.warning("invalid inpaint-region layer", exc_info=True)
+        return JSONResponse({"status": "error", "message": "invalid layer"}, status_code=400)
     if layer.is_empty or layer.length_samples <= 0:
         return JSONResponse(
             {"status": "error", "message": f"layer {layer.slot + 1} is empty — cannot set inpaint regions"},
@@ -1630,8 +1656,9 @@ async def set_playback_reverse(req: PlaybackReverseRequest):
         return JSONResponse({"status": "error", "error": "not initialized"}, status_code=503)
     try:
         layer = _layer_manager.get_layer(req.target)
-    except Exception as exc:
-        return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+    except Exception:
+        logger.warning("invalid reverse-playback layer", exc_info=True)
+        return JSONResponse({"status": "error", "message": "invalid layer"}, status_code=400)
     if layer.is_empty:
         return JSONResponse(
             {"status": "error", "message": f"layer {layer.slot + 1} is empty — cannot reverse playback"},
@@ -1653,6 +1680,11 @@ async def set_playback_reverse(req: PlaybackReverseRequest):
 
 _waveform_cache: dict[str, dict] = {}
 _WAVEFORM_CACHE_MAX = 32
+
+
+class WaveformRequest(BaseModel):
+    target: int = Field(ge=1, le=16)
+    points: int = Field(default=1024, ge=64, le=2048)
 
 
 def _compute_waveform_peaks(layer, points: int) -> dict:
@@ -1693,9 +1725,7 @@ def _compute_waveform_peaks(layer, points: int) -> dict:
     }
 
 
-@app.get("/api/waveform/{target}")
-async def get_waveform(target: int, points: int = 1024):
-    """get HD waveform peaks for a layer."""
+def _waveform_response(target: int, points: int) -> dict:
     if _layer_manager is None:
         return {"error": "not initialized"}
     idx = target - 1
@@ -1712,6 +1742,18 @@ async def get_waveform(target: int, points: int = 1024):
         del _waveform_cache[oldest]
     _waveform_cache[cache_key] = result
     return result
+
+
+@app.get("/api/waveform/{target}")
+async def get_waveform(target: int, points: int = 1024):
+    """Get HD waveform peaks for API clients using the original GET route."""
+    return _waveform_response(target, points)
+
+
+@app.post("/api/waveform")
+async def post_waveform(req: WaveformRequest):
+    """Get HD waveform peaks without composing a browser-controlled URL."""
+    return _waveform_response(req.target, req.points)
 
 
 @app.websocket("/ws")
@@ -1811,14 +1853,14 @@ async def start_recording(req: RecordRequest):
 
     from oram.command.schemas import RecordAction
     action = RecordAction(target=req.target, duration=req.duration)
-    message = _router.route(action, raw_text="api:record")
+    route_message = _router.route(action, raw_text="api:record")
     recording = bool(getattr(_engine, "_recording", False))
-    if message.startswith("error:") or not recording:
+    if route_message.startswith("error:") or not recording:
         return JSONResponse(
-            {"status": "error", "message": message, "recording": recording},
+            {"status": "error", "message": "recording could not be started", "recording": recording},
             status_code=400,
         )
-    return {"status": "ok", "message": message, "recording": recording}
+    return {"status": "ok", "message": "recording started", "recording": recording}
 
 
 @app.post("/api/stop")
@@ -1830,8 +1872,12 @@ async def stop_recording():
     from oram.command.schemas import StopRecordingAction
     _push_undo("recording")
     action = StopRecordingAction()
-    message = _router.route(action, raw_text="api:stop")
-    return {"status": "ok", "message": message, "recording": bool(getattr(_engine, "_recording", False))}
+    _router.route(action, raw_text="api:stop")
+    return {
+        "status": "ok",
+        "message": "recording stopped",
+        "recording": bool(getattr(_engine, "_recording", False)),
+    }
 
 @app.post("/api/kill")
 async def kill_all():

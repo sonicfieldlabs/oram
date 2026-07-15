@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from oram_sa3_server.registry import registry, strain_registry
 from oram_sa3_server.schemas import StrainCard, StrainLoadRequest, StrainRegistryResponse
 
 router = APIRouter(prefix="/strains", tags=["strains"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=StrainRegistryResponse)
@@ -45,9 +48,10 @@ def load_strains(request: StrainLoadRequest) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"strain not found: {exc.args[0]}") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        return {"status": "error", "provider": request.provider, "error": str(exc)}
+        raise HTTPException(status_code=422, detail="invalid strain selection") from exc
+    except Exception:
+        logger.exception("strain load failed")
+        return {"status": "error", "provider": request.provider, "error": "strain load failed"}
     return {
         **result,
         "provider": request.provider,

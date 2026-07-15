@@ -14,7 +14,7 @@ from typing import Any, MutableSequence, Sequence
 
 from fastapi import APIRouter, HTTPException
 
-from oram_sa3_server.registry import settings, storage
+from oram_sa3_server.registry import storage
 from oram_sa3_server.schemas import GenerationResult, TimeClock, TimeRenderRequest, TimeRenderSource
 
 router = APIRouter()
@@ -65,22 +65,16 @@ def _clip_sample(value: float) -> int:
     return max(-32768, min(32767, int(round(value))))
 
 
-def _ensure_output_path(path: Path, label: str) -> None:
-    try:
-        path.relative_to(settings.output_root.resolve())
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=f"{label} must be inside the germ output directory",
-        ) from exc
-
-
 def _resolve_render_source(source: TimeRenderSource) -> Path:
     try:
-        path = storage.resolve_existing_path(source.audio_path, label="time render source")
+        path = storage.resolve_existing_output_path(source.audio_path, label="time render source")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    _ensure_output_path(path, "time render source")
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="time render source must be inside the output directory",
+        ) from exc
     if path.suffix.lower() != ".wav":
         raise HTTPException(status_code=422, detail="time render source must be a WAV file")
     return path

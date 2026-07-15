@@ -131,7 +131,7 @@ async def payload_from_json_or_form(request: Request) -> dict[str, Any]:
                     filename=value.filename,
                     upload=value,
                     max_bytes=settings.max_upload_bytes,
-                    directory=settings.scratch_dir if transient_upload else None,
+                    transient=transient_upload,
                 )
             except ValueError as exc:
                 raise HTTPException(

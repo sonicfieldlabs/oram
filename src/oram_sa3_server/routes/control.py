@@ -562,13 +562,11 @@ def control_genetic_graph(limit: int = 300) -> ControlGeneticGraphResponse:
 
 def _resolve_output_wav(path: str) -> Path:
     try:
-        target = storage.resolve_existing_path(path, label="audio")
+        target = storage.resolve_existing_output_path(path, label="audio")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    try:
-        target.relative_to(settings.output_root.resolve())
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Only germ output audio can be analyzed.") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Only output audio can be analyzed.") from exc
     if target.suffix.lower() != ".wav":
         raise HTTPException(status_code=422, detail="Control analysis currently requires WAV source files.")
     return target

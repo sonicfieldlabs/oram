@@ -74,12 +74,18 @@
     }
   }
 
-  async function apiGet(endpoint) {
+  async function apiGetDevices() {
     try {
-      const url = new URL(endpoint, window.location.origin);
-      const allowedPath = /^\/api\/(devices|engines|waveform\/\d+)$/.test(url.pathname);
-      if (url.origin !== window.location.origin || !allowedPath) return null;
-      const res = await fetch(url);
+      const res = await fetch('/api/devices');
+      return await res.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function apiGetEngines() {
+    try {
+      const res = await fetch('/api/engines');
       return await res.json();
     } catch (e) {
       return null;
@@ -626,7 +632,7 @@
     const key = waveformCacheKey(layer, points);
     if (waveformCache.has(key) || waveformPending.has(key)) return;
 
-    const request = apiGet(`/api/waveform/${layer.slot}?points=${points}`)
+    const request = apiPost('/api/waveform', { target: layer.slot, points })
       .then(data => {
         waveformPending.delete(key);
         if (!data || data.error || data.revision !== layer.waveform_revision) return;
@@ -995,7 +1001,7 @@
   }
 
   async function loadDevices() {
-    const data = await apiGet('/api/devices');
+    const data = await apiGetDevices();
     if (!data) return;
 
     const inputDevices = data.devices.filter(d => d.is_input);
@@ -2678,7 +2684,7 @@
   }
 
   async function loadEngines() {
-    const data = await apiGet('/api/engines');
+    const data = await apiGetEngines();
     if (!data || !data.engines) return;
 
     engineSelector.innerHTML = '';

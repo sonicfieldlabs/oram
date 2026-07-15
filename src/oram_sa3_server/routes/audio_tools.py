@@ -170,12 +170,10 @@ class WavPayload(BaseModel):
 
 def _resolve_output_audio(path: str) -> Path:
     try:
-        target = storage.resolve_existing_path(path, label="audio")
+        target = storage.resolve_existing_output_path(path, label="audio")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    try:
-        target.relative_to(settings.output_root.resolve())
-    except ValueError as exc:
+    except PermissionError as exc:
         raise HTTPException(status_code=403, detail="Only output audio files can be edited.") from exc
     if target.suffix.lower() != ".wav":
         raise HTTPException(status_code=422, detail="Audio tools currently require WAV source files.")
@@ -715,7 +713,7 @@ def _update_existing_metadata(request: AudioToolRequest, source_audio: Path, sou
             if metadata_path.suffix.lower() != ".json":
                 raise FileNotFoundError
         except (FileNotFoundError, PermissionError) as exc:
-            raise HTTPException(status_code=404, detail=f"Metadata not found: {request.metadata_path}") from exc
+            raise HTTPException(status_code=404, detail="Metadata not found.") from exc
         data = source_metadata or {}
     else:
         job_id = storage.new_job("audio-metadata", request.model_dump())

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import threading
@@ -46,6 +47,8 @@ from oram.types import GenerationEngine, Layer, LayerMode, LayerState, Listening
 from oram_daemon.metadata import find_available_port, write_daemon_metadata
 from oram_library import OramLibrary
 from oram_security import CredentialStore, default_credential_store, redact_mapping, redact_text
+
+logger = logging.getLogger(__name__)
 
 
 def package_version() -> str:
@@ -578,10 +581,11 @@ class LocalOramService:
                 input_device=self.config.input_device,
                 output_device=self.config.output_device,
             )
-        except Exception as exc:
-            self.append_log(f"audio: real unavailable ({exc}); mock disabled")
+        except Exception:
+            logger.exception("real audio engine initialization failed")
+            self.append_log("audio: real unavailable; mock disabled")
             return UnavailableAudioEngine(
-                reason=str(exc),
+                reason="real audio engine unavailable",
                 sample_rate=self.config.sample_rate,
                 block_size=self.config.block_size,
                 input_device=self.config.input_device,
@@ -1206,11 +1210,12 @@ class LocalOramService:
                 "path": str(path),
                 "filename": filename,
             }
-        except Exception as exc:
+        except Exception:
+            logger.exception("layer export failed")
             return {
                 "status": "error",
-                "error": redact_text(exc),
-                "message": f"export failed: {redact_text(exc)}",
+                "error": "export_failed",
+                "message": "layer export failed",
             }
 
     def generate_from_layer(self, req: GenerateFromRequest) -> dict[str, Any]:
@@ -1254,11 +1259,12 @@ class LocalOramService:
                 "loop_end_seconds": round(end / sr, 3) if sr > 0 else 0.0,
                 "loop_duration_seconds": round((end - start) / sr, 3) if sr > 0 else 0.0,
             }
-        except Exception as exc:
+        except Exception:
+            logger.warning("loop-region layer lookup failed", exc_info=True)
             return {
                 "status": "error",
-                "error": redact_text(exc),
-                "message": message,
+                "error": "invalid_layer",
+                "message": "loop region could not be updated",
             }
         return payload
 
@@ -1266,8 +1272,9 @@ class LocalOramService:
         points = max(64, min(int(points), 2048))
         try:
             layer = self.layers.get_layer(target)
-        except Exception as exc:
-            return {"error": "invalid layer", "message": redact_text(exc), "target": target}
+        except Exception:
+            logger.warning("waveform layer lookup failed", exc_info=True)
+            return {"error": "invalid layer", "message": "invalid layer", "target": target}
 
         if layer.is_empty or layer.buffer.shape[0] == 0:
             return {
@@ -1567,11 +1574,12 @@ class LocalOramService:
         provider = provider.strip().lower()
         try:
             self.credential_store.set_secret(provider, value)
-        except Exception as exc:
+        except Exception:
+            logger.exception("credential write failed")
             return {
                 "status": "error",
                 "provider": provider,
-                "message": f"credential write failed: {redact_text(exc)}",
+                "message": "credential write failed",
             }
         self.refresh_provider_credentials()
         self.append_log(f"credentials updated: {provider}")
@@ -1600,8 +1608,14 @@ class LocalOramService:
             else:
                 return {"provider": provider, "configured": True, "status": "not_supported"}
             return {"provider": provider, "configured": True, "status": "ok" if resp.status_code < 400 else "failed"}
-        except Exception as exc:
-            return {"provider": provider, "configured": True, "status": "failed", "message": redact_text(exc)}
+        except Exception:
+            logger.warning("credential test failed", exc_info=True)
+            return {
+                "provider": provider,
+                "configured": True,
+                "status": "failed",
+                "message": "credential test failed",
+            }
 
     def shutdown(self) -> None:
         self.router.kill_all_audio()
@@ -1714,9 +1728,10 @@ def create_app(
     async def stable_audio_render(req: StableAudioRenderRequest):
         try:
             payload = await asyncio.to_thread(service.stable_audio_render, req)
-        except ValueError as exc:
+        except ValueError:
+            logger.warning("invalid Stable Audio daemon request", exc_info=True)
             return JSONResponse(
-                {"status": "error", "error": "invalid_request", "message": redact_text(exc)},
+                {"status": "error", "error": "invalid_request", "message": "Stable Audio request is invalid"},
                 status_code=400,
             )
         status = 400 if payload.get("status") == "error" else 200
@@ -1726,9 +1741,10 @@ def create_app(
     async def plugin_stable_audio_render(req: StableAudioRenderRequest):
         try:
             payload = await asyncio.to_thread(service.stable_audio_render, req, plugin_owned=True)
-        except ValueError as exc:
+        except ValueError:
+            logger.warning("invalid plug-in Stable Audio request", exc_info=True)
             return JSONResponse(
-                {"status": "error", "error": "invalid_request", "message": redact_text(exc)},
+                {"status": "error", "error": "invalid_request", "message": "Stable Audio request is invalid"},
                 status_code=400,
             )
         status = 400 if payload.get("status") == "error" else 200
@@ -1746,9 +1762,10 @@ def create_app(
     async def master_record(req: MasterRecordRequest):
         try:
             payload = service.master_record(req)
-        except Exception as exc:
+        except Exception:
+            logger.exception("master recording failed")
             return JSONResponse(
-                {"status": "error", "message": f"master recording failed: {redact_text(exc)}"},
+                {"status": "error", "message": "master recording failed"},
                 status_code=400,
             )
         if payload.get("status") == "error":
@@ -1775,9 +1792,10 @@ def create_app(
         try:
             data = await request.body()
             payload = await asyncio.to_thread(service.upload_layer, target=target, filename=filename, data=data)
-        except ValueError as exc:
+        except ValueError:
+            logger.warning("daemon audio upload could not be decoded", exc_info=True)
             return JSONResponse(
-                {"status": "error", "error": "invalid_audio", "message": redact_text(exc)},
+                {"status": "error", "error": "invalid_audio", "message": "uploaded audio could not be decoded"},
                 status_code=400,
             )
         return payload
@@ -1801,8 +1819,9 @@ def create_app(
     async def loop_fades(req: LoopFadeRequest):
         try:
             payload = service.set_loop_fades(req)
-        except Exception as exc:
-            return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+        except Exception:
+            logger.warning("invalid loop-fade request", exc_info=True)
+            return JSONResponse({"status": "error", "message": "invalid layer"}, status_code=400)
         if payload.get("status") == "error":
             return JSONResponse(payload, status_code=400)
         return payload
@@ -1811,8 +1830,9 @@ def create_app(
     async def inpaint_regions(req: InpaintRegionsRequest):
         try:
             payload = service.set_inpaint_regions(req)
-        except Exception as exc:
-            return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+        except Exception:
+            logger.warning("invalid inpaint-region request", exc_info=True)
+            return JSONResponse({"status": "error", "message": "invalid layer"}, status_code=400)
         if payload.get("status") == "error":
             return JSONResponse(payload, status_code=400)
         return payload
@@ -1821,8 +1841,9 @@ def create_app(
     async def playback_reverse(req: PlaybackReverseRequest):
         try:
             payload = service.set_playback_reverse(req)
-        except Exception as exc:
-            return JSONResponse({"status": "error", "message": redact_text(exc)}, status_code=400)
+        except Exception:
+            logger.warning("invalid reverse-playback request", exc_info=True)
+            return JSONResponse({"status": "error", "message": "invalid layer"}, status_code=400)
         if payload.get("status") == "error":
             return JSONResponse(payload, status_code=400)
         return payload
