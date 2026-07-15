@@ -17,6 +17,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.11"
+      - name: Install PortAudio runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libportaudio2
       - run: uv sync --extra dev
       - run: uv run pytest -q
       - run: uv run ruff check src tests
