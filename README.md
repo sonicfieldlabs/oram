@@ -41,7 +41,7 @@ optional BYOK providers become constrained audio actions.
 ## Sonic Field Labs stack boundary
 
 ORAM `0.4.1` is the stack's performance instrument. Its direct stack
-integration is GERM `0.3.1`: ORAM can use the local GERM-compatible generation
+integration is GERM `0.3.2`: ORAM can use the local GERM-compatible generation
 surface for constrained sound generation and transformation.
 
 ORAM does not currently embed the AKOÚŌ `v0.9` listening contract or write
