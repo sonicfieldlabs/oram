@@ -41,13 +41,13 @@ optional BYOK providers become constrained audio actions.
 ## Sonic Field Labs stack boundary
 
 ORAM `0.4.1` is the stack's performance instrument. Its direct stack
-integration is GERM `0.3.2`: ORAM can use the local GERM-compatible generation
+integration is GERM `0.3.3`: ORAM can use the local GERM-compatible generation
 surface for constrained sound generation and transformation.
 
 ORAM does not currently embed the AKOÚŌ `v0.9` listening contract or write
-Earworm `0.6.0` / akousma v1.5 records itself. Recordings and exports can enter
-the Listening Stack through OÍDA `0.9.1` or GERM, then be navigated in
-Akousmata `0.6.0` and evaluated by Algophony `0.5.1`. This boundary is
+Earworm `0.6.1` / akousma v1.5 records itself. Recordings and exports can enter
+the Listening Stack through OÍDA `0.9.2` or GERM, then be navigated in
+Akousmata `0.6.1` and evaluated by Algophony `0.5.2`. This boundary is
 intentional: ORAM remains usable as a standalone local instrument.
 
 Not stable objects, but flowing resonant states. Not notes, but unstable
