@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1
+
+- Published the post-0.4 local API and storage hardening already carried by
+  `main`, including stricter file, control, LoRA, strain, render, and daemon
+  request boundaries.
+- Included dashboard security repairs, bounded metadata handling, clean public
+  packaging, deterministic CI dependency setup, and repository ownership.
+- Refreshed the documented Sonic Field Labs stack boundary to the current
+  AKOÚŌ, Earworm, Oída, GERM, Akousmata, and Algophony releases.
+
 ## v0.4.0
 
 A wide audit-and-repair pass across every surface: a reworked audio engine, a

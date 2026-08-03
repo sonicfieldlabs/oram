@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(ORAM_PLUGIN VERSION 0.4.0)
+project(ORAM_PLUGIN VERSION 0.4.1)
 
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/JUCE/CMakeLists.txt")
     add_subdirectory(JUCE)
