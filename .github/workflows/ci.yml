@@ -12,8 +12,11 @@ permissions:
 jobs:
   python:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           python-version: "3.11"
@@ -21,14 +24,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes libportaudio2
-      - run: uv sync --extra dev
-      - run: uv run pytest -q
-      - run: uv run ruff check src tests
+      - run: uv sync --locked --extra dev
+      - run: uv run --locked --extra dev pytest -q
+      - run: uv run --locked --extra dev ruff check src tests
 
   dashboard-syntax:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"

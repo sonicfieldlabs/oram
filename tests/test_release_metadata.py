@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "0.4.1"
+RELEASE_VERSION = "0.4.2"
 
 
 def _read(relative_path: str) -> str:

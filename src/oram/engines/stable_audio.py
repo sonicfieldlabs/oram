@@ -26,6 +26,13 @@ from urllib.parse import quote, urlparse
 import numpy as np
 
 from oram.engines.adapter import EngineSpec, GenerationRequest, GenerationResult
+from oram.engines.audio_output import (
+    MAX_RESPONSE_BYTES,
+    bounded_request,
+    decode_audio_base64,
+    decode_audio_bytes,
+    decode_audio_file,
+)
 from oram.engines.capabilities import AudioCapability, EngineMode, EngineProvider
 from oram_security.network import is_url_allowed
 from oram_security.redaction import redact_text
@@ -136,7 +143,7 @@ class StabilityStableAudioEngine:
             with httpx.Client(timeout=240.0) as client:
                 # Pass form fields via `data=` — httpx encodes as
                 # multipart/form-data automatically when `data` is a dict.
-                response = client.post(
+                response = bounded_request(client, "POST",
                     self.API_URL,
                     headers=headers,
                     data=data,
@@ -175,55 +182,7 @@ class StabilityStableAudioEngine:
         )
 
     def _parse_response(self, response) -> tuple[np.ndarray, int]:
-        tried: list[str] = []
-        content_type = response.headers.get("content-type", "").lower()
-        if "audio" in content_type or response.content.startswith(b"RIFF"):
-            tried.append("raw-audio-bytes")
-            log.debug("_parse_response: matched raw audio bytes")
-            return _decode_audio_bytes(response.content)
-
-        tried.append("raw-audio-bytes(no match)")
-
-        try:
-            data = response.json()
-        except Exception as exc:
-            log.debug("_parse_response: tried paths %s before JSON parse failure", tried)
-            raise RuntimeError("Stable Audio returned a non-audio response") from exc
-
-        if isinstance(data, dict):
-            audio_b64 = (
-                data.get("audio")
-                or data.get("audio_base64")
-                or data.get("base64")
-            )
-            if isinstance(audio_b64, str) and audio_b64:
-                tried.append("json-base64-field")
-                log.debug("_parse_response: matched base64 audio field")
-                return _decode_audio_bytes(b64decode(audio_b64))
-            tried.append("json-base64-field(no match)")
-
-            artifacts = data.get("artifacts")
-            if isinstance(artifacts, list) and artifacts:
-                first = artifacts[0] if isinstance(artifacts[0], dict) else {}
-                artifact_b64 = first.get("base64") or first.get("audio")
-                if isinstance(artifact_b64, str) and artifact_b64:
-                    tried.append("json-artifacts[0]-base64")
-                    log.debug("_parse_response: matched artifacts[0] base64")
-                    return _decode_audio_bytes(b64decode(artifact_b64))
-            tried.append("json-artifacts(no match)")
-
-            url = data.get("url") or (data.get("audio_file") or {}).get("url")
-            if isinstance(url, str) and url:
-                tried.append("json-url")
-                if not is_url_allowed(url):
-                    host = urlparse(url).hostname or "unknown"
-                    raise RuntimeError(f"Stable Audio returned an unallowlisted URL: {host}")
-                log.debug("_parse_response: matched url field -> downloading")
-                return _download_audio(url)
-            tried.append("json-url(no match)")
-
-        log.debug("_parse_response: all paths exhausted, tried: %s", tried)
-        raise RuntimeError(f"Stable Audio returned no audio (tried: {', '.join(tried)})")
+        return _parse_audio_response(response, allow_local_paths=False)
 
 
 class StabilityStableAudio3Engine:
@@ -287,7 +246,7 @@ class StabilityStableAudio3Engine:
 
         try:
             with httpx.Client(timeout=360.0) as client:
-                response = client.post(
+                response = bounded_request(client, "POST",
                     self._api_url,
                     headers=headers,
                     data=data,
@@ -371,7 +330,7 @@ class LocalStableAudio3Engine:
                 raise RuntimeError("local Stable Audio service URL is not allowed")
 
             with httpx.Client(timeout=0.75) as client:
-                response = client.get(f"{self._base_url}/health")
+                response = bounded_request(client, "GET", f"{self._base_url}/health", allow_local=True)
                 self._healthy = 200 <= response.status_code < 500
         except Exception:
             self._healthy = False
@@ -424,7 +383,7 @@ class LocalStableAudio3Engine:
                 # to the mode-mapped route instead of paying a 404 probe first
                 response = _post_local_mode_render(client, base_url, payload)
                 if response.status_code == 404:
-                    response = client.post(f"{base_url}/{mode}", json=payload)
+                    response = bounded_request(client, "POST", f"{base_url}/{mode}", allow_local=True, json=payload)
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             body = redact_text(exc.response.text[:300])
@@ -524,8 +483,8 @@ class FalStableAudioEngine:
 
         try:
             with httpx.Client(timeout=120.0) as client:
-                response = client.post(
-                    f"https://fal.run/{self.FAL_ENDPOINT}",
+                response = bounded_request(
+                    client, "POST", f"https://fal.run/{self.FAL_ENDPOINT}",
                     json=payload,
                     headers=headers,
                 )
@@ -874,7 +833,7 @@ def _post_local_mode_render(client, base_url: str, payload: dict[str, Any]):
     """Call Germinator-compatible mode endpoints for local Stable Audio."""
     endpoint, body, temporary_paths = _germinator_request_from_payload(payload)
     try:
-        return client.post(f"{base_url}{endpoint}", json=body)
+        return bounded_request(client, "POST", f"{base_url}{endpoint}", allow_local=True, json=body)
     finally:
         for path in temporary_paths:
             try:
@@ -1117,13 +1076,12 @@ def _multipart_audio_files(request: GenerationRequest) -> dict[str, tuple[str, b
 
 
 def _local_or_allowlisted_url(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
-    if host in {"127.0.0.1", "localhost", "::1"}:
-        return True
-    return is_url_allowed(url)
+    return is_url_allowed(url, allow_local=True)
 
 
 def _parse_audio_response(response, *, allow_local_paths: bool, base_url: str = "") -> tuple[np.ndarray, int]:
+    if len(response.content) > MAX_RESPONSE_BYTES:
+        raise ValueError("Provider response exceeds the byte limit")
     content_type = response.headers.get("content-type", "").lower()
     if "audio" in content_type or response.content.startswith(b"RIFF"):
         return _decode_audio_bytes(response.content)
@@ -1136,15 +1094,17 @@ def _parse_audio_response(response, *, allow_local_paths: bool, base_url: str = 
     return _parse_audio_payload(data, allow_local_paths=allow_local_paths, base_url=base_url)
 
 
-def _parse_audio_payload(data: Any, *, allow_local_paths: bool, base_url: str = "") -> tuple[np.ndarray, int]:
+def _parse_audio_payload(data: Any, *, allow_local_paths: bool, base_url: str = "", _depth: int = 0) -> tuple[np.ndarray, int]:
+    if _depth > 16:
+        raise ValueError("Provider audio payload nesting exceeds the limit")
     if isinstance(data, list) and data:
-        return _parse_audio_payload(data[0], allow_local_paths=allow_local_paths, base_url=base_url)
+        return _parse_audio_payload(data[0], allow_local_paths=allow_local_paths, base_url=base_url, _depth=_depth + 1)
     if not isinstance(data, dict):
         raise RuntimeError("Stable Audio returned no audio")
 
     variations = data.get("variations") or data.get("outputs")
     if isinstance(variations, list) and variations:
-        return _parse_audio_payload(variations[0], allow_local_paths=allow_local_paths, base_url=base_url)
+        return _parse_audio_payload(variations[0], allow_local_paths=allow_local_paths, base_url=base_url, _depth=_depth + 1)
 
     audio_files = data.get("audio_files")
     if isinstance(audio_files, list) and audio_files:
@@ -1152,19 +1112,18 @@ def _parse_audio_payload(data: Any, *, allow_local_paths: bool, base_url: str = 
 
     audio_b64 = data.get("audio") or data.get("audio_base64") or data.get("base64")
     if isinstance(audio_b64, str) and audio_b64:
-        if audio_b64.startswith("data:"):
-            audio_b64 = audio_b64.split(",", 1)[-1]
-        return _decode_audio_bytes(b64decode(audio_b64))
+        return decode_audio_base64(audio_b64)
 
     artifacts = data.get("artifacts")
     if isinstance(artifacts, list) and artifacts:
-        return _parse_audio_payload(artifacts[0], allow_local_paths=allow_local_paths, base_url=base_url)
+        return _parse_audio_payload(artifacts[0], allow_local_paths=allow_local_paths, base_url=base_url, _depth=_depth + 1)
 
     path = data.get("audio_path") or data.get("path")
     if allow_local_paths and isinstance(path, str) and path:
         return _decode_audio_file(path)
 
-    url = data.get("url") or (data.get("audio_file") or {}).get("url")
+    audio_file = data.get("audio_file")
+    url = data.get("url") or (audio_file.get("url") if isinstance(audio_file, dict) else None)
     if isinstance(url, str) and url:
         return _download_audio_for_response(url, allow_local=allow_local_paths)
 
@@ -1194,56 +1153,24 @@ def _decode_result_file(file_ref: Any, *, allow_local_paths: bool, base_url: str
 
 
 def _decode_audio_file(path: str) -> tuple[np.ndarray, int]:
-    file_path = Path(path).expanduser()
-    if not file_path.exists():
-        raise FileNotFoundError(file_path)
-    return _decode_audio_bytes(file_path.read_bytes())
+    return decode_audio_file(path)
 
 
 def _download_audio_for_response(url: str, *, allow_local: bool) -> tuple[np.ndarray, int]:
     import httpx
 
-    if allow_local:
-        allowed = _local_or_allowlisted_url(url)
-    else:
-        allowed = is_url_allowed(url)
-    if not allowed:
-        host = urlparse(url).hostname or "unknown"
-        raise ValueError(f"Audio download blocked — host not in allowlist: {host}")
-
     with httpx.Client(timeout=60.0) as client:
-        response = client.get(url)
+        response = bounded_request(client, "GET", url, allow_local=allow_local)
         response.raise_for_status()
     return _decode_audio_bytes(response.content)
 
 
 def _decode_audio_bytes(content: bytes) -> tuple[np.ndarray, int]:
-    import soundfile as sf
-
-    buf = BytesIO(content)
-    audio, sr = sf.read(buf)
-
-    if audio.ndim == 1:
-        audio = np.column_stack([audio, audio])
-    elif audio.ndim == 2 and audio.shape[1] > 2:
-        audio = audio[:, :2]
-
-    return audio.astype(np.float32), int(sr)
+    return decode_audio_bytes(content)
 
 
 def _download_audio(url: str) -> tuple[np.ndarray, int]:
-    """download and decode audio from a URL."""
-    import httpx
-
-    if not is_url_allowed(url):
-        host = urlparse(url).hostname or "unknown"
-        raise ValueError(f"Audio download blocked — host not in allowlist: {host}")
-
-    with httpx.Client(timeout=60.0) as client:
-        response = client.get(url)
-        response.raise_for_status()
-
-    return _decode_audio_bytes(response.content)
+    return _download_audio_for_response(url, allow_local=False)
 
 
 # Backward-compatible name used by existing tests and imports.
