@@ -3,7 +3,7 @@
 # ORAM
 a speech-operated terminal looper for synthetic sound studies.
 
-Current release: `0.4.1`.
+Current release: `0.4.2`.
 
 > "We seem to have tuned circuits within us"
 > — Daphne Oram, *An Individual Note of Music, Sound and Electronics*
@@ -40,7 +40,7 @@ optional BYOK providers become constrained audio actions.
 
 ## Sonic Field Labs stack boundary
 
-ORAM `0.4.1` is the stack's performance instrument. Its direct stack
+ORAM `0.4.2` is the stack's performance instrument. Its direct stack
 integration is the local GERM-compatible generation
 surface for constrained sound generation and transformation.
 
@@ -671,3 +671,15 @@ Audio Unit discovery issues: run `plugins/oram-plugin/scripts/validate_macos.sh`
 restart the DAW or AudioComponent registrar, then retry host/plugin scanning.
 
 Import errors: ensure you installed from the project root.
+
+### Provider output limits and reproducible development
+
+Use `uv sync --locked --extra dev` and `uv run --locked --extra dev pytest -q` for the reviewed
+runtime/development graph. Optional STT and MIDI extras are resolved in the lockfile but are not
+required by the default checks; model weights are not installed by these commands.
+
+Stable Audio adapters accept at most 96 MiB of encoded audio bytes, 24 million frames, 400 seconds,
+192 kHz, and two channels. HTTP responses have a separate bounded base64-envelope allowance.
+Redirects and HTTP compression are rejected. Cloud downloads require an allowlisted HTTPS host;
+local adapters additionally accept loopback HTTP or explicitly configured `ORAM_NETWORK_ALLOWLIST`
+hosts. A local adapter is an operator-trusted service and may return local result files.

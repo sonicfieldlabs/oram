@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.2
+
+- Bound streamed provider responses, base64 output, local result files, and decoded audio before allocation. Reject redirects, compressed responses, oversized or malformed audio, and non-finite samples.
+- Require HTTPS for cloud destinations and an explicit local-adapter boundary for loopback or operator-allowlisted HTTP providers.
+- Commit uv.lock and use the same locked runtime/development graph in CI.
+
 ## v0.4.1
 
 - Published the post-0.4 local API and storage hardening already carried by
