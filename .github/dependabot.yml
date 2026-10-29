@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directories:
+      - "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "10:00"
+      timezone: America/Bogota
+    open-pull-requests-limit: 2
+    groups:
+      compatible-uv:
+        patterns: ["*"]
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "10:00"
+      timezone: America/Bogota
+    open-pull-requests-limit: 2
+    groups:
+      compatible-github-actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
