@@ -1,0 +1,52 @@
+name: Prepare reviewed security lock
+
+on:
+  push:
+    branches: [security/phase2-python-20261102]
+    paths:
+      - pyproject.toml
+      - .github/workflows/security-lock-candidate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.12.7"
+          python-version: "3.12.16"
+      - name: Resolve only the selected patched versions on the disposable runner
+        run: >-
+          uv lock --default-index https://pypi.org/simple
+          --upgrade-package filelock==4.2.7
+          --upgrade-package opentelemetry-api==1.45.2
+          --upgrade-package setuptools==84.2.1
+      - name: Bind the candidate to its exact source
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          Path("lock-provenance.json").write_text(json.dumps({
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "sourceSha": os.environ["GITHUB_SHA"],
+              "runId": os.environ["GITHUB_RUN_ID"],
+              "lockSha256": hashlib.sha256(Path("uv.lock").read_bytes()).hexdigest(),
+              "projectSha256": hashlib.sha256(Path("pyproject.toml").read_bytes()).hexdigest(),
+              "deployment": False,
+          }, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-lock-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            uv.lock
+            lock-provenance.json
+          retention-days: 1
+          if-no-files-found: error
