@@ -25,6 +25,7 @@ dependencies = [
     "uvicorn[standard]>=0.20",
     "websockets>=11.0",
     "python-multipart>=0.0.31",
+    "opentelemetry-api>=1.45.1,<2",
 ]
 
 [project.urls]
@@ -40,6 +41,8 @@ dev = [
 ]
 stt = [
     "openai-whisper>=20231117",
+    "filelock>=4.2.1,<5",
+    "setuptools>=84.1.0",
 ]
 web = [
     "fastapi>=0.139",
