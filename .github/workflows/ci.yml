@@ -10,6 +10,45 @@ permissions:
   contents: read
 
 jobs:
+  optional-lock-compatibility:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.16"
+      - name: Install patched optional cache and build helpers from wheels
+        run: >-
+          python -m pip --isolated install --only-binary=:all:
+          filelock==4.2.7 setuptools==84.2.1
+      - name: Exercise a synthetic lock without an audio model
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from filelock import FileLock, Timeout
+          from setuptools import build_meta
+
+          with TemporaryDirectory() as directory:
+              path = Path(directory) / "synthetic-cache.lock"
+              first = FileLock(path)
+              second = FileLock(path)
+              with first:
+                  try:
+                      second.acquire(timeout=0)
+                  except Timeout:
+                      pass
+                  else:
+                      raise AssertionError("A second cache writer acquired a held lock")
+              with second:
+                  assert second.is_locked
+          assert callable(build_meta.get_requires_for_build_wheel)
+          print("Patched lock exclusion, release/reacquire and build-helper import passed")
+          PY
+
   python:
     runs-on: ubuntu-latest
     timeout-minutes: 20
