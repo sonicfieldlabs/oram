@@ -35,7 +35,7 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def inspect(roots, scratch, scanner):
+def inspect(roots, scratch, scanner, fixed_system_path_evidence):
     destination=scratch/'privacy-strings';destination.mkdir()
     rows=[];home=[];forbidden=[]
     allowed_accounts={'runner','runneradmin','Shared','Public','Guest','brew','build','builder'}
@@ -49,16 +49,26 @@ def inspect(roots, scratch, scanner):
             text='\n'.join(m.group().decode('ascii') for m in re.finditer(rb'[\x20-\x7e]{6,}',body))
             for pattern,encoding in [(rb'(?:[\x20-\x7e]\x00){6,}','utf-16-le'),(rb'(?:\x00[\x20-\x7e]){6,}','utf-16-be')]:
                 text+='\n'+'\n'.join(m.group().decode(encoding) for m in re.finditer(pattern,body))
-            unknown=0;generic=0
+            unknown=0;generic=0;fixed_system_fragments=0
             for match in re.finditer(r'/(?:Users|home)/([^/\s\"\x00<>]{1,100})',text):
                 account=match.group(1)
-                if account in allowed_accounts:generic+=1
+                before=text.rfind('\n',0,match.start())+1
+                after=text.find('\n',match.end())
+                whole_string=text[before:after if after!=-1 else len(text)]
+                # AArch64 stores this fixed JUCE commonDocumentsDirectory
+                # constant as a prefix fragment. Recognize only the exact whole
+                # extracted string in native binaries from the pinned source;
+                # never allow a Share username or an arbitrary nested path.
+                if root_index<3 and fixed_system_path_evidence['upstream_constant_verified'] and whole_string=='/Users/Share':
+                    fixed_system_fragments+=1
+                elif account in allowed_accounts:generic+=1
                 else:unknown+=1
+            assert fixed_system_fragments<=1, 'Unexpected repeated fixed-system-path fragment needs review'
             if unknown:home.append({'file_ordinal':len(rows),'unknown_home_candidates':unknown})
             (destination/(str(len(rows))+'.txt')).write_text(text)
             magic=body[:4]
             kind='Mach-O' if magic in [bytes.fromhex(x) for x in ['cffaedfe','feedfacf','cefaedfe','feedface','cafebabe','bebafeca']] else 'source-text' if path.suffix in ['.py','.js','.json','.html','.css','.md','.toml','.yaml','.yml','.txt'] else 'resource'
-            rows.append({'ordinal':len(rows),'package':['AU','VST3','Standalone','SwiftApp'][root_index],'relative_name_sha256':hashlib.sha256(str(path.relative_to(root)).encode()).hexdigest(),'extension':path.suffix if re.fullmatch(r'\.[A-Za-z0-9]{1,8}',path.suffix) else None,'file_kind':kind,'bytes':len(body),'sha256':sha(path),'unknown_home_candidates':unknown,'generic_CI_or_vendor_home_markers':generic})
+            rows.append({'ordinal':len(rows),'package':['AU','VST3','Standalone','SwiftApp'][root_index],'relative_name_sha256':hashlib.sha256(str(path.relative_to(root)).encode()).hexdigest(),'extension':path.suffix if re.fullmatch(r'\.[A-Za-z0-9]{1,8}',path.suffix) else None,'file_kind':kind,'bytes':len(body),'sha256':sha(path),'unknown_home_candidates':unknown,'fixed_system_path_fragments':fixed_system_fragments,'generic_CI_or_vendor_home_markers':generic})
     config=scratch/'gitleaks.toml';config.write_text('[extend]\nuseDefault = true\n')
     report=scratch/'gitleaks-redacted.json'
     with (scratch/'gitleaks.log').open('wb') as log:
@@ -66,6 +76,8 @@ def inspect(roots, scratch, scanner):
     assert scan.returncode in [0,1]
     candidates=json.loads(report.read_text())
     summary={'files':len(rows),'bytes':total,'unknown_home_candidates':sum(x['unknown_home_candidates'] for x in home),'generic_CI_or_vendor_home_markers':sum(x['generic_CI_or_vendor_home_markers'] for x in rows),'forbidden_file_count':len(forbidden),'secret_candidates':len(candidates),'secret_rules':dict(collections.Counter(x['RuleID'] for x in candidates)),'generic_home_exception':'Known ephemeral CI/system/vendor build accounts only; no arbitrary /Users allowance'}
+    summary['fixed_system_path_fragments']=sum(x['fixed_system_path_fragments'] for x in rows)
+    summary['fixed_system_path_evidence']=fixed_system_path_evidence
     summary['sanitized_diagnostic_only']=True
     summary['contains_secret_or_home_values']=False
     summary['payload_cleared']=not home and not forbidden and not candidates
@@ -74,7 +86,7 @@ def inspect(roots, scratch, scanner):
     # This diagnostic deliberately omits scanner matches, secret values, home
     # prefixes, string excerpts and the blocked payload itself.
     (scratch/'privacy-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
-    print(json.dumps({k:summary[k] for k in ['files','unknown_home_candidates','generic_CI_or_vendor_home_markers','forbidden_file_count','secret_candidates','secret_rules','payload_cleared']}))
+    print(json.dumps({k:summary[k] for k in ['files','unknown_home_candidates','fixed_system_path_fragments','generic_CI_or_vendor_home_markers','forbidden_file_count','secret_candidates','secret_rules','payload_cleared']}))
     assert summary['payload_cleared'], 'Privacy qualification failed; sanitized diagnostic only, no payload upload'
     return summary
 
@@ -185,7 +197,12 @@ def main():
     assert sha(uv)==sha(vendor_bin/'uv'), 'Outer signing changed the vendor binary'
     run('codesign','--verify','--deep','--strict',app)
     scanner=Path(os.environ['GITLEAKS_BIN'])
-    privacy=inspect(bundles+[app],scratch,scanner)
+    juce=source/'plugins/oram-plugin/JUCE'
+    assert run('git','rev-parse','HEAD',cwd=juce,capture=True).stdout.strip()==os.environ['JUCE_SOURCE']
+    upstream=juce/'modules/juce_core/native/juce_Files_mac.mm'
+    assert re.search(rb'case commonDocumentsDirectory:\s+resultPath = "/Users/Shared"; break;',upstream.read_bytes())
+    fixed_system_path_evidence={'JUCE_commit':os.environ['JUCE_SOURCE'],'source':'modules/juce_core/native/juce_Files_mac.mm','canonical_system_path':'/Users/Shared','exact_compiler_prefix_fragment':'/Users/Share','upstream_constant_verified':True,'scope':'At most one exact whole extracted fragment per pinned native binary; no arbitrary account or nested path allowance'}
+    privacy=inspect(bundles+[app],scratch,scanner,fixed_system_path_evidence)
     qualified=Path(os.environ['RUNNER_TEMP'])/'oram-qualified-public-candidates';qualified.mkdir()
     names=['ORAM-AU-Release.zip','ORAM-VST3-Release.zip','ORAM-Standalone-Release.zip']
     for bundle,name in zip(bundles,names):archive(bundle,qualified/name)
