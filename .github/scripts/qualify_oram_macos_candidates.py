@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import zipfile
 
@@ -106,7 +107,37 @@ def main():
     installed.parent.mkdir(parents=True,exist_ok=True)
     assert not installed.exists()
     shutil.copytree(bundles[0],installed,symlinks=True)
-    run('auval','-v','aufx','Oram','Sflb')
+    # Check the generated registration tuple rather than assuming a failed
+    # discovery means the Audio Unit itself passed or failed validation.
+    component_info=plistlib.loads((installed/'Contents/Info.plist').read_bytes())
+    expected=('aufx','Oram','Sflb')
+    components=component_info.get('AudioComponents',[])
+    assert any(tuple(x.get(k) for k in ['type','subtype','manufacturer'])==expected for x in components), 'Unexpected Audio Unit registration metadata'
+    # Private qualification scratch is 0700; an installed plug-in must have
+    # normal bundle permissions for the runner's audio registration service.
+    for directory in [installed.parent.parent.parent,installed.parent.parent,installed.parent,installed]:
+        directory.chmod(0o755)
+    for item in installed.rglob('*'):
+        if item.is_symlink():continue
+        item.chmod(0o755 if item.is_dir() or os.access(item,os.X_OK) else 0o644)
+    run('codesign','--verify','--deep','--strict',installed)
+    registered=re.compile(r'^\s*aufx\s+Oram\s+Sflb(?:\s|$)',re.MULTILINE)
+    registration={'tuple':list(expected),'generated_metadata_verified':True,'installed_signature_verified':True,'scope':'disposable runner user only','cache_refresh_requested':False,'discovery_attempts':0}
+    listing=run('auval','-a',capture=True).stdout
+    registration['discovery_attempts']+=1
+    if not registered.search(listing):
+        # Refresh only this ephemeral CI user's component registrar. Do not
+        # delete global caches, disable signing checks or touch the owner Mac.
+        reset=subprocess.run(['pkill','-TERM','-u',str(os.getuid()),'-x','AudioComponentRegistrar'],capture_output=True,timeout=10)
+        assert reset.returncode in [0,1], 'Could not request scoped Audio Unit registration refresh'
+        registration['cache_refresh_requested']=True
+        for attempt in range(5):
+            listing=run('auval','-a',capture=True).stdout
+            registration['discovery_attempts']+=1
+            if registered.search(listing):break
+            if attempt<4:time.sleep(2)
+    assert registered.search(listing), 'Built Audio Unit did not register in disposable CI; validation gate remains closed'
+    run('auval','-v',*expected)
     swift_scratch=scratch/'swift-build'
     swift_args=['swift','build','--package-path',str(source/'apps/macos'),'--scratch-path',str(swift_scratch),'-c','release']
     for option in ['-debug-prefix-map','-file-prefix-map']:
@@ -163,7 +194,7 @@ def main():
         run('hdiutil','detach',mounted)
     payload=[{'path':p.name,'bytes':p.stat().st_size,'sha256':sha(p)} for p in sorted(qualified.iterdir())]
     (qualified/'checksums.txt').write_text(''.join(x['sha256']+'  '+x['path']+'\n' for x in payload))
-    report={'schema':1,'source_commit':os.environ['RELEASE_SOURCE'],'workflow_head':os.environ['WORKFLOW_HEAD'],'run_id':os.environ['GITHUB_RUN_ID'],'version':version,'JUCE_commit':os.environ['JUCE_SOURCE'],'architecture':'arm64','minimum_macos':'13.0','owner_MAC_execution':False,'provider_credentials_supplied':False,'published_or_replaced':False,'codesign':'ad-hoc, matching existing alpha distribution; not Developer ID/notarized','AU_validation':'passed','VST3_moduleinfo':'present','disk_image_actual_payload_hashes_verified':True,'privacy':privacy,'files':payload,'human_DAW_and_GUI_acceptance':'still required before publishing','uv_vendor_sha256':sha(uv),'source_features':'current audited v0.4.2 source, native plug-in code unchanged from v0.4'}
+    report={'schema':1,'source_commit':os.environ['RELEASE_SOURCE'],'workflow_head':os.environ['WORKFLOW_HEAD'],'run_id':os.environ['GITHUB_RUN_ID'],'version':version,'JUCE_commit':os.environ['JUCE_SOURCE'],'architecture':'arm64','minimum_macos':'13.0','owner_MAC_execution':False,'provider_credentials_supplied':False,'published_or_replaced':False,'codesign':'ad-hoc, matching existing alpha distribution; not Developer ID/notarized','AU_validation':'passed','AU_registration':registration,'VST3_moduleinfo':'present','disk_image_actual_payload_hashes_verified':True,'privacy':privacy,'files':payload,'human_DAW_and_GUI_acceptance':'still required before publishing','uv_vendor_sha256':sha(uv),'source_features':'current audited v0.4.2 source, native plug-in code unchanged from v0.4'}
     (qualified/'qualification.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({'qualified_files':len(payload),'privacy':privacy,'published':False}))
 
