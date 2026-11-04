@@ -1,0 +1,100 @@
+name: Inspect retained legacy macOS release
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/legacy-release-privacy-review.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Inspect the exact legacy disk image without running its code
+    runs-on: macos-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Verify public input and inspect only in disposable CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import collections, hashlib, json, os, pathlib, platform, re, subprocess, tarfile, urllib.request
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'legacy-oram-review'
+          root.mkdir(mode=0o700)
+          output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'legacy-oram-public-report'
+          output.mkdir(mode=0o700)
+          PINS = json.loads('{"gitleaks_8.30.1_darwin_arm64.tar.gz": {"url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz", "digest": "sha256:b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"}, "gitleaks_8.30.1_darwin_x64.tar.gz": {"url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_x64.tar.gz", "digest": "sha256:dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"}}')
+          ASSET = json.loads('{"id": 474572292, "url": "https://github.com/sonicfieldlabs/oram/releases/download/v0.4/ORAM.dmg", "bytes": 26349533, "digest": "sha256:8afb42cff92e5f8e2683873f7e441ce49d394a56f7eb303dcb9e1b5f769669c5"}')
+          def download(url, target, maximum):
+              with urllib.request.urlopen(url, timeout=60) as response, target.open('xb') as stream:
+                  size = 0
+                  while True:
+                      block = response.read(65536)
+                      if not block: break
+                      size += len(block)
+                      assert size <= maximum
+                      stream.write(block)
+          arch = {'arm64': 'arm64', 'x86_64': 'x64'}[platform.machine()]
+          pin = PINS['gitleaks_8.30.1_darwin_' + arch + '.tar.gz']
+          archive = root / 'scanner.tar.gz'
+          download(pin['url'], archive, 12 * 1024**2)
+          assert 'sha256:' + hashlib.sha256(archive.read_bytes()).hexdigest() == pin['digest']
+          scanner = root / 'gitleaks'
+          with tarfile.open(archive, 'r:gz') as package:
+              item = package.getmember('gitleaks')
+              assert item.isfile() and item.size < 40 * 1024**2
+              scanner.write_bytes(package.extractfile(item).read())
+          scanner.chmod(0o700)
+          image = root / 'ORAM.dmg'
+          download(ASSET['url'], image, 40 * 1024**2)
+          assert image.stat().st_size == ASSET['bytes']
+          assert 'sha256:' + hashlib.sha256(image.read_bytes()).hexdigest() == ASSET['digest']
+          mount = root / 'mounted'
+          mount.mkdir(mode=0o700)
+          strings = root / 'strings'
+          strings.mkdir(mode=0o700)
+          rows = []
+          mounted = False
+          try:
+              subprocess.run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', str(mount), str(image)], check=True, capture_output=True, timeout=90)
+              mounted = True
+              total = 0
+              for path in sorted(mount.rglob('*')):
+                  if path.is_symlink() or not path.is_file(): continue
+                  assert len(rows) < 1000
+                  size = path.stat().st_size
+                  total += size
+                  assert size <= 64 * 1024**2 and total <= 200 * 1024**2
+                  body = path.read_bytes()
+                  runs = [m.group().decode('ascii') for m in re.finditer(rb'[\x20-\x7e]{6,}', body)]
+                  for pattern, encoding in [(rb'(?:[\x20-\x7e]\x00){6,}', 'utf-16-le'), (rb'(?:\x00[\x20-\x7e]){6,}', 'utf-16-be')]:
+                      runs += [m.group().decode(encoding) for m in re.finditer(pattern, body)]
+                  text = '\n'.join(runs)
+                  assert len(text) <= 150 * 1024**2
+                  destination = strings / (str(len(rows)) + '.txt')
+                  destination.write_text(text)
+                  local = list(re.finditer(r'/(?:Users|home)/[^/\s"<>]{1,100}', text))
+                  rows.append({'ordinal': len(rows), 'member_name_sha256': hashlib.sha256(str(path.relative_to(mount)).encode()).hexdigest(), 'member_sha256': hashlib.sha256(body).hexdigest(), 'bytes': size, 'local_home_marker_candidates': len(local), 'Finder_metadata': path.name == '.DS_Store', 'source_map': path.name.endswith('.map')})
+          finally:
+              if mounted:
+                  subprocess.run(['hdiutil', 'detach', str(mount)], check=True, capture_output=True, timeout=60)
+          config = root / 'gitleaks.toml'
+          config.write_text('[extend]\nuseDefault = true\n')
+          report = root / 'gitleaks-redacted.json'
+          with (root / 'scanner.log').open('wb') as log:
+              result = subprocess.run([str(scanner), 'dir', str(strings), '--config', str(config), '--ignore-gitleaks-allow', '--redact=100', '--max-target-megabytes=150', '--report-format=json', '--report-path', str(report), '--no-banner'], stdout=log, stderr=log, timeout=120)
+          assert result.returncode in [0, 1]
+          findings = json.loads(report.read_text())
+          summary = {'schema': 1, 'repository': os.environ['GITHUB_REPOSITORY'], 'source_head': os.environ['SOURCE_HEAD'], 'run_id': os.environ['GITHUB_RUN_ID'], 'asset_id': ASSET['id'], 'asset_digest': ASSET['digest'], 'asset_digest_verified': True, 'scanner_version': '8.30.1', 'scanner_digest_verified': True, 'mounted_readonly_in_disposable_CI': True, 'mounted_on_operator_host': False, 'release_code_executed': False, 'provider_credentials_supplied': False, 'secrets_or_home_values_in_report': False, 'files': rows, 'secret_candidates': len(findings), 'secret_candidate_rules': dict(collections.Counter(x['RuleID'] for x in findings)), 'local_home_marker_candidates': sum(x['local_home_marker_candidates'] for x in rows), 'Finder_metadata_files': sum(x['Finder_metadata'] for x in rows), 'source_maps': sum(x['source_map'] for x in rows), 'status': 'inspection_completed_not_release_clearance'}
+          (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps({k: summary[k] for k in ['status', 'asset_id', 'secret_candidates', 'local_home_marker_candidates', 'Finder_metadata_files']}))
+          PYCODE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-oram-privacy-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/legacy-oram-public-report/summary.json
+          if-no-files-found: error
+          retention-days: 3
