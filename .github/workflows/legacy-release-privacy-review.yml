@@ -79,8 +79,8 @@ jobs:
                   destination.write_text(text)
                   local = list(re.finditer(r'/(?:Users|home)/[^/\s"<>]{1,100}', text))
                   generic_accounts = {'runner','runneradmin','Shared','Public','Guest','brew','build','builder'}
-          generic = sum(match.group().split('/')[-1] in generic_accounts for match in local)
-          rows.append({'ordinal': len(rows), 'member_name_sha256': hashlib.sha256(str(path.relative_to(mount)).encode()).hexdigest(), 'member_sha256': hashlib.sha256(body).hexdigest(), 'bytes': size, 'local_home_marker_candidates': len(local), 'unknown_home_marker_candidates': len(local) - generic, 'generic_CI_or_vendor_home_markers': generic, 'Finder_metadata': path.name == '.DS_Store', 'source_map': path.name.endswith('.map')})
+                  generic = sum(match.group().split('/')[-1] in generic_accounts for match in local)
+                  rows.append({'ordinal': len(rows), 'member_name_sha256': hashlib.sha256(str(path.relative_to(mount)).encode()).hexdigest(), 'member_sha256': hashlib.sha256(body).hexdigest(), 'bytes': size, 'local_home_marker_candidates': len(local), 'unknown_home_marker_candidates': len(local) - generic, 'generic_CI_or_vendor_home_markers': generic, 'Finder_metadata': path.name == '.DS_Store', 'source_map': path.name.endswith('.map')})
           finally:
               if mounted:
                   subprocess.run(['hdiutil', 'detach', str(mount)], check=True, capture_output=True, timeout=60)
