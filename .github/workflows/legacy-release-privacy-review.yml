@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/legacy-release-privacy-review.yml
+      - .github/scripts/qualify_oram_macos_candidates.py
 
 permissions:
   contents: read
@@ -96,5 +97,73 @@ jobs:
         with:
           name: legacy-oram-privacy-${{ github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/legacy-oram-public-report/summary.json
+          if-no-files-found: error
+          retention-days: 3
+
+  candidates:
+    name: Build and qualify clean arm64 replacement candidates without publishing
+    runs-on: macos-latest
+    timeout-minutes: 35
+    env:
+      RELEASE_SOURCE: 066fa603a5ae568d09fb457924aa1b1da795e18f
+      JUCE_SOURCE: 7c9d3783b127263d72bb65fe0a7e2dc8a02a7ac2
+      WORKFLOW_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: workflow
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 066fa603a5ae568d09fb457924aa1b1da795e18f
+          path: release-source
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: juce-framework/JUCE
+          ref: 7c9d3783b127263d72bb65fe0a7e2dc8a02a7ac2 # 8.0.13, existing clean upstream dependency
+          path: release-source/plugins/oram-plugin/JUCE
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.16'
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.13.6'
+          enable-cache: false
+      - name: Authenticate the pinned official scanner, without executing release code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import hashlib, os, pathlib, platform, tarfile, urllib.request
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'candidate-scanner'
+          root.mkdir()
+          pins = {
+              'arm64': ('https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz', 'b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5'),
+              'x86_64': ('https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_x64.tar.gz', 'dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709'),
+          }
+          url, expected = pins[platform.machine()]
+          with urllib.request.urlopen(url, timeout=60) as response:
+              data = response.read(12 * 1024**2)
+          assert hashlib.sha256(data).hexdigest() == expected
+          archive = root / 'scanner.tar.gz'
+          archive.write_bytes(data)
+          with tarfile.open(archive, 'r:gz') as package:
+              item = package.getmember('gitleaks')
+              assert item.isfile() and item.size < 40 * 1024**2
+              binary = root / 'gitleaks'
+              binary.write_bytes(package.extractfile(item).read())
+              binary.chmod(0o700)
+          PYCODE
+      - name: Build, validate and privacy-check the actual replacement packages
+        shell: bash
+        env:
+          GITLEAKS_BIN: ${{ runner.temp }}/candidate-scanner/gitleaks
+        run: python3 workflow/.github/scripts/qualify_oram_macos_candidates.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oram-clean-macos-candidates-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/oram-qualified-public-candidates/
           if-no-files-found: error
           retention-days: 3
