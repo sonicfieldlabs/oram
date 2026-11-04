@@ -161,6 +161,14 @@ jobs:
         env:
           GITLEAKS_BIN: ${{ runner.temp }}/candidate-scanner/gitleaks
         run: python3 workflow/.github/scripts/qualify_oram_macos_candidates.py
+      - name: Retain only value-free privacy diagnostics on qualification failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oram-privacy-diagnostic-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/oram-clean-candidates/privacy-summary.json
+          if-no-files-found: warn
+          retention-days: 3
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: oram-clean-macos-candidates-${{ github.event.pull_request.head.sha }}

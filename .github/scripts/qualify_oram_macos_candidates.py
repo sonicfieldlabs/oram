@@ -40,7 +40,7 @@ def inspect(roots, scratch, scanner):
     rows=[];home=[];forbidden=[]
     allowed_accounts={'runner','runneradmin','Shared','Public','Guest','brew','build','builder'}
     total=0
-    for root in roots:
+    for root_index,root in enumerate(roots):
         for path in files(root):
             assert len(rows)<5000 and path.stat().st_size<80*1024**2
             body=path.read_bytes();total+=len(body);assert total<300*1024**2
@@ -56,7 +56,9 @@ def inspect(roots, scratch, scanner):
                 else:unknown+=1
             if unknown:home.append({'file_ordinal':len(rows),'unknown_home_candidates':unknown})
             (destination/(str(len(rows))+'.txt')).write_text(text)
-            rows.append({'bytes':len(body),'sha256':sha(path),'generic_CI_or_vendor_home_markers':generic})
+            magic=body[:4]
+            kind='Mach-O' if magic in [bytes.fromhex(x) for x in ['cffaedfe','feedfacf','cefaedfe','feedface','cafebabe','bebafeca']] else 'source-text' if path.suffix in ['.py','.js','.json','.html','.css','.md','.toml','.yaml','.yml','.txt'] else 'resource'
+            rows.append({'ordinal':len(rows),'package':['AU','VST3','Standalone','SwiftApp'][root_index],'relative_name_sha256':hashlib.sha256(str(path.relative_to(root)).encode()).hexdigest(),'extension':path.suffix if re.fullmatch(r'\.[A-Za-z0-9]{1,8}',path.suffix) else None,'file_kind':kind,'bytes':len(body),'sha256':sha(path),'unknown_home_candidates':unknown,'generic_CI_or_vendor_home_markers':generic})
     config=scratch/'gitleaks.toml';config.write_text('[extend]\nuseDefault = true\n')
     report=scratch/'gitleaks-redacted.json'
     with (scratch/'gitleaks.log').open('wb') as log:
@@ -64,8 +66,16 @@ def inspect(roots, scratch, scanner):
     assert scan.returncode in [0,1]
     candidates=json.loads(report.read_text())
     summary={'files':len(rows),'bytes':total,'unknown_home_candidates':sum(x['unknown_home_candidates'] for x in home),'generic_CI_or_vendor_home_markers':sum(x['generic_CI_or_vendor_home_markers'] for x in rows),'forbidden_file_count':len(forbidden),'secret_candidates':len(candidates),'secret_rules':dict(collections.Counter(x['RuleID'] for x in candidates)),'generic_home_exception':'Known ephemeral CI/system/vendor build accounts only; no arbitrary /Users allowance'}
+    summary['sanitized_diagnostic_only']=True
+    summary['contains_secret_or_home_values']=False
+    summary['payload_cleared']=not home and not forbidden and not candidates
+    summary['file_metadata']=rows
+    summary['secret_candidate_locations']=[{'rule':x['RuleID'],'text_file_ordinal':Path(x['File']).stem,'line':x['StartLine']} for x in candidates]
+    # This diagnostic deliberately omits scanner matches, secret values, home
+    # prefixes, string excerpts and the blocked payload itself.
     (scratch/'privacy-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
-    assert not home and not forbidden and not candidates, 'Privacy qualification failed; counts only in private CI summary, no payload upload'
+    print(json.dumps({k:summary[k] for k in ['files','unknown_home_candidates','generic_CI_or_vendor_home_markers','forbidden_file_count','secret_candidates','secret_rules','payload_cleared']}))
+    assert summary['payload_cleared'], 'Privacy qualification failed; sanitized diagnostic only, no payload upload'
     return summary
 
 
