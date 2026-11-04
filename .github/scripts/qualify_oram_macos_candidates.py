@@ -35,6 +35,25 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def verified_shared_system_fragment(whole_string, native_macho, evidence):
+    return (native_macho and evidence.get('upstream_constant_verified') is True
+            and evidence.get('JUCE_commit')=='7c9d3783b127263d72bb65fe0a7e2dc8a02a7ac2'
+            and evidence.get('canonical_system_path')=='/Users/Shared'
+            and whole_string=='/Users/Share')
+
+
+def check_system_fragment_regressions(evidence):
+    cases=[('/Users/Share',True,evidence,True),
+           ('/Users/Share/private.wav',True,evidence,False),
+           ('/Users/synthetic_owner',True,evidence,False),
+           ('prefix /Users/Share',True,evidence,False),
+           ('/Users/Share',False,evidence,False),
+           ('/Users/Share',True,{},False)]
+    for text,native,proof,expected in cases:
+        assert verified_shared_system_fragment(text,native,proof) is expected
+    return len(cases)
+
+
 def inspect(roots, scratch, scanner, fixed_system_path_evidence):
     destination=scratch/'privacy-strings';destination.mkdir()
     rows=[];home=[];forbidden=[]
@@ -50,6 +69,7 @@ def inspect(roots, scratch, scanner, fixed_system_path_evidence):
             for pattern,encoding in [(rb'(?:[\x20-\x7e]\x00){6,}','utf-16-le'),(rb'(?:\x00[\x20-\x7e]){6,}','utf-16-be')]:
                 text+='\n'+'\n'.join(m.group().decode(encoding) for m in re.finditer(pattern,body))
             unknown=0;generic=0;fixed_system_fragments=0
+            native_macho=root_index<3 and body[:4] in [bytes.fromhex(x) for x in ['cffaedfe','feedfacf','cefaedfe','feedface','cafebabe','bebafeca']]
             for match in re.finditer(r'/(?:Users|home)/([^/\s\"\x00<>]{1,100})',text):
                 account=match.group(1)
                 before=text.rfind('\n',0,match.start())+1
@@ -59,7 +79,7 @@ def inspect(roots, scratch, scanner, fixed_system_path_evidence):
                 # constant as a prefix fragment. Recognize only the exact whole
                 # extracted string in native binaries from the pinned source;
                 # never allow a Share username or an arbitrary nested path.
-                if root_index<3 and fixed_system_path_evidence['upstream_constant_verified'] and whole_string=='/Users/Share':
+                if verified_shared_system_fragment(whole_string,native_macho,fixed_system_path_evidence):
                     fixed_system_fragments+=1
                 elif account in allowed_accounts:generic+=1
                 else:unknown+=1
@@ -202,6 +222,7 @@ def main():
     upstream=juce/'modules/juce_core/native/juce_Files_mac.mm'
     assert re.search(rb'case commonDocumentsDirectory:\s+resultPath = "/Users/Shared"; break;',upstream.read_bytes())
     fixed_system_path_evidence={'JUCE_commit':os.environ['JUCE_SOURCE'],'source':'modules/juce_core/native/juce_Files_mac.mm','canonical_system_path':'/Users/Shared','exact_compiler_prefix_fragment':'/Users/Share','upstream_constant_verified':True,'scope':'At most one exact whole extracted fragment per pinned native binary; no arbitrary account or nested path allowance'}
+    fixed_system_path_evidence['regression_cases_passed']=check_system_fragment_regressions(fixed_system_path_evidence)
     privacy=inspect(bundles+[app],scratch,scanner,fixed_system_path_evidence)
     qualified=Path(os.environ['RUNNER_TEMP'])/'oram-qualified-public-candidates';qualified.mkdir()
     names=['ORAM-AU-Release.zip','ORAM-VST3-Release.zip','ORAM-Standalone-Release.zip']
