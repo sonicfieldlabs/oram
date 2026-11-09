@@ -4,12 +4,14 @@ updates:
     directories:
       - "/"
     schedule:
-      interval: weekly
-      day: monday
-      time: "10:00"
+      interval: cron
+      cronjob: "0 10 12 * *"
       timezone: America/Bogota
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
       compatible-uv:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -17,12 +19,14 @@ updates:
     directories:
       - "/"
     schedule:
-      interval: weekly
-      day: monday
-      time: "10:00"
+      interval: cron
+      cronjob: "0 10 12 * *"
       timezone: America/Bogota
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
       compatible-github-actions:
         patterns: ["*"]
         update-types: [minor, patch]
