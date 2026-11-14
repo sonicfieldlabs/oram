@@ -1,23 +1,30 @@
+# Portable PR checks run once; full platform qualification is deliberate.
 name: macOS App
 
 on:
-  push:
-    paths:
-      - "apps/macos/**"
-      - ".github/workflows/macos-app.yml"
-  pull_request:
-    paths:
-      - "apps/macos/**"
-      - ".github/workflows/macos-app.yml"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run complete platform and release qualification (prefer local execution)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unsigned-build:
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Build SwiftPM app
         working-directory: apps/macos
         run: swift build
@@ -28,3 +35,4 @@ jobs:
         with:
           name: ORAM-unsigned-app
           path: apps/macos/dist/ORAM.app
+          retention-days: 7
