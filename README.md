@@ -47,9 +47,10 @@ surface for constrained sound generation and transformation.
 ORAM does not currently embed the AKOÚŌ listening contract or write
 Earworm records itself. Recordings and exports can enter
 the Listening Stack through Oída or GERM, then be navigated in
-Akousmata and evaluated by Algophony. It has been checked against the GitHub
+Akousmata and evaluated by Algophony. By 21 October 2026 it had been checked against the GitHub
 releases of GERM 0.7.0, Oída 0.13.2 and 0.14.0, Akousma 0.10.1, Akousmata 0.9.1
-and the AKOÚŌ contract 0.12.1 (none is on PyPI). Local request-shape checks do
+and the AKOÚŌ contract 0.12.1 (none is on PyPI), and has not been checked against later ones;
+each project's current release is on [listening.md's Stack page](https://listening.md/stack). Local request-shape checks do
 not qualify a particular Stable Audio checkpoint or activate the running GERM
 owner. This boundary is
 intentional: ORAM remains usable as a standalone local instrument.
