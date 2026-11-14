@@ -1,22 +1,32 @@
+# Portable PR checks run once; full platform qualification is deliberate.
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
+    branches:
+    - main
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run complete platform and release qualification (prefer local execution)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   optional-lock-compatibility:
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
-        include:
-          - {os: ubuntu-24.04, python: "3.12.16"}
-          - {os: macos-latest, python: "3.14.10"}
+        include: ${{ inputs.full && fromJSON('[{"os":"ubuntu-24.04","python":"3.12.16"},{"os":"macos-latest","python":"3.14.10"}]') || fromJSON('[{"os":"ubuntu-24.04","python":"3.12.16"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -53,7 +63,7 @@ jobs:
           PY
 
   python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
@@ -71,7 +81,7 @@ jobs:
       - run: uv run --locked --extra dev ruff check src tests
 
   dashboard-syntax:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
